@@ -31,6 +31,9 @@ class DebuggerPanel(QWidget):
         self.button_run = QPushButton("Run", self)
         self.button_pause = QPushButton("Pause", self)
         self.button_stop = QPushButton("Stop", self)
+        self.button_run.setEnabled(False)
+        self.button_pause.setEnabled(False)
+        self.button_stop.setEnabled(False)
 
         self.button_run.clicked.connect(self._choose_and_run)
         self.button_pause.clicked.connect(self.manager.pause)
@@ -51,6 +54,13 @@ class DebuggerPanel(QWidget):
 
         self.manager.output.connect(self._append_output)
         self.manager.state_changed.connect(self._show_state)
+
+    def set_configured(self, available: bool) -> None:
+        self.button_run.setEnabled(available)
+        self.button_pause.setEnabled(False)
+        self.button_stop.setEnabled(False)
+        hint = "Select a debug configuration to enable controls." if not available else "Ready to debug"
+        self.console.setPlaceholderText(hint)
 
     def _append_output(self, text: str) -> None:
         self.console.append(text)

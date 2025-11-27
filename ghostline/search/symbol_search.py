@@ -48,7 +48,8 @@ class SymbolSearcher:
                 symbols.append(SymbolResult(entry.get("name", ""), str(entry.get("kind", "")), uri.replace("file://", ""), start.get("line", 0)))
             callback(symbols)
 
-        client = self.lsp._get_client("python") or next(iter(self.lsp.clients.get(self.lsp.workspace_manager.current_workspace or "", {}).values()), None)
+        workspace_key = str(self.lsp.workspace_manager.current_workspace or "")
+        client = self.lsp._get_client("python") or next(iter(self.lsp.clients.get(workspace_key, {}).values()), None)
         if client:
             request_id = client.send_request("workspace/symbol", {"query": query})
             self.lsp._pending[request_id] = _handle

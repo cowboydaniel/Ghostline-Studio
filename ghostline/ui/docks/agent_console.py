@@ -1,7 +1,16 @@
 """Live console for multi-agent coordination."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDockWidget, QLabel, QListWidget, QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDockWidget,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ghostline.agents.agent_manager import AgentManager
 
@@ -21,6 +30,8 @@ class AgentConsole(QDockWidget):
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
         layout.addWidget(QLabel("Agents"))
         layout.addWidget(self.status_list)
         layout.addWidget(self.log_output)
@@ -28,10 +39,23 @@ class AgentConsole(QDockWidget):
         layout.addWidget(self.run_button)
         self.setWidget(content)
 
+        for widget in (self.status_list, self.log_output):
+            widget.setMinimumWidth(260)
+
         self.refresh_button.clicked.connect(self._refresh)
         self.run_button.clicked.connect(self._run_once)
 
         self._refresh()
+
+    def set_workspace_active(self, active: bool) -> None:
+        self.manager.set_workspace_active(active)
+        self.run_button.setEnabled(active)
+        hint = "Ready to coordinate agents" if active else "Agents idle (no workspace)"
+        self.run_button.setText("Run Agents" if active else "Run Agents (workspace required)")
+        self.refresh_button.setEnabled(True)
+        self._refresh()
+        self.setWindowTitle("Multi-Agent Console" + ("" if active else " (idle)"))
+        self.log_output.setPlaceholderText(hint)
 
     def _refresh(self) -> None:
         self.status_list.clear()

@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QProcess
-from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget, QPlainTextEdit, QLineEdit
+from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget, QPlainTextEdit, QLineEdit
 
 from ghostline.workspace.workspace_manager import WorkspaceManager
 
@@ -14,6 +14,9 @@ class TerminalWidget(QWidget):
         super().__init__(parent)
         self.workspace_manager = workspace_manager
 
+        notice = QLabel("Embedded terminal not implemented yet. Use 'Open External Terminal'.", self)
+        notice.setWordWrap(True)
+
         self.output = QPlainTextEdit(self)
         self.output.setReadOnly(True)
         self.input = QLineEdit(self)
@@ -22,6 +25,7 @@ class TerminalWidget(QWidget):
         self.launch_button.clicked.connect(self._open_external_terminal)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(notice)
         layout.addWidget(self.output)
         layout.addWidget(self.input)
         layout.addWidget(self.launch_button)

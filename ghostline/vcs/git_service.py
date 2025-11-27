@@ -18,6 +18,13 @@ class GitService:
         except Exception:
             return ""
 
+    def set_workspace(self, workspace: Path | None) -> None:
+        self.workspace = workspace
+
+    def is_repo(self) -> bool:
+        result = self._run(["rev-parse", "--is-inside-work-tree"])
+        return result.strip().lower() == "true"
+
     def stash(self, message: str = "WIP") -> str:
         return self._run(["stash", "push", "-m", message])
 

@@ -3,19 +3,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 RECENTS_PATH = Path.home() / ".config" / "ghostline" / "recents.json"
 
 
 class WorkspaceManager:
     def __init__(self) -> None:
-        self.current_workspace: str | None = None
+        self.current_workspace: Optional[Path] = None
         self.recent_items: list[str] = self._load_recents()
 
-    def open_workspace(self, folder: str) -> None:
-        self.current_workspace = folder
-        self.register_recent(folder)
+    def open_workspace(self, folder: str | Path) -> None:
+        path = Path(folder)
+        self.current_workspace = path
+        self.register_recent(str(path))
+
+    def clear_workspace(self) -> None:
+        self.current_workspace = None
 
     def register_recent(self, path: str) -> None:
         if path in self.recent_items:
@@ -39,4 +43,11 @@ class WorkspaceManager:
     def iter_workspace_files(self) -> Iterable[Path]:
         if not self.current_workspace:
             return []
-        return Path(self.current_workspace).rglob("*")
+        return self.current_workspace.rglob("*")
+
+    def last_recent_workspace(self) -> Optional[Path]:
+        for item in self.recent_items:
+            candidate = Path(item)
+            if candidate.exists() and candidate.is_dir():
+                return candidate
+        return None

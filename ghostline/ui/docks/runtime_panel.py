@@ -16,10 +16,13 @@ class RuntimePanel(QDockWidget):
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
         layout.addWidget(QLabel("Latest runtime observations"))
         layout.addWidget(self.events)
         layout.addWidget(self.refresh_button)
         self.setWidget(content)
+        self.setMinimumWidth(260)
 
         self.refresh_button.clicked.connect(self._refresh)
         self.inspector.observation_added.connect(lambda _: self._refresh())

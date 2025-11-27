@@ -25,8 +25,8 @@ class ArchitectureDock(QDockWidget):
         self.filter_combo.addItems(["All", "Modules", "Files", "Functions"])
         self.filter_combo.currentTextChanged.connect(self._apply_filter)
 
-        reset_btn = QPushButton("Reset Camera", self)
-        reset_btn.clicked.connect(self.scene.reset_view)
+        self.reset_btn = QPushButton("Reset Camera", self)
+        self.reset_btn.clicked.connect(self.scene.reset_view)
 
         info_label = QLabel("Click nodes to open files/functions in the editor.", self)
         info_label.setWordWrap(True)
@@ -35,7 +35,7 @@ class ArchitectureDock(QDockWidget):
         control_layout = QHBoxLayout()
         control_layout.addWidget(QLabel("Show:", self))
         control_layout.addWidget(self.filter_combo, 1)
-        control_layout.addWidget(reset_btn)
+        control_layout.addWidget(self.reset_btn)
 
         layout = QVBoxLayout()
         layout.addLayout(control_layout)
@@ -53,6 +53,7 @@ class ArchitectureDock(QDockWidget):
         self._graph = graph or {"nodes": [], "edges": []}
         self._node_lookup = {node.get("id"): node for node in self._graph.get("nodes", []) if node.get("id")}
         self._apply_filter()
+        self.reset_btn.setEnabled(self.scene.render_available)
 
     def center_on_node(self, node_id: str) -> None:
         self.scene.center_on_node(node_id)

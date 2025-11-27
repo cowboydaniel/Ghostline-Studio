@@ -8,7 +8,7 @@ from typing import Dict, Iterable, List, Optional
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor, QQuaternion, QVector3D
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QStackedLayout, QVBoxLayout, QWidget
 
 try:  # Qt3D is optional in some PySide6 builds
     from PySide6.Qt3DCore import Qt3DCore
@@ -41,26 +41,40 @@ class ArchitectureScene(QWidget):
         self._node_entities: Dict[str, Qt3DCore.QEntity] = {}
         self._edge_entities: list[Qt3DCore.QEntity] = []
         self._positions: Dict[str, QVector3D] = {}
+        self._render_available = False
+
+        self._stack = QStackedLayout(self)
+        self._stack.setContentsMargins(0, 0, 0, 0)
+        fallback_label = QLabel(
+            "3D Architecture Map is unavailable (Qt3D backend missing or no semantic graph).",
+            self,
+        )
+        fallback_label.setWordWrap(True)
+        fallback_label.setAlignment(Qt.AlignCenter)
+        self._fallback_label = fallback_label
+        self._stack.addWidget(fallback_label)
 
         if QT3D_AVAILABLE:
             self._setup_3d()
         else:
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(0, 0, 0, 0)
-            label = QLabel(
-                "3D view unavailable on this build. TODO: fallback to QOpenGLWidget rendering.",
-                self,
-            )
-            label.setWordWrap(True)
-            layout.addWidget(label)
+            placeholder_container = QWidget(self)
+            container_layout = QVBoxLayout(placeholder_container)
+            container_layout.addWidget(self._fallback_label)
+            self._stack.setCurrentWidget(self._fallback_label)
 
     # --- Public API -----------------------------------------------------
     def set_graph(self, graph: dict | None) -> None:
         """Render a new graph snapshot."""
 
         self._graph = graph or {"nodes": [], "edges": []}
-        if QT3D_AVAILABLE:
+        has_nodes = bool(self._graph.get("nodes"))
+        self._render_available = QT3D_AVAILABLE and has_nodes
+        if QT3D_AVAILABLE and has_nodes:
             self._build_scene()
+            if self._stack.count() > 1:
+                self._stack.setCurrentIndex(1)
+        else:
+            self._stack.setCurrentIndex(0)
 
     def center_on_node(self, node_id: str) -> None:
         if not QT3D_AVAILABLE:
@@ -71,19 +85,26 @@ class ArchitectureScene(QWidget):
         camera.setViewCenter(self._positions[node_id])
 
     def reset_view(self) -> None:
-        if not QT3D_AVAILABLE:
+        if not self._render_available:
             return
         camera = self._window.camera()
         camera.setPosition(QVector3D(0, 20, 40))
         camera.setViewCenter(QVector3D(0, 0, 0))
 
+    @property
+    def render_available(self) -> bool:
+        return self._render_available
+
     # --- Scene construction --------------------------------------------
     def _setup_3d(self) -> None:
         self._window = Qt3DExtras.Qt3DWindow()
         container = QWidget.createWindowContainer(self._window, self)
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(container)
+        view_container = QWidget(self)
+        view_container.setLayout(layout)
+        self._stack.addWidget(view_container)
 
         self._root_entity = Qt3DCore.QEntity()
         self._window.setRootEntity(self._root_entity)
