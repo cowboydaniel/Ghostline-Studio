@@ -1,3 +1,0 @@
-# Ghostline Studio
-...
-Contributions and experimentation are welcome.
