@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAction,
     QApplication,
@@ -51,7 +51,7 @@ from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.layout_manager import LayoutManager
 from ghostline.ui.tabs import EditorTabs
-from ghostline.ui.docks.architecture_panel import ArchitecturePanel
+from ghostline.visual3d.architecture_dock import ArchitectureDock
 from ghostline.ui.docks.build_panel import BuildPanel
 from ghostline.ui.docks.agent_console import AgentConsole
 from ghostline.ui.docks.collab_panel import CollabPanel
@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
         self.semantic_query = SemanticQueryEngine(self.semantic_index.graph)
         self.workspace_memory = WorkspaceMemory(self.config.workspace_memory_path)
         self.agent_manager = AgentManager(self.workspace_memory, self.semantic_index.graph)
+        self.semantic_index.register_observer(self._on_semantic_graph_changed)
         pipeline_config = Path(__file__).resolve().parent.parent / "workflows" / "pipeline.yaml"
         self.pipeline_manager = PipelineManager(pipeline_config, self.agent_manager)
         self.runtime_inspector = RuntimeInspector(self.semantic_index.graph)
@@ -193,6 +194,9 @@ class MainWindow(QMainWindow):
         self.action_toggle_terminal = QAction("Terminal", self)
         self.action_toggle_terminal.triggered.connect(self._toggle_terminal)
 
+        self.action_toggle_architecture_map = QAction("3D Architecture Map", self)
+        self.action_toggle_architecture_map.triggered.connect(self._toggle_architecture_map)
+
         self.action_settings = QAction("Settings", self)
         self.action_settings.triggered.connect(self._open_settings)
 
@@ -231,6 +235,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.action_global_search)
         view_menu.addAction(self.action_goto_symbol)
         view_menu.addAction(self.action_goto_file)
+        view_menu.addAction(self.action_toggle_architecture_map)
         view_menu.addAction(self.action_restart_language)
 
         ai_menu = self.menuBar().addMenu("AI")
@@ -308,10 +313,12 @@ class MainWindow(QMainWindow):
         self.test_dock = dock
 
     def _create_architecture_dock(self) -> None:
-        dock = ArchitecturePanel(self.architecture_assistant, self)
+        dock = ArchitectureDock(self)
         dock.setObjectName("architectureDock")
+        dock.open_file_requested.connect(self._open_graph_location)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
-        self.arch_dock = dock
+        self.architecture_dock = dock
+        self._refresh_architecture_graph()
 
     def _create_build_dock(self) -> None:
         dock = BuildPanel(self.build_manager, self)
@@ -391,6 +398,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "doc_dock"):
             self.doc_dock.set_current_file(Path(path))
 
+    def _open_graph_location(self, path: str, line: int | None) -> None:
+        if line is None:
+            self.open_file(path)
+            return
+        self.open_file_at(path, line)
+
     def open_folder(self, folder: str) -> None:
         self.workspace_manager.open_workspace(folder)
         self.status.update_git(folder)
@@ -400,6 +413,7 @@ class MainWindow(QMainWindow):
             self.project_view.setRootIndex(index)
         self.plugin_loader.emit_event("workspace.opened", path=folder)
         self.task_manager.load_workspace_tasks()
+        self.semantic_index.reindex()
 
     def save_all(self) -> None:
         for editor in self.editor_tabs.iter_editors():
@@ -497,6 +511,21 @@ class MainWindow(QMainWindow):
     def _toggle_terminal(self) -> None:
         visible = not self.terminal_dock.isVisible()
         self.terminal_dock.setVisible(visible)
+
+    def _toggle_architecture_map(self) -> None:
+        dock = getattr(self, "architecture_dock", None)
+        if not dock:
+            return
+        dock.setVisible(not dock.isVisible())
+
+    def _refresh_architecture_graph(self) -> None:
+        dock = getattr(self, "architecture_dock", None)
+        if not dock:
+            return
+        dock.set_graph(self.semantic_index.get_graph_snapshot())
+
+    def _on_semantic_graph_changed(self, _path: Path) -> None:
+        QTimer.singleShot(0, self._refresh_architecture_graph)
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.config, self)
