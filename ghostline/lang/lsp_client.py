@@ -1,0 +1,104 @@
+"""Minimal JSON-RPC client for talking to language servers."""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Callable
+
+from PySide6.QtCore import QObject, QProcess, QByteArray, Signal
+
+logger = logging.getLogger(__name__)
+
+
+class LSPClient(QObject):
+    """Starts an LSP server process and handles JSON-RPC messaging."""
+
+    response_received = Signal(dict)
+    notification_received = Signal(dict)
+    started = Signal()
+
+    def __init__(self, command: list[str], workdir: str | None = None, parent=None) -> None:
+        super().__init__(parent)
+        self.command = command
+        self.workdir = workdir
+        self.process = QProcess(self)
+        self._id_counter = 0
+        self._buffer = b""
+
+        self.process.readyReadStandardOutput.connect(self._on_ready_read)
+        self.process.started.connect(self.started)
+        self.process.errorOccurred.connect(self._on_error)
+
+    def start(self) -> None:
+        if not self.command:
+            raise RuntimeError("No command configured for LSP client")
+        program, *args = self.command
+        self.process.setWorkingDirectory(self.workdir or "")
+        self.process.start(program, args)
+
+    def stop(self) -> None:
+        if self.process.state() == QProcess.Running:
+            self.process.terminate()
+
+    def send_request(self, method: str, params: dict[str, Any] | None = None) -> int:
+        self._id_counter += 1
+        payload = {"jsonrpc": "2.0", "id": self._id_counter, "method": method}
+        if params is not None:
+            payload["params"] = params
+        self._send_payload(payload)
+        return self._id_counter
+
+    def send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
+        payload = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            payload["params"] = params
+        self._send_payload(payload)
+
+    # JSON-RPC plumbing
+    def _send_payload(self, payload: dict[str, Any]) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        message = f"Content-Length: {len(data)}\r\n\r\n".encode("utf-8") + data
+        self.process.write(QByteArray(message))
+        logger.debug("LSP -> %s", payload)
+
+    def _on_ready_read(self) -> None:
+        self._buffer += bytes(self.process.readAllStandardOutput())
+        while True:
+            message, rest = self._extract_message(self._buffer)
+            if message is None:
+                break
+            self._buffer = rest
+            self._handle_message(message)
+
+    def _extract_message(self, data: bytes) -> tuple[dict[str, Any] | None, bytes]:
+        header_end = data.find(b"\r\n\r\n")
+        if header_end == -1:
+            return None, data
+        headers = data[:header_end].decode("utf-8", errors="ignore")
+        content_length = 0
+        for line in headers.split("\r\n"):
+            if line.lower().startswith("content-length"):
+                try:
+                    content_length = int(line.split(":")[1].strip())
+                except ValueError:
+                    pass
+        body_start = header_end + 4
+        if len(data) < body_start + content_length:
+            return None, data
+        body = data[body_start : body_start + content_length]
+        try:
+            return json.loads(body.decode("utf-8")), data[body_start + content_length :]
+        except json.JSONDecodeError:
+            logger.warning("Failed to decode LSP message: %s", body)
+            return None, data[body_start + content_length :]
+
+    def _handle_message(self, message: dict[str, Any]) -> None:
+        logger.debug("LSP <- %s", message)
+        if "id" in message:
+            self.response_received.emit(message)
+        elif "method" in message:
+            self.notification_received.emit(message)
+
+    def _on_error(self, error) -> None:  # pragma: no cover - Qt error callback
+        logger.error("LSP client process error: %s", error)
+

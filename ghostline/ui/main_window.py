@@ -7,21 +7,31 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAction,
+    QApplication,
     QFileDialog,
     QDockWidget,
     QLabel,
     QMainWindow,
-    QMessageBox,
     QWidget,
+    QTableView,
 )
 
 from ghostline.core.config import ConfigManager
+from ghostline.core.events import Command, CommandRegistry
 from ghostline.core.theme import ThemeManager
+from ghostline.lang.diagnostics import DiagnosticsModel
+from ghostline.lang.lsp_manager import LSPManager
+from ghostline.ai.ai_client import AIClient
+from ghostline.ai.ai_chat_panel import AIChatPanel
+from ghostline.ai.ai_commands import explain_selection, refactor_selection
 from ghostline.editor.code_editor import CodeEditor
+from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.tabs import EditorTabs
 from ghostline.workspace.workspace_manager import WorkspaceManager
+from ghostline.workspace.project_model import ProjectModel
+from ghostline.workspace.project_view import ProjectView
 from ghostline.terminal.terminal_widget import TerminalWidget
 from ghostline.vcs.git_integration import GitIntegration
 
@@ -39,20 +49,31 @@ class MainWindow(QMainWindow):
         self.theme = theme
         self.workspace_manager = workspace_manager
         self.git = GitIntegration()
+        self.lsp_manager = LSPManager(config, workspace_manager)
+        self.command_registry = CommandRegistry()
+        self.ai_client = AIClient(config)
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
 
-        self.editor_tabs = EditorTabs(self)
+        self.editor_tabs = EditorTabs(
+            self, config=self.config, theme=self.theme, lsp_manager=self.lsp_manager
+        )
         self.setCentralWidget(self.editor_tabs)
 
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
 
         self.command_palette = CommandPalette(self)
+        self.command_palette.set_registry(self.command_registry)
         self._create_actions()
         self._create_menus()
         self._create_terminal_dock()
+        self._create_project_dock()
+        self._create_ai_dock()
+        self._create_diagnostics_dock()
+
+        self.lsp_manager.subscribe_diagnostics(self._handle_diagnostics)
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
@@ -65,13 +86,35 @@ class MainWindow(QMainWindow):
         self.action_command_palette.setShortcut("Ctrl+P")
         self.action_command_palette.triggered.connect(self.show_command_palette)
 
+        self.action_toggle_project = QAction("Project Explorer", self)
+        self.action_toggle_project.triggered.connect(self._toggle_project)
+
+        self.action_toggle_terminal = QAction("Terminal", self)
+        self.action_toggle_terminal.triggered.connect(self._toggle_terminal)
+
+        self.action_settings = QAction("Settings", self)
+        self.action_settings.triggered.connect(self._open_settings)
+
+        self.action_ai_explain = QAction("Explain Selection", self)
+        self.action_ai_explain.triggered.connect(lambda: self._run_ai_command(explain_selection))
+
+        self.action_ai_refactor = QAction("Refactor Selection", self)
+        self.action_ai_refactor.triggered.connect(lambda: self._run_ai_command(refactor_selection))
+
     def _create_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.action_open_file)
         file_menu.addAction(self.action_open_folder)
+        file_menu.addAction(self.action_settings)
 
         view_menu = self.menuBar().addMenu("View")
         view_menu.addAction(self.action_command_palette)
+        view_menu.addAction(self.action_toggle_project)
+        view_menu.addAction(self.action_toggle_terminal)
+
+        ai_menu = self.menuBar().addMenu("AI")
+        ai_menu.addAction(self.action_ai_explain)
+        ai_menu.addAction(self.action_ai_refactor)
 
     def _create_terminal_dock(self) -> None:
         dock = QDockWidget("Terminal", self)
@@ -79,15 +122,42 @@ class MainWindow(QMainWindow):
         dock.setWidget(TerminalWidget(self.workspace_manager))
         dock.setAllowedAreas(Qt.BottomDockWidgetArea)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.terminal_dock = dock
+
+    def _create_project_dock(self) -> None:
+        dock = QDockWidget("Project", self)
+        dock.setObjectName("projectDock")
+        self.project_model = ProjectModel(self)
+        self.project_view = ProjectView(self)
+        self.project_view.set_model(self.project_model)
+        dock.setWidget(self.project_view)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self.project_dock = dock
+
+    def _create_ai_dock(self) -> None:
+        dock = QDockWidget("Ghostline AI", self)
+        dock.setObjectName("aiDock")
+        panel = AIChatPanel(self.ai_client, self)
+        panel.set_context_provider(lambda: self.get_current_editor().toPlainText() if self.get_current_editor() else "")
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.ai_dock = dock
+
+    def _create_diagnostics_dock(self) -> None:
+        dock = QDockWidget("Diagnostics", self)
+        dock.setObjectName("diagnosticsDock")
+        table = QTableView(self)
+        self.diagnostics_model = DiagnosticsModel(self)
+        table.setModel(self.diagnostics_model)
+        table.doubleClicked.connect(self._jump_to_diagnostic)
+        dock.setWidget(table)
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.diagnostics_view = table
+        self.diagnostics_dock = dock
 
     def show_command_palette(self) -> None:
-        self.command_palette.set_commands(
-            {
-                "Open File": self._prompt_open_file,
-                "Open Folder": self._prompt_open_folder,
-                "Save All": self.save_all,
-            }
-        )
+        self._register_core_commands()
         self.command_palette.open_palette()
 
     def open_file(self, path: str) -> None:
@@ -101,6 +171,9 @@ class MainWindow(QMainWindow):
         self.workspace_manager.open_workspace(folder)
         self.status.update_git(folder)
         self.status.show_message(f"Opened workspace: {folder}")
+        index = self.project_model.set_workspace_root(folder)
+        if index:
+            self.project_view.setRootIndex(index)
 
     def save_all(self) -> None:
         for editor in self.editor_tabs.iter_editors():
@@ -134,3 +207,59 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.workspace_manager.save_recents()
         super().closeEvent(event)
+
+    # Command registration
+    def _register_core_commands(self) -> None:
+        self.command_registry.register_command(Command("file.open", "Open File", "File", self._prompt_open_file))
+        self.command_registry.register_command(
+            Command("file.save_all", "Save All", "File", self.save_all)
+        )
+        self.command_registry.register_command(
+            Command("view.toggle_project", "Toggle Project", "View", self._toggle_project)
+        )
+        self.command_registry.register_command(
+            Command("view.toggle_terminal", "Toggle Terminal", "View", self._toggle_terminal)
+        )
+        self.command_registry.register_command(
+            Command("ai.explain_selection", "Explain Selection", "AI", lambda: self._run_ai_command(explain_selection))
+        )
+        self.command_registry.register_command(
+            Command("ai.refactor_selection", "Refactor Selection", "AI", lambda: self._run_ai_command(refactor_selection))
+        )
+
+    def _toggle_project(self) -> None:
+        visible = not self.project_dock.isVisible()
+        self.project_dock.setVisible(visible)
+
+    def _toggle_terminal(self) -> None:
+        visible = not self.terminal_dock.isVisible()
+        self.terminal_dock.setVisible(visible)
+
+    def _open_settings(self) -> None:
+        dialog = SettingsDialog(self.config, self)
+        if dialog.exec():
+            app = QApplication.instance()
+            if app:
+                self.theme.apply_theme(app)
+
+    def _run_ai_command(self, func) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            func(editor, self.ai_client)
+
+    def _handle_diagnostics(self, diagnostics) -> None:
+        self.diagnostics_model.set_diagnostics(diagnostics)
+        for editor in self.editor_tabs.iter_editors():
+            file_diags = [d for d in diagnostics if d.file == str(editor.path)]
+            editor.apply_diagnostics(file_diags)
+
+    def _jump_to_diagnostic(self, index) -> None:
+        file_path = self.diagnostics_model.item(index.row(), 0).text()
+        line = int(self.diagnostics_model.item(index.row(), 1).text()) - 1
+        self.open_file(file_path)
+        editor = self.get_current_editor()
+        if editor:
+            cursor = editor.textCursor()
+            cursor.movePosition(cursor.Start)
+            cursor.movePosition(cursor.Down, cursor.MoveAnchor, line)
+            editor.setTextCursor(cursor)

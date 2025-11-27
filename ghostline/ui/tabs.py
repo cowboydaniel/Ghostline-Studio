@@ -6,17 +6,35 @@ from typing import Iterator
 
 from PySide6.QtWidgets import QTabWidget
 
+from ghostline.core.config import ConfigManager
+from ghostline.core.theme import ThemeManager
 from ghostline.editor.code_editor import CodeEditor
+from ghostline.lang.lsp_manager import LSPManager
 
 
 class EditorTabs(QTabWidget):
-    def __init__(self, parent=None) -> None:
+    def __init__(
+        self,
+        parent=None,
+        *,
+        config: ConfigManager | None = None,
+        theme: ThemeManager | None = None,
+        lsp_manager: LSPManager | None = None,
+    ) -> None:
         super().__init__(parent)
+        self.config = config
+        self.theme = theme
+        self.lsp_manager = lsp_manager
         self.setTabsClosable(True)
         self.tabCloseRequested.connect(self._close_tab)
 
     def add_editor_for_file(self, path: Path) -> CodeEditor:
-        editor = CodeEditor(path)
+        editor = CodeEditor(
+            path,
+            config=self.config,
+            theme=self.theme,
+            lsp_manager=self.lsp_manager,
+        )
         self.addTab(editor, path.name)
         self.setCurrentWidget(editor)
         return editor
