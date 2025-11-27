@@ -18,6 +18,8 @@ class BuildPanel(QDockWidget):
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
         layout.addWidget(self.running)
         layout.addWidget(self.queue)
         layout.addWidget(self.logs)
