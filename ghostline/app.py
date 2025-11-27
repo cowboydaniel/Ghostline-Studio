@@ -36,11 +36,40 @@ class GhostlineApplication:
         return parser.parse_args()
 
     def run(self) -> int:
-        self.theme.apply_theme(self.qt_app)
-        if self.args.path:
-            self._open_initial_path(self.args.path)
-        self.main_window.show()
-        return self.qt_app.exec()
+        try:
+            self.theme.apply_theme(self.qt_app)
+            if self.args.path:
+                self._open_initial_path(self.args.path)
+            self.main_window.show()
+            return self.qt_app.exec()
+        except Exception as e:
+            self.logger.exception("Unhandled exception in main loop")
+            return 1
+        finally:
+            self.cleanup()
+
+    def cleanup(self) -> None:
+        """Clean up resources in the correct order."""
+        try:
+            # Close main window first to trigger any pending operations
+            if hasattr(self, 'main_window') and self.main_window:
+                self.main_window.close()
+                self.main_window.deleteLater()
+                self.main_window = None
+
+            # Clean up workspace manager
+            if hasattr(self, 'workspace_manager') and self.workspace_manager:
+                self.workspace_manager.save_recents()
+                self.workspace_manager = None
+
+            # Clean up QApplication
+            if hasattr(self, 'qt_app') and self.qt_app:
+                self.qt_app.processEvents()
+                self.qt_app.quit()
+                self.qt_app = None
+
+        except Exception as e:
+            self.logger.exception("Error during cleanup")
 
     def _open_initial_path(self, path: str) -> None:
         target = Path(path)
