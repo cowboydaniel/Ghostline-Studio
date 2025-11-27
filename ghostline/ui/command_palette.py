@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.core.events import Command, CommandRegistry
-from ghostline.ai.navigation_assistant import NavigationAssistant
+from ghostline.ai.navigation_assistant import NavigationAssistant, PredictiveContext
 
 
 class CommandPalette(QDialog):
@@ -21,6 +21,7 @@ class CommandPalette(QDialog):
         self.setWindowModality(Qt.ApplicationModal)
         self.registry: CommandRegistry | None = None
         self.navigation_assistant: NavigationAssistant | None = None
+        self.predictive_context: PredictiveContext | None = None
 
         self.input = QLineEdit(self)
         self.input.setPlaceholderText("Type a command...")
@@ -39,6 +40,9 @@ class CommandPalette(QDialog):
 
     def set_navigation_assistant(self, assistant: NavigationAssistant) -> None:
         self.navigation_assistant = assistant
+
+    def set_predictive_context(self, context: PredictiveContext) -> None:
+        self.predictive_context = context
 
     def open_palette(self) -> None:
         self._refresh_list()
@@ -63,6 +67,17 @@ class CommandPalette(QDialog):
             nav_item = QListWidgetItem(nav_command.text)
             nav_item.setData(Qt.UserRole, nav_command)
             self.list_widget.addItem(nav_item)
+        if self.navigation_assistant:
+            context = self.predictive_context or PredictiveContext(cursor_symbol=self.input.text().strip())
+            for predicted in self.navigation_assistant.predict_actions(context):
+                cmd = Command(
+                    text=predicted.label,
+                    callback=lambda action=predicted.action: self._execute_prediction(action),
+                    category="prediction",
+                )
+                item = QListWidgetItem(f"{cmd.text} ({cmd.category})")
+                item.setData(Qt.UserRole, cmd)
+                self.list_widget.addItem(item)
         if self.list_widget.count():
             self.list_widget.setCurrentRow(0)
 
@@ -88,3 +103,7 @@ class CommandPalette(QDialog):
         self.list_widget.clear()
         for result in results:
             self.list_widget.addItem(f"{result.label} @ {result.node.file}")
+
+    def _execute_prediction(self, action: str) -> None:
+        self.list_widget.clear()
+        self.list_widget.addItem(f"Predicted action executed: {action}")

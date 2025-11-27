@@ -43,3 +43,15 @@ class GitService:
 
     def merge_conflicts(self) -> str:
         return self._run(["diff", "--name-only", "--diff-filter=U"])
+
+    def create_branch(self, name: str, checkout: bool = False) -> str:
+        """Create a branch if it does not exist and optionally check it out."""
+
+        if name in self.branches():
+            if checkout:
+                self._run(["checkout", name])
+            return name
+        self._run(["branch", name])
+        if checkout:
+            self._run(["checkout", name])
+        return name

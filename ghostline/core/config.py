@@ -46,3 +46,8 @@ class ConfigManager:
         USER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with USER_SETTINGS_PATH.open("w", encoding="utf-8") as handle:
             yaml.safe_dump(self.settings, handle)
+
+    def self_healing_enabled(self) -> bool:
+        """Flag for enabling the self-healing service."""
+
+        return bool(self.settings.get("self_healing", {}).get("enabled", True))

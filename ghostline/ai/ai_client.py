@@ -5,11 +5,11 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Generator
-from urllib import error, request
-import json
+from urllib import request
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import get_logger
+from ghostline.ai.prompt_builder import PromptBuilder
 
 
 @dataclass
@@ -75,11 +75,14 @@ class AIClient:
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
         self.backend = self._create_backend()
         self.disabled = False
+        self.secondary_backend_type = self.config.get("ai", {}).get("secondary_backend")
+        self.secondary_backend = self._create_backend(self.secondary_backend_type) if self.secondary_backend_type else None
 
-    def _create_backend(self):
-        if self.backend_type == "ollama":
+    def _create_backend(self, backend_type: str | None = None):
+        backend = backend_type or self.backend_type
+        if backend == "ollama":
             return OllamaBackend(self.config)
-        if self.backend_type == "openai":
+        if backend == "openai":
             return OpenAICompatibleBackend(self.config)
         return DummyBackend(self.config)
 
@@ -93,6 +96,24 @@ class AIClient:
             self.logger.exception("AI backend failure: %s", exc)
             self.disabled = True
             return AIResponse(text="AI backend unavailable. Check logs for details.")
+
+    def combined_send(self, prompt: str, builder: PromptBuilder, mode: str = "sequential") -> AIResponse:
+        """Merge local+remote model context for richer reasoning."""
+
+        built_prompt = builder.build(prompt, mode)
+        primary = self.send(built_prompt)
+        builder.update_last_response(primary.text)
+        if not self.secondary_backend:
+            return primary
+
+        try:
+            secondary_prompt = f"Follow-up based on primary response:\n{primary.text}\n\n{built_prompt}"
+            secondary = self.secondary_backend.send(secondary_prompt)  # type: ignore[union-attr]
+            combined = f"Primary: {primary.text}\nSecondary: {secondary.text}"
+            return AIResponse(text=combined)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("Secondary backend failure: %s", exc)
+            return primary
 
     def stream(self, prompt: str, context: str | None = None):
         if self.disabled:

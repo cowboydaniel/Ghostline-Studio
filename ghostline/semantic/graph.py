@@ -103,3 +103,26 @@ class SemanticGraph:
             modules.setdefault(src, set()).add(dst)
         return modules
 
+    def module_churn(self) -> dict[str, int]:
+        """Estimate churn based on how many symbols a module defines."""
+
+        churn: dict[str, int] = {}
+        for node in self._nodes:
+            if node.kind in {"function", "class"}:
+                churn[node.file.stem] = churn.get(node.file.stem, 0) + 1
+        return churn
+
+    def pattern_fingerprint(self) -> str:
+        """Summarise the graph for long-horizon planners."""
+
+        modules = sorted(self.module_map().keys())
+        cycles = ["->".join(node.name for node in cycle) for cycle in self.find_cycles()]
+        imports = sorted({edge.target.name for edge in self.import_edges()})
+        return "\n".join(
+            [
+                f"Modules: {', '.join(modules)}",
+                f"Imports: {', '.join(imports)}",
+                f"Cycles: {', '.join(cycles)}" if cycles else "Cycles: none",
+            ]
+        )
+

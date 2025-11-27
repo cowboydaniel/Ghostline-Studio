@@ -12,8 +12,10 @@ class StudioStatusBar(QStatusBar):
         self.git = git
         self.path_label = QLabel("Ready")
         self.ai_label = QLabel("")
+        self.prediction_label = QLabel("")
         self.git_label = QLabel("")
         self.addPermanentWidget(self.ai_label)
+        self.addPermanentWidget(self.prediction_label)
         self.addPermanentWidget(self.git_label)
         self.addPermanentWidget(self.path_label)
 
@@ -36,3 +38,11 @@ class StudioStatusBar(QStatusBar):
             self.ai_label.setText("AI suggestions ready")
         else:
             self.ai_label.setText("")
+
+    def show_predicted_actions(self, actions: list[str]) -> None:
+        """Render predicted actions in the status bar."""
+
+        if actions:
+            self.prediction_label.setText(f"Next: {actions[0]}")
+        else:
+            self.prediction_label.setText("")

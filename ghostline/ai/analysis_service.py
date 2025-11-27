@@ -31,6 +31,7 @@ class AnalysisService(QObject):
         self.client = client
         self._workers = workers or BackgroundWorkers()
         self._suggestions: list[AISuggestion] = []
+        self._state_cache: dict[str, str] = {}
 
     def on_file_saved(self, path: str, content: str) -> None:
         self._enqueue(f"Review recent save for {path}", content)
@@ -46,6 +47,21 @@ class AnalysisService(QObject):
     def _enqueue(self, intent: str, context: str) -> None:
         logger.debug("AI analysis queued: %s", intent)
         self._workers.submit("analysis", lambda: self._run_query(intent, context))
+
+    def bind_build_manager(self, build_manager) -> None:
+        build_manager.state_changed.connect(lambda state: self._on_state_change("build", state))
+
+    def bind_test_manager(self, test_manager) -> None:
+        if hasattr(test_manager, "state_changed"):
+            test_manager.state_changed.connect(lambda state: self._on_state_change("tests", state))
+
+    def bind_debugger(self, debugger) -> None:
+        debugger.state_changed.connect(lambda state: self._on_state_change("debugger", state))
+
+    def _on_state_change(self, domain: str, state: str) -> None:
+        self._state_cache[domain] = state
+        context = "\n".join([f"{k}: {v}" for k, v in self._state_cache.items()])
+        self._enqueue(f"Process state change in {domain}", context)
 
     def _run_query(self, intent: str, context: str) -> None:
         prompt = f"Provide concise suggestions for the following event: {intent}. Limit to 3 bullet points.\n{context}"

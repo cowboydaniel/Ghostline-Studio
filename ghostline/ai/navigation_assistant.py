@@ -1,8 +1,25 @@
 """AI-assisted navigation that understands user intent."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ghostline.ai.ai_client import AIClient
 from ghostline.semantic.query import NavigationResult, SemanticQueryEngine
+
+
+@dataclass
+class PredictiveContext:
+    """Signals about current user focus for predictive actions."""
+
+    cursor_symbol: str | None = None
+    recent_files: list[str] | None = None
+    workflow_history: list[str] | None = None
+
+
+@dataclass
+class PredictedAction:
+    label: str
+    action: str
 
 
 class NavigationAssistant:
@@ -36,4 +53,39 @@ class NavigationAssistant:
             if "error" in node.name.lower():
                 results.append(NavigationResult(f"Error factory {node.name}", node))
         return results
+
+    def predict_actions(self, context: PredictiveContext) -> list[PredictedAction]:
+        """Return predicted next steps based on user context."""
+
+        predictions: list[PredictedAction] = []
+        if context.cursor_symbol:
+            predictions.append(
+                PredictedAction(
+                    label=f"Generate missing tests for {context.cursor_symbol}",
+                    action="run related tests",
+                )
+            )
+            predictions.append(
+                PredictedAction(
+                    label=f"Open module for {context.cursor_symbol}",
+                    action="open referenced modules",
+                )
+            )
+        if context.recent_files:
+            last = context.recent_files[-1]
+            predictions.append(
+                PredictedAction(
+                    label=f"Refactor related to {last}",
+                    action="apply related refactors",
+                )
+            )
+        if context.workflow_history:
+            if any("debug" in step for step in context.workflow_history):
+                predictions.append(
+                    PredictedAction(
+                        label="Watch failing variables",
+                        action="propose watchpoints",
+                    )
+                )
+        return predictions
 

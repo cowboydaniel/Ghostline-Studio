@@ -25,6 +25,7 @@ class BuildManager(QObject):
     task_finished = Signal(str, int)
     task_output = Signal(str, str)
     queue_changed = Signal(list)
+    state_changed = Signal(str)
 
     def __init__(self, workspace_provider: Callable[[], str | None]) -> None:
         super().__init__()
@@ -32,6 +33,7 @@ class BuildManager(QObject):
         self.tasks: Dict[str, BuildTask] = {}
         self.running: Dict[str, subprocess.Popen] = {}
         self._queue: list[str] = []
+        self._last_results: dict[str, int] = {}
 
     def register_task(self, name: str, command: str, dependencies: Iterable[str] | None = None) -> None:
         workspace = Path(self.workspace_provider() or ".")
@@ -54,6 +56,7 @@ class BuildManager(QObject):
             self._queue.remove(name)
             self._start_process(self.tasks[name])
         self.queue_changed.emit(list(self._queue))
+        self._emit_state()
 
     def _dependencies_finished(self, name: str) -> bool:
         deps = self.tasks[name].dependencies
@@ -70,6 +73,7 @@ class BuildManager(QObject):
         )
         self.running[task.name] = process
         threading.Thread(target=self._stream_output, args=(task.name, process), daemon=True).start()
+        self._emit_state()
 
     def _stream_output(self, name: str, process: subprocess.Popen) -> None:
         assert process.stdout
@@ -77,8 +81,10 @@ class BuildManager(QObject):
             self.task_output.emit(name, line.rstrip())
         return_code = process.wait()
         self.running.pop(name, None)
+        self._last_results[name] = return_code
         self.task_finished.emit(name, return_code)
         self._start_ready_tasks()
+        self._emit_state()
 
     def cancel_all(self) -> None:
         for process in list(self.running.values()):
@@ -86,4 +92,16 @@ class BuildManager(QObject):
         self.running.clear()
         self._queue.clear()
         self.queue_changed.emit([])
+        self._emit_state()
+
+    def _emit_state(self) -> None:
+        if self.running:
+            self.state_changed.emit("running")
+        elif self._queue:
+            self.state_changed.emit("queued")
+        else:
+            self.state_changed.emit("idle")
+
+    def recent_results(self) -> dict[str, int]:
+        return dict(self._last_results)
 
