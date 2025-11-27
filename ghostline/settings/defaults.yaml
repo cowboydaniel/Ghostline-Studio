@@ -20,14 +20,14 @@ lsp:
   servers:
     python:
       primary:
-        command: "pylsp"
+        command: "/usr/bin/pylsp"
         args: []
+        enabled: true
       analyzers:
         - command: "ruff-lsp"
+          enabled: true
       formatter:
-        command: "black"
-        args:
-          - "--quiet"
+        enabled: false
     typescript:
       primary:
         command: "typescript-language-server"
