@@ -1,0 +1,23 @@
+# Default language server definitions for Ghostline Studio
+servers:
+  python:
+    command: "pylsp"
+    args: []
+  typescript:
+    command: "typescript-language-server"
+    args:
+      - "--stdio"
+  c_cpp:
+    command: "clangd"
+    args: []
+  rust:
+    command: "rust-analyzer"
+    args: []
+  java:
+    command: "jdtls"
+    args: []
+
+# Optional extension overrides. Users can add entries under lsp.extension_map in settings.
+extension_map:
+  jsx: "typescript"
+  tsx: "typescript"

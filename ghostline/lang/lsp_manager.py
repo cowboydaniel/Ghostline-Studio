@@ -5,7 +5,9 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable
 
-from PySide6.QtCore import QObject
+import yaml
+
+from PySide6.QtCore import QObject, Signal
 
 from ghostline.core.config import ConfigManager
 from ghostline.lang.diagnostics import Diagnostic
@@ -18,6 +20,8 @@ logger = logging.getLogger(__name__)
 class LSPManager(QObject):
     """Manage language server lifecycles and route editor events."""
 
+    lsp_error = Signal(str)
+
     def __init__(self, config: ConfigManager, workspace_manager: WorkspaceManager, parent=None) -> None:
         super().__init__(parent)
         self.config = config
@@ -25,13 +29,45 @@ class LSPManager(QObject):
         self.clients: dict[str, dict[str, LSPClient]] = {}
         self._diag_callbacks: list[Callable[[list[Diagnostic]], None]] = []
         self._pending: dict[int, Callable[[dict], None]] = {}
+        self._language_map = self._build_language_map()
+        self._ensure_default_servers()
 
     # Client management
     def _language_for_file(self, path: str) -> str | None:
-        suffix = Path(path).suffix
-        if suffix == ".py":
-            return "python"
-        return None
+        suffix = Path(path).suffix.lower()
+        return self._language_map.get(suffix)
+
+    def _build_language_map(self) -> dict[str, str]:
+        """Map file extensions to configured languages."""
+        mapping: dict[str, str] = {
+            ".py": "python",
+            ".ts": "typescript",
+            ".js": "typescript",
+            ".c": "c_cpp",
+            ".h": "c_cpp",
+            ".cpp": "c_cpp",
+            ".cc": "c_cpp",
+            ".hpp": "c_cpp",
+            ".java": "java",
+            ".rs": "rust",
+        }
+        overrides = self.config.get("lsp", {}).get("extension_map", {})
+        mapping.update({f".{k.lstrip('.')}": v for k, v in overrides.items()})
+        return mapping
+
+    def _ensure_default_servers(self) -> None:
+        """Merge packaged defaults into user configuration if missing."""
+        bundled_cfg_path = Path(__file__).resolve().parent / "lsp_config.yaml"
+        bundled = yaml.safe_load(bundled_cfg_path.read_text()) if bundled_cfg_path.exists() else {}
+        servers = bundled.get("servers", {})
+        cfg = self.config.get("lsp", {})
+        cfg.setdefault("servers", {})
+        for name, definition in servers.items():
+            cfg["servers"].setdefault(name, definition)
+        extension_map = bundled.get("extension_map", {})
+        cfg.setdefault("extension_map", {})
+        cfg["extension_map"] = {**extension_map, **cfg["extension_map"]}
+        self.config.settings["lsp"] = cfg
 
     def _get_client(self, language: str) -> LSPClient | None:
         workspace = self.workspace_manager.current_workspace or str(Path(path := ".").resolve())
@@ -41,9 +77,16 @@ class LSPManager(QObject):
         server_cfg = self.config.get("lsp", {}).get("servers", {}).get(language)
         if not server_cfg:
             logger.warning("No LSP server configured for %s", language)
+            self.lsp_error.emit(f"No LSP configured for {language}")
             return None
         command = [server_cfg.get("command")] + list(server_cfg.get("args", []))
-        client = LSPClient(command, workdir=workspace)
+        try:
+            client = LSPClient(command, workdir=workspace)
+        except FileNotFoundError:
+            message = f"LSP server for {language} not found. Install: {server_cfg.get('command')}"
+            logger.error(message)
+            self.lsp_error.emit(message)
+            return None
         client.notification_received.connect(self._handle_notification)
         client.response_received.connect(self._handle_response)
         client.start()
