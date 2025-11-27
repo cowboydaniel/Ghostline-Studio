@@ -1,3 +1,4 @@
+first_run_completed: false
 theme: "Ghostline Dark"
 font:
   editor_family: "JetBrains Mono"
@@ -10,9 +11,18 @@ autosave:
   interval_seconds: 60
 ai:
   enabled: false
-  backend: "dummy"
-  endpoint: "http://localhost:11434"
+  backend: "none"
+  model: "gpt-4o-mini"
+  openai_endpoint: "https://api.openai.com"
+  api_key: ""
+  temperature: 0.2
   background_analysis: true
+  endpoint: "http://localhost:11434"
+  default_ollama_model: "codellama:7b-code"
+  secondary_backend: null
+window:
+  maximized: true
+  geometry: null
 formatting:
   on_save: false
   provider: "lsp"

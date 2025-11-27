@@ -1,11 +1,11 @@
 """AI client stubs."""
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Generator
 from urllib import request
+import json
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import get_logger
@@ -35,10 +35,18 @@ class HTTPBackend:
         ai_cfg = config.get("ai", {}) if config else {}
         self.endpoint = ai_cfg.get("endpoint", "http://localhost:11434")
         self.model = ai_cfg.get("model", "")
+        self.api_key = ai_cfg.get("api_key")
+        self.temperature = ai_cfg.get("temperature", 0.2)
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     def _post(self, url: str, payload: dict) -> dict:
         data = json.dumps(payload).encode("utf-8")
-        req = request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        req = request.Request(url, data=data, headers=self._headers())
         with request.urlopen(req, timeout=10) as resp:  # type: ignore[arg-type]
             return json.loads(resp.read().decode("utf-8"))
 
@@ -54,9 +62,19 @@ class OllamaBackend(HTTPBackend):
 
 
 class OpenAICompatibleBackend(HTTPBackend):
+    def __init__(self, config: ConfigManager) -> None:
+        super().__init__(config)
+        ai_cfg = config.get("ai", {}) if config else {}
+        self.endpoint = ai_cfg.get("openai_endpoint", "https://api.openai.com")
+
     def send(self, prompt: str, context: str | None = None) -> AIResponse:
         messages = [{"role": "user", "content": prompt}]
-        body = {"model": self.model or "gpt-4o-mini", "messages": messages, "stream": False}
+        body = {
+            "model": self.model or "gpt-4o-mini",
+            "messages": messages,
+            "stream": False,
+            "temperature": self.temperature,
+        }
         response = self._post(f"{self.endpoint}/v1/chat/completions", body)
         choices = response.get("choices", [])
         text = choices[0]["message"]["content"] if choices else ""
@@ -73,8 +91,8 @@ class AIClient:
         self.config = config
         self.logger = get_logger(__name__)
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
+        self.disabled = self.backend_type in {"none", "disabled"}
         self.backend = self._create_backend()
-        self.disabled = False
         self.secondary_backend_type = self.config.get("ai", {}).get("secondary_backend")
         self.secondary_backend = self._create_backend(self.secondary_backend_type) if self.secondary_backend_type else None
 

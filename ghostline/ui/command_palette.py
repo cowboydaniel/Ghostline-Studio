@@ -23,6 +23,8 @@ class CommandPalette(QDialog):
         self.navigation_assistant: NavigationAssistant | None = None
         self.predictive_context: PredictiveContext | None = None
         self.autoflow_mode = "passive"
+        self.file_provider = None
+        self.open_file_callback = None
 
         self.input = QLineEdit(self)
         self.input.setPlaceholderText("Type a command...")
@@ -45,9 +47,21 @@ class CommandPalette(QDialog):
     def set_predictive_context(self, context: PredictiveContext) -> None:
         self.predictive_context = context
 
+    def set_file_provider(self, provider) -> None:
+        self.file_provider = provider
+
+    def set_open_file_handler(self, handler) -> None:
+        self.open_file_callback = handler
+
     def open_palette(self) -> None:
         self._refresh_list()
         self.input.clear()
+        self.show()
+        self.input.setFocus()
+
+    def open_with_query(self, query: str) -> None:
+        self.input.setText(query)
+        self._refresh_list()
         self.show()
         self.input.setFocus()
 
@@ -58,9 +72,17 @@ class CommandPalette(QDialog):
             item = QListWidgetItem(f"{command.text} ({command.category})")
             item.setData(Qt.UserRole, command)
             self.list_widget.addItem(item)
+        if self.file_provider and self.input.text().strip():
+            for path in self.file_provider(self.input.text().strip()):
+                display = f"Open {path.name}"
+                cmd = Command(id=f"file:{path}", text=display, category="File", callback=lambda p=path: self._open_file(p))
+                item = QListWidgetItem(f"{cmd.text} ({cmd.category})")
+                item.setData(Qt.UserRole, cmd)
+                self.list_widget.addItem(item)
         if self.navigation_assistant and self.input.text().strip():
             query = self.input.text().strip()
             nav_command = Command(
+                id=f"navigate:{query}",
                 text=f"Semantic navigate: {query}",
                 callback=lambda q=query: self._run_navigation(q),
                 category="navigation",
@@ -77,6 +99,7 @@ class CommandPalette(QDialog):
             )
             for predicted in suggestions:
                 cmd = Command(
+                    id=f"prediction:{predicted.label}",
                     text=predicted.label,
                     callback=lambda action=predicted.action: self._execute_prediction(action),
                     category="autoflow" if self.autoflow_mode == "active" else "prediction",
@@ -103,6 +126,10 @@ class CommandPalette(QDialog):
         if command:
             command.callback()
         self.close()
+
+    def _open_file(self, path):
+        if self.open_file_callback:
+            self.open_file_callback(str(path))
 
     def _run_navigation(self, query: str) -> None:
         if not self.navigation_assistant:
