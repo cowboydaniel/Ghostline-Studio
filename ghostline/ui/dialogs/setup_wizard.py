@@ -54,9 +54,11 @@ class SetupWizardDialog(QDialog):
         layout.addLayout(self.stack)
 
         self.button_box = QDialogButtonBox(self)
-        self.back_button = self.button_box.addButton(QDialogButtonBox.Back)
-        self.next_button = self.button_box.addButton(QDialogButtonBox.Next)
-        self.cancel_button = self.button_box.addButton(QDialogButtonBox.Cancel)
+        self.back_button = QPushButton("Back", self)
+        self.button_box.addButton(self.back_button, QDialogButtonBox.ActionRole)
+        self.next_button = QPushButton("Next", self)
+        self.button_box.addButton(self.next_button, QDialogButtonBox.AcceptRole)
+        self.cancel_button = self.button_box.addButton(QDialogButtonBox.StandardButton.Cancel)
 
         self.back_button.clicked.connect(self._go_back)
         self.next_button.clicked.connect(self._go_next)
