@@ -11,7 +11,9 @@ class StudioStatusBar(QStatusBar):
         super().__init__()
         self.git = git
         self.path_label = QLabel("Ready")
+        self.ai_label = QLabel("")
         self.git_label = QLabel("")
+        self.addPermanentWidget(self.ai_label)
         self.addPermanentWidget(self.git_label)
         self.addPermanentWidget(self.path_label)
 
@@ -28,3 +30,9 @@ class StudioStatusBar(QStatusBar):
             self.git_label.setText(f"{branch}{dirty}")
         else:
             self.git_label.setText("")
+
+    def set_ai_suggestions_available(self, available: bool) -> None:
+        if available:
+            self.ai_label.setText("AI suggestions ready")
+        else:
+            self.ai_label.setText("")

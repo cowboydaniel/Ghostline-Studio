@@ -28,7 +28,7 @@ class LSPManager(QObject):
         super().__init__(parent)
         self.config = config
         self.workspace_manager = workspace_manager
-        self.clients: dict[str, dict[str, LSPClient]] = {}
+        self.clients: dict[str, dict[str, dict[str, LSPClient]]] = {}
         self._diag_callbacks: list[Callable[[list[Diagnostic]], None]] = []
         self._pending: dict[int, Callable[[dict], None]] = {}
         self._language_map = self._build_language_map()
@@ -71,37 +71,55 @@ class LSPManager(QObject):
         cfg["extension_map"] = {**extension_map, **cfg["extension_map"]}
         self.config.settings["lsp"] = cfg
 
-    def _get_client(self, language: str) -> LSPClient | None:
+    def _role_definitions(self, language: str) -> dict[str, list[dict[str, Any]]]:
+        servers_cfg = self.config.get("lsp", {}).get("servers", {})
+        entry = servers_cfg.get(language) or {}
+        if entry.get("command"):
+            return {"primary": [entry]}
+        role_map: dict[str, list[dict[str, Any]]] = {}
+        for role in ("primary", "analyzers", "formatter"):
+            value = entry.get(role)
+            if not value:
+                continue
+            if isinstance(value, list):
+                role_map[role] = value
+            else:
+                role_map[role] = [value]
+        return role_map
+
+    def _get_client(self, language: str, role: str = "primary") -> LSPClient | None:
         workspace = self.workspace_manager.current_workspace or str(Path(path := ".").resolve())
-        lang_clients = self.clients.setdefault(workspace, {})
-        if language in lang_clients:
-            return lang_clients[language]
-        server_cfg = self.config.get("lsp", {}).get("servers", {}).get(language)
-        if not server_cfg:
-            logger.warning("No LSP server configured for %s", language)
-            self.lsp_error.emit(f"No LSP configured for {language}")
+        lang_clients = self.clients.setdefault(workspace, {}).setdefault(language, {})
+        if role in lang_clients:
+            return lang_clients[role]
+        role_defs = self._role_definitions(language)
+        definitions = role_defs.get(role)
+        if not definitions:
+            logger.warning("No %s LSP server configured for %s", role, language)
+            self.lsp_error.emit(f"No {role} LSP configured for {language}")
             return None
-        command = [server_cfg.get("command")] + list(server_cfg.get("args", []))
+        cfg = definitions[0]
+        command = [cfg.get("command")] + list(cfg.get("args", []))
         try:
             client = LSPClient(command, workdir=workspace)
         except FileNotFoundError:
-            message = f"LSP server for {language} not found. Install: {server_cfg.get('command')}"
+            message = f"LSP server for {language} not found. Install: {cfg.get('command')}"
             logger.error(message)
             self.lsp_error.emit(message)
             return None
-        self._register_client_hooks(language, workspace, client)
+        self._register_client_hooks(language, workspace, role, client)
         client.notification_received.connect(self._handle_notification)
         client.response_received.connect(self._handle_response)
         client.start()
-        lang_clients[language] = client
+        lang_clients[role] = client
         self._initialize(client, workspace)
         return client
 
-    def _register_client_hooks(self, language: str, workspace: str, client: LSPClient) -> None:
+    def _register_client_hooks(self, language: str, workspace: str, role: str, client: LSPClient) -> None:
         def _handle_exit(_code, _status=None):
-            logger.error("LSP server for %s exited unexpectedly in %s", language, workspace)
+            logger.error("LSP server for %s (%s) exited unexpectedly in %s", language, role, workspace)
             self._notify_failure(language)
-            self._drop_client(language, workspace)
+            self._drop_client(language, workspace, role)
 
         client.process.finished.connect(_handle_exit)
         client.process.errorOccurred.connect(lambda err: self._notify_failure(language, str(err)))
@@ -119,16 +137,17 @@ class LSPManager(QObject):
         )
         client.send_notification("initialized", {})
 
-    def _drop_client(self, language: str, workspace: str) -> None:
+    def _drop_client(self, language: str, workspace: str, role: str) -> None:
         if workspace in self.clients and language in self.clients[workspace]:
-            client = self.clients[workspace].pop(language)
-            client.stop()
+            client = self.clients[workspace][language].pop(role, None)
+            if client:
+                client.stop()
 
     def restart_language_server(self, language: str) -> None:
         """Restart the language server for a specific language in the current workspace."""
 
         workspace = self.workspace_manager.current_workspace or str(Path(".").resolve())
-        self._drop_client(language, workspace)
+        self._drop_client(language, workspace, "primary")
         self._notify_restart(language)
         self._get_client(language)
 
@@ -142,51 +161,57 @@ class LSPManager(QObject):
     def _notify_restart(self, language: str) -> None:
         self.lsp_notice.emit(f"Restarting {language} language server...")
 
+    def _clients_for_language(self, language: str) -> list[LSPClient]:
+        clients: list[LSPClient] = []
+        for role in self._role_definitions(language).keys():
+            client = self._get_client(language, role)
+            if client:
+                clients.append(client)
+        return clients
+
     # Document events
     def open_document(self, path: str, text: str) -> None:
         language = self._language_for_file(path)
         if not language:
             return
-        client = self._get_client(language)
-        if not client:
-            return
-        client.send_notification(
-            "textDocument/didOpen",
-            {
-                "textDocument": {
-                    "uri": Path(path).resolve().as_uri(),
-                    "languageId": language,
-                    "version": 1,
-                    "text": text,
-                }
-            },
-        )
+        for client in self._clients_for_language(language):
+            client.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": Path(path).resolve().as_uri(),
+                        "languageId": language,
+                        "version": 1,
+                        "text": text,
+                    }
+                },
+            )
 
     def change_document(self, path: str, text: str, version: int) -> None:
         language = self._language_for_file(path)
-        client = self._get_client(language) if language else None
-        if not client:
+        if not language:
             return
-        client.send_notification(
-            "textDocument/didChange",
-            {
-                "textDocument": {
-                    "uri": Path(path).resolve().as_uri(),
-                    "version": version,
+        for client in self._clients_for_language(language):
+            client.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {
+                        "uri": Path(path).resolve().as_uri(),
+                        "version": version,
+                    },
+                    "contentChanges": [{"text": text}],
                 },
-                "contentChanges": [{"text": text}],
-            },
-        )
+            )
 
     def close_document(self, path: str) -> None:
         language = self._language_for_file(path)
-        client = self._get_client(language) if language else None
-        if not client:
+        if not language:
             return
-        client.send_notification(
-            "textDocument/didClose",
-            {"textDocument": {"uri": Path(path).resolve().as_uri()}},
-        )
+        for client in self._clients_for_language(language):
+            client.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": Path(path).resolve().as_uri()}},
+            )
 
     # Feature requests
     def request_completions(self, path: str, position: dict[str, int], callback: Callable[[dict], None] | None = None) -> int | None:

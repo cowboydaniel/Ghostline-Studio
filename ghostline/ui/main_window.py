@@ -28,8 +28,11 @@ from ghostline.lang.diagnostics import DiagnosticsModel
 from ghostline.lang.lsp_manager import LSPManager
 from ghostline.ai.ai_client import AIClient
 from ghostline.ai.ai_chat_panel import AIChatPanel
-from ghostline.ai.ai_commands import explain_selection, refactor_selection
+from ghostline.ai.ai_commands import ai_code_actions, explain_selection, refactor_selection
+from ghostline.ai.analysis_service import AnalysisService
 from ghostline.editor.code_editor import CodeEditor
+from ghostline.formatter.formatter_manager import FormatterManager
+from ghostline.indexer.index_manager import IndexManager
 from ghostline.search.global_search import GlobalSearchDialog
 from ghostline.search.symbol_search import SymbolSearcher
 from ghostline.plugins.loader import PluginLoader
@@ -37,18 +40,24 @@ from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
 from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.status_bar import StudioStatusBar
+from ghostline.ui.layout_manager import LayoutManager
 from ghostline.ui.tabs import EditorTabs
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.workspace.project_model import ProjectModel
 from ghostline.workspace.project_view import ProjectView
 from ghostline.terminal.terminal_widget import TerminalWidget
 from ghostline.vcs.git_integration import GitIntegration
+from ghostline.vcs.git_panel import GitPanel
+from ghostline.vcs.git_service import GitService
 from ghostline.debugger.debugger_manager import DebuggerManager
 from ghostline.debugger.debugger_panel import DebuggerPanel
 from ghostline.tasks.task_manager import TaskManager
 from ghostline.tasks.task_panel import TaskPanel
 from ghostline.testing.test_manager import TestManager
 from ghostline.testing.test_panel import TestPanel
+from ghostline.testing.coverage_panel import CoveragePanel
+from ghostline.collab.session_manager import SessionManager
+from ghostline.collab.presence_panel import PresencePanel
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +77,16 @@ class MainWindow(QMainWindow):
         self.command_registry = CommandRegistry()
         self.ai_client = AIClient(config)
         self.symbols = SymbolSearcher(self.lsp_manager)
+        self.index_manager = IndexManager(lambda: self.workspace_manager.current_workspace)
+        self.analysis_service = AnalysisService(self.ai_client)
+        self.formatter = FormatterManager(self.lsp_manager)
         self.debugger = DebuggerManager()
         self.task_manager = TaskManager(lambda: self.workspace_manager.current_workspace)
         self.test_manager = TestManager(self.task_manager, lambda: self.workspace_manager.current_workspace)
+        self.session_manager = SessionManager()
         self.plugin_loader = PluginLoader(self, self.command_registry, self.menuBar(), self)
+        self.layout_manager = LayoutManager(self)
+        self.git_service = GitService(self.workspace_manager.current_workspace)
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -83,6 +98,7 @@ class MainWindow(QMainWindow):
 
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
+        self.analysis_service.suggestions_changed.connect(lambda items: self.status.set_ai_suggestions_available(bool(items)))
 
         self.command_palette = CommandPalette(self)
         self.command_palette.set_registry(self.command_registry)
@@ -95,6 +111,9 @@ class MainWindow(QMainWindow):
         self._create_debugger_dock()
         self._create_task_dock()
         self._create_test_dock()
+        self._create_git_dock()
+        self._create_coverage_dock()
+        self._create_collaboration_dock()
 
         self.lsp_manager.subscribe_diagnostics(self._handle_diagnostics)
         self.lsp_manager.lsp_error.connect(lambda msg: self.status.show_message(msg))
@@ -138,6 +157,9 @@ class MainWindow(QMainWindow):
         self.action_ai_refactor = QAction("Refactor Selection", self)
         self.action_ai_refactor.triggered.connect(lambda: self._run_ai_command(refactor_selection))
 
+        self.action_ai_code_actions = QAction("AI Code Actions...", self)
+        self.action_ai_code_actions.triggered.connect(lambda: self._run_ai_command(ai_code_actions))
+
         self.action_open_plugins = QAction("Plugins", self)
         self.action_open_plugins.triggered.connect(self._open_plugin_manager)
 
@@ -147,6 +169,9 @@ class MainWindow(QMainWindow):
 
         self.action_restart_language = QAction("Restart Language Server", self)
         self.action_restart_language.triggered.connect(self._restart_language_server)
+
+        self.action_format_document = QAction("Format Document", self)
+        self.action_format_document.triggered.connect(self._format_current_document)
 
     def _create_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -166,10 +191,12 @@ class MainWindow(QMainWindow):
         ai_menu = self.menuBar().addMenu("AI")
         ai_menu.addAction(self.action_ai_explain)
         ai_menu.addAction(self.action_ai_refactor)
+        ai_menu.addAction(self.action_ai_code_actions)
 
         tools_menu = self.menuBar().addMenu("Tools")
         tools_menu.addAction(self.action_open_plugins)
         tools_menu.addAction(self.action_run_task)
+        tools_menu.addAction(self.action_format_document)
 
     def _create_terminal_dock(self) -> None:
         dock = QDockWidget("Terminal", self)
@@ -234,6 +261,34 @@ class MainWindow(QMainWindow):
         dock.setWidget(panel)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self.test_dock = dock
+
+    def _format_current_document(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        new_text = self.formatter.format_document(editor.path, editor.toPlainText())
+        editor.setPlainText(new_text)
+
+    def _create_git_dock(self) -> None:
+        dock = QDockWidget("Git", self)
+        dock.setObjectName("gitDock")
+        dock.setWidget(GitPanel(self.git_service, self))
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.git_dock = dock
+
+    def _create_coverage_dock(self) -> None:
+        dock = QDockWidget("Coverage", self)
+        dock.setObjectName("coverageDock")
+        dock.setWidget(CoveragePanel(self))
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.coverage_dock = dock
+
+    def _create_collaboration_dock(self) -> None:
+        dock = QDockWidget("Collaboration", self)
+        dock.setObjectName("collabDock")
+        dock.setWidget(PresencePanel(self.session_manager, self))
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.collab_dock = dock
 
     def show_command_palette(self) -> None:
         self._register_core_commands()
@@ -433,6 +488,7 @@ class MainWindow(QMainWindow):
         for editor in self.editor_tabs.iter_editors():
             file_diags = [d for d in diagnostics if d.file == str(editor.path)]
             editor.apply_diagnostics(file_diags)
+        self.analysis_service.on_diagnostics([diag.__dict__ for diag in diagnostics])
 
     def _jump_to_diagnostic(self, index) -> None:
         file_path = self.diagnostics_model.item(index.row(), 0).text()

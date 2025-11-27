@@ -12,24 +12,39 @@ ai:
   enabled: false
   backend: "dummy"
   endpoint: "http://localhost:11434"
+  background_analysis: true
+formatting:
+  on_save: false
+  provider: "lsp"
 lsp:
   servers:
     python:
-      command: "pylsp"
-      args: []
+      primary:
+        command: "pylsp"
+        args: []
+      analyzers:
+        - command: "ruff-lsp"
+      formatter:
+        command: "black"
+        args:
+          - "--quiet"
     typescript:
-      command: "typescript-language-server"
-      args:
-        - "--stdio"
+      primary:
+        command: "typescript-language-server"
+        args:
+          - "--stdio"
     c_cpp:
-      command: "clangd"
-      args: []
+      primary:
+        command: "clangd"
+        args: []
     rust:
-      command: "rust-analyzer"
-      args: []
+      primary:
+        command: "rust-analyzer"
+        args: []
     java:
-      command: "jdtls"
-      args: []
+      primary:
+        command: "jdtls"
+        args: []
   extension_map:
     cpp: "c_cpp"
     c: "c_cpp"

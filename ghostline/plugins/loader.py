@@ -50,7 +50,16 @@ class PluginLoader:
     def _register_plugin(self, path: Path) -> None:
         name = path.stem
         enabled = self.enabled_state.get(name, True)
-        self.plugins.append(PluginDefinition(name=name, path=path, enabled=enabled))
+        metadata_path = path.with_suffix("").with_name("plugin.yaml")
+        metadata = yaml.safe_load(metadata_path.read_text()) if metadata_path.exists() else {}
+        definition = PluginDefinition(
+            name=name,
+            path=path,
+            enabled=enabled,
+            version=metadata.get("version") if isinstance(metadata, dict) else None,
+            author=metadata.get("author") if isinstance(metadata, dict) else None,
+        )
+        self.plugins.append(definition)
 
     def load_all(self) -> None:
         self.discover()
