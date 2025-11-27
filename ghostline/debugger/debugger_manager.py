@@ -1,13 +1,16 @@
 """Lightweight wrapper around debugpy for Ghostline."""
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Iterable
 
 from PySide6.QtCore import QObject, Signal
 
+from ghostline.core.logging import get_logger
 from ghostline.debugger.breakpoints import BreakpointStore
 
 
@@ -21,6 +24,7 @@ class DebuggerManager(QObject):
         super().__init__()
         self.breakpoints = breakpoint_store or BreakpointStore.instance()
         self.process: subprocess.Popen | None = None
+        self.logger = get_logger(__name__)
 
     def launch(self, script: str, args: Iterable[str] | None = None) -> None:
         command = [sys.executable, "-m", "debugpy", "--listen", "5678", script]
@@ -36,6 +40,7 @@ class DebuggerManager(QObject):
             )
             self.state_changed.emit("running")
             self.output.emit("Debug session started on port 5678")
+            threading.Thread(target=self._watch_process, daemon=True).start()
         except FileNotFoundError:
             self.state_changed.emit("error")
             self.output.emit("debugpy not available. Install with `pip install debugpy`.")
@@ -55,3 +60,18 @@ class DebuggerManager(QObject):
 
     def refresh_breakpoints(self, path: str) -> list[int]:
         return self.breakpoints.list_for(path)
+
+    def _watch_process(self) -> None:
+        if not self.process or not self.process.stdout:
+            return
+        try:
+            for line in self.process.stdout:
+                cleaned = line.rstrip()
+                if cleaned:
+                    self.output.emit(cleaned)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("Debugger output read failed: %s", exc)
+        finally:
+            if self.process and self.process.poll() not in (0, None):
+                self.state_changed.emit("error")
+                self.output.emit("Debugger crashed. Session detached safely.")

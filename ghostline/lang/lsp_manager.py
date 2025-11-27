@@ -10,6 +10,7 @@ import yaml
 from PySide6.QtCore import QObject, Signal
 
 from ghostline.core.config import ConfigManager
+from ghostline.core.logging import LOG_FILE
 from ghostline.lang.diagnostics import Diagnostic
 from ghostline.lang.lsp_client import LSPClient
 from ghostline.workspace.workspace_manager import WorkspaceManager
@@ -21,6 +22,7 @@ class LSPManager(QObject):
     """Manage language server lifecycles and route editor events."""
 
     lsp_error = Signal(str)
+    lsp_notice = Signal(str)
 
     def __init__(self, config: ConfigManager, workspace_manager: WorkspaceManager, parent=None) -> None:
         super().__init__(parent)
@@ -87,12 +89,22 @@ class LSPManager(QObject):
             logger.error(message)
             self.lsp_error.emit(message)
             return None
+        self._register_client_hooks(language, workspace, client)
         client.notification_received.connect(self._handle_notification)
         client.response_received.connect(self._handle_response)
         client.start()
         lang_clients[language] = client
         self._initialize(client, workspace)
         return client
+
+    def _register_client_hooks(self, language: str, workspace: str, client: LSPClient) -> None:
+        def _handle_exit(_code, _status=None):
+            logger.error("LSP server for %s exited unexpectedly in %s", language, workspace)
+            self._notify_failure(language)
+            self._drop_client(language, workspace)
+
+        client.process.finished.connect(_handle_exit)
+        client.process.errorOccurred.connect(lambda err: self._notify_failure(language, str(err)))
 
     def _initialize(self, client: LSPClient, workspace: str) -> None:
         root_uri = Path(workspace).resolve().as_uri()
@@ -106,6 +118,29 @@ class LSPManager(QObject):
             },
         )
         client.send_notification("initialized", {})
+
+    def _drop_client(self, language: str, workspace: str) -> None:
+        if workspace in self.clients and language in self.clients[workspace]:
+            client = self.clients[workspace].pop(language)
+            client.stop()
+
+    def restart_language_server(self, language: str) -> None:
+        """Restart the language server for a specific language in the current workspace."""
+
+        workspace = self.workspace_manager.current_workspace or str(Path(".").resolve())
+        self._drop_client(language, workspace)
+        self._notify_restart(language)
+        self._get_client(language)
+
+    def _notify_failure(self, language: str, error_detail: str | None = None) -> None:
+        detail_hint = f" See log for details: {LOG_FILE}" if LOG_FILE else ""
+        message = f"LSP server for {language} stopped.{detail_hint}"
+        if error_detail:
+            logger.error("LSP failure for %s: %s", language, error_detail)
+        self.lsp_error.emit(message)
+
+    def _notify_restart(self, language: str) -> None:
+        self.lsp_notice.emit(f"Restarting {language} language server...")
 
     # Document events
     def open_document(self, path: str, text: str) -> None:
