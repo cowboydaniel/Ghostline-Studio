@@ -36,7 +36,7 @@ class LSPClient(QObject):
         self._command = program
         self._args = args
         self.process.setWorkingDirectory(self.workdir or "")
-        logger.error("Starting LSP client: %r %r", self._command, self._args)
+        logger.info("Starting LSP client: %r %r", self._command, self._args)
         self.process.start(program, args)
 
     def stop(self) -> None:
