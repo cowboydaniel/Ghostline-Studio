@@ -94,6 +94,83 @@ class SemanticIndexManager:
         except Exception:  # noqa: BLE001
             logger.exception("Failed to merge runtime observation")
 
+    def get_graph_snapshot(self) -> dict:
+        """Return a lightweight, serializable snapshot of the semantic graph."""
+
+        workspace = self.workspace_provider()
+        root = Path(workspace) if workspace else None
+
+        def _format_path(path: Path) -> str:
+            if root:
+                try:
+                    return str(path.relative_to(root))
+                except ValueError:
+                    pass
+            return str(path)
+
+        def _add_node(
+            collection: dict[str, dict], node_id: str, node_type: str, label: str, file_path: Path | None, span: tuple[int, int] | None
+        ) -> dict[str, dict]:
+            if node_id in collection:
+                return collection
+            collection[node_id] = {
+                "id": node_id,
+                "type": node_type,
+                "label": label,
+                "file": str(file_path) if file_path else None,
+                "line": span[0] - 1 if span else None,
+            }
+            return collection
+
+        nodes: dict[str, dict] = {}
+        edges: list[dict] = []
+        edge_keys: set[tuple[str, str, str]] = set()
+        files_seen: set[Path] = set()
+
+        for node in self.graph.nodes():
+            formatted_path = _format_path(node.file)
+            file_id = f"file:{formatted_path}"
+            if node.file not in files_seen:
+                files_seen.add(node.file)
+                _add_node(nodes, file_id, "file", node.file.name, node.file, None)
+
+            module_id = f"module:{formatted_path}"
+            _add_node(nodes, module_id, "module", node.file.stem, node.file, None)
+            edge_key = (module_id, file_id, "contains")
+            if edge_key not in edge_keys:
+                edge_keys.add(edge_key)
+                edges.append({"source": module_id, "target": file_id, "type": "contains"})
+
+            if node.kind != "module":
+                symbol_prefix = "func" if node.kind == "function" else node.kind
+                symbol_id = f"{symbol_prefix}:{formatted_path}:{node.name}"
+                _add_node(nodes, symbol_id, node.kind, node.name, node.file, node.span)
+                symbol_edge_key = (file_id, symbol_id, "contains")
+                if symbol_edge_key not in edge_keys:
+                    edge_keys.add(symbol_edge_key)
+                    edges.append({"source": file_id, "target": symbol_id, "type": "contains"})
+
+        def _node_id_for(graph_node: GraphNode) -> str:
+            formatted_path = _format_path(graph_node.file)
+            if graph_node.kind == "module":
+                return f"module:{formatted_path}"
+            prefix = "func" if graph_node.kind == "function" else graph_node.kind
+            return f"{prefix}:{formatted_path}:{graph_node.name}"
+
+        for edge in self.graph.edges():
+            src_id = _node_id_for(edge.source)
+            tgt_id = _node_id_for(edge.target)
+            if src_id not in nodes:
+                _add_node(nodes, src_id, edge.source.kind, edge.source.name, edge.source.file, edge.source.span)
+            if tgt_id not in nodes:
+                _add_node(nodes, tgt_id, edge.target.kind, edge.target.name, edge.target.file, edge.target.span)
+            edge_key = (src_id, tgt_id, edge.relation)
+            if edge_key not in edge_keys:
+                edge_keys.add(edge_key)
+                edges.append({"source": src_id, "target": tgt_id, "type": edge.relation})
+
+        return {"nodes": list(nodes.values()), "edges": edges}
+
 
 class _ASTVisitor(ast.NodeVisitor):
     """Populate the semantic graph using a Python AST."""

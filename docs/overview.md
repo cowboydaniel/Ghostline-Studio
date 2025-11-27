@@ -34,3 +34,7 @@ The included AI features use a dummy backend that echoes prompts. Configure your
 preferred backend and endpoint via the Settings dialog or by editing
 `~/.config/ghostline/settings.yaml` to point to your service. The AI chat dock
 and commands will send prompts through the configured backend.
+
+## 3D Architecture Map
+
+Ghostline Studio now includes an early "Ghostline Spatial Map" for exploring the semantic structure of an open workspace. Open it from **View → 3D Architecture Map**. The dock shows modules, files, and functions as colored shapes with dependency lines and supports basic orbit/zoom camera controls. Clicking file or function nodes opens the corresponding file in the editor. Rendering uses Qt3D when available in your PySide6 build; otherwise a placeholder panel appears until OpenGL rendering is added.
