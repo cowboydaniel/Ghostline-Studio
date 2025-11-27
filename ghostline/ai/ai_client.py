@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Generator
 from urllib import error, request
 
 from ghostline.core.config import ConfigManager
+from ghostline.core.logging import get_logger
 
 
 @dataclass
@@ -68,8 +70,10 @@ class AIClient:
 
     def __init__(self, config: ConfigManager) -> None:
         self.config = config
+        self.logger = get_logger(__name__)
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
         self.backend = self._create_backend()
+        self.disabled = False
 
     def _create_backend(self):
         if self.backend_type == "ollama":
@@ -79,10 +83,27 @@ class AIClient:
         return DummyBackend(self.config)
 
     def send(self, prompt: str, context: str | None = None) -> AIResponse:
-        return self.backend.send(prompt, context)
+        if self.disabled:
+            return AIResponse(text="AI backend disabled due to previous errors.")
+
+        try:
+            return self.backend.send(prompt, context)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("AI backend failure: %s", exc)
+            self.disabled = True
+            return AIResponse(text="AI backend unavailable. Check logs for details.")
 
     def stream(self, prompt: str, context: str | None = None):
-        if hasattr(self.backend, "stream"):
-            return self.backend.stream(prompt, context)
-        yield self.send(prompt, context).text
+        if self.disabled:
+            yield "AI backend disabled due to previous errors."
+            return
+        try:
+            if hasattr(self.backend, "stream"):
+                yield from self.backend.stream(prompt, context)
+                return
+            yield self.send(prompt, context).text
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("AI streaming failure: %s", exc)
+            self.disabled = True
+            yield "AI backend unavailable. Check logs for details."
 

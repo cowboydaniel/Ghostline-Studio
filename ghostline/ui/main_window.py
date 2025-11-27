@@ -32,7 +32,9 @@ from ghostline.ai.ai_commands import explain_selection, refactor_selection
 from ghostline.editor.code_editor import CodeEditor
 from ghostline.search.global_search import GlobalSearchDialog
 from ghostline.search.symbol_search import SymbolSearcher
+from ghostline.plugins.loader import PluginLoader
 from ghostline.ui.dialogs.settings_dialog import SettingsDialog
+from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
 from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.tabs import EditorTabs
@@ -43,6 +45,10 @@ from ghostline.terminal.terminal_widget import TerminalWidget
 from ghostline.vcs.git_integration import GitIntegration
 from ghostline.debugger.debugger_manager import DebuggerManager
 from ghostline.debugger.debugger_panel import DebuggerPanel
+from ghostline.tasks.task_manager import TaskManager
+from ghostline.tasks.task_panel import TaskPanel
+from ghostline.testing.test_manager import TestManager
+from ghostline.testing.test_panel import TestPanel
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +69,9 @@ class MainWindow(QMainWindow):
         self.ai_client = AIClient(config)
         self.symbols = SymbolSearcher(self.lsp_manager)
         self.debugger = DebuggerManager()
+        self.task_manager = TaskManager(lambda: self.workspace_manager.current_workspace)
+        self.test_manager = TestManager(self.task_manager, lambda: self.workspace_manager.current_workspace)
+        self.plugin_loader = PluginLoader(self, self.command_registry, self.menuBar(), self)
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -84,9 +93,14 @@ class MainWindow(QMainWindow):
         self._create_ai_dock()
         self._create_diagnostics_dock()
         self._create_debugger_dock()
+        self._create_task_dock()
+        self._create_test_dock()
 
         self.lsp_manager.subscribe_diagnostics(self._handle_diagnostics)
         self.lsp_manager.lsp_error.connect(lambda msg: self.status.show_message(msg))
+        self.lsp_manager.lsp_notice.connect(lambda msg: self.status.show_message(msg))
+        self.plugin_loader.load_all()
+        self.task_manager.load_workspace_tasks()
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
@@ -124,6 +138,16 @@ class MainWindow(QMainWindow):
         self.action_ai_refactor = QAction("Refactor Selection", self)
         self.action_ai_refactor.triggered.connect(lambda: self._run_ai_command(refactor_selection))
 
+        self.action_open_plugins = QAction("Plugins", self)
+        self.action_open_plugins.triggered.connect(self._open_plugin_manager)
+
+        self.action_run_task = QAction("Run Task...", self)
+        self.action_run_task.setShortcut("Ctrl+Shift+R")
+        self.action_run_task.triggered.connect(self._run_task_command)
+
+        self.action_restart_language = QAction("Restart Language Server", self)
+        self.action_restart_language.triggered.connect(self._restart_language_server)
+
     def _create_menus(self) -> None:
         file_menu = self.menuBar().addMenu("File")
         file_menu.addAction(self.action_open_file)
@@ -137,10 +161,15 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.action_global_search)
         view_menu.addAction(self.action_goto_symbol)
         view_menu.addAction(self.action_goto_file)
+        view_menu.addAction(self.action_restart_language)
 
         ai_menu = self.menuBar().addMenu("AI")
         ai_menu.addAction(self.action_ai_explain)
         ai_menu.addAction(self.action_ai_refactor)
+
+        tools_menu = self.menuBar().addMenu("Tools")
+        tools_menu.addAction(self.action_open_plugins)
+        tools_menu.addAction(self.action_run_task)
 
     def _create_terminal_dock(self) -> None:
         dock = QDockWidget("Terminal", self)
@@ -190,6 +219,22 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self.debugger_dock = dock
 
+    def _create_task_dock(self) -> None:
+        dock = QDockWidget("Tasks", self)
+        dock.setObjectName("tasksDock")
+        panel = TaskPanel(self.task_manager, self)
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.task_dock = dock
+
+    def _create_test_dock(self) -> None:
+        dock = QDockWidget("Tests", self)
+        dock.setObjectName("testsDock")
+        panel = TestPanel(self.test_manager, self.get_current_editor, self)
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.test_dock = dock
+
     def show_command_palette(self) -> None:
         self._register_core_commands()
         self.command_palette.open_palette()
@@ -200,6 +245,7 @@ class MainWindow(QMainWindow):
         self.workspace_manager.register_recent(path)
         self.status.update_git(self.workspace_manager.current_workspace)
         logger.info("Opened file: %s", path)
+        self.plugin_loader.emit_event("file.opened", path=path)
 
     def open_folder(self, folder: str) -> None:
         self.workspace_manager.open_workspace(folder)
@@ -208,10 +254,14 @@ class MainWindow(QMainWindow):
         index = self.project_model.set_workspace_root(folder)
         if index:
             self.project_view.setRootIndex(index)
+        self.plugin_loader.emit_event("workspace.opened", path=folder)
+        self.task_manager.load_workspace_tasks()
 
     def save_all(self) -> None:
         for editor in self.editor_tabs.iter_editors():
             editor.save()
+            if editor.path:
+                self.plugin_loader.emit_event("file.saved", path=str(editor.path))
         self.status.show_message("Saved all files")
 
     def get_current_editor(self) -> CodeEditor | None:
@@ -277,6 +327,11 @@ class MainWindow(QMainWindow):
         )
         self.command_registry.register_command(
             Command("navigate.file", "Go to File", "Navigate", self._open_file_picker)
+        )
+        self.command_registry.register_command(Command("tasks.run", "Run Task", "Tasks", self._run_task_command))
+        self.command_registry.register_command(Command("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
+        self.command_registry.register_command(
+            Command("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server)
         )
 
     def _toggle_project(self) -> None:
@@ -345,6 +400,28 @@ class MainWindow(QMainWindow):
                 self.open_file(str(file))
                 return
         self.status.show_message("No matching file found")
+
+    def _open_plugin_manager(self) -> None:
+        dialog = PluginManagerDialog(self.plugin_loader, self)
+        dialog.exec()
+
+    def _run_task_command(self) -> None:
+        self.task_manager.load_workspace_tasks()
+        panel = getattr(self, "task_dock", None)
+        if panel:
+            panel.show()
+        if self.task_manager.tasks:
+            self.task_manager.run_task(self.task_manager.tasks[0].name)
+        else:
+            self.status.show_message("No tasks configured in .ghostline/tasks.yaml")
+
+    def _restart_language_server(self) -> None:
+        languages = sorted(set(self.lsp_manager._language_map.values()))
+        if not languages:
+            return
+        lang, ok = QInputDialog.getItem(self, "Restart Language Server", "Language", languages, 0, False)
+        if ok and lang:
+            self.lsp_manager.restart_language_server(lang)
 
     def _run_ai_command(self, func) -> None:
         editor = self.get_current_editor()
