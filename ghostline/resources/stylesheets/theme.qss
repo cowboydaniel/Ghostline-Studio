@@ -1,0 +1,43 @@
+/* Ghostline Studio polished theme */
+QMainWindow {
+    background-color: #1c1f24;
+}
+
+QDockWidget {
+    border: 1px solid #2f333a;
+    titlebar-close-icon: url(:/icons/close.svg);
+}
+
+QLineEdit, QListWidget, QTextEdit {
+    border: 1px solid #3a3f47;
+    padding: 6px;
+    border-radius: 4px;
+    color: #e7ecf0;
+    background-color: #111317;
+}
+
+QPushButton {
+    background-color: #2b7cff;
+    color: white;
+    border: 1px solid #2b7cff;
+    padding: 6px 10px;
+    border-radius: 4px;
+}
+
+QPushButton:hover {
+    background-color: #3c86ff;
+}
+
+QPushButton:disabled {
+    background-color: #3a3f47;
+    color: #8a8f98;
+}
+
+QMenuBar {
+    background-color: #121418;
+    color: #e7ecf0;
+}
+
+QMenuBar::item:selected {
+    background: #2b7cff;
+}

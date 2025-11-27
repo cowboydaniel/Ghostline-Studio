@@ -64,9 +64,15 @@ class UnifiedDiffApplier:
 class RefactorPipeline:
     """Run AI-driven code actions as a single undoable operation."""
 
-    def __init__(self, client: AIClient, applier: UnifiedDiffApplier | None = None) -> None:
+    def __init__(
+        self,
+        client: AIClient,
+        applier: UnifiedDiffApplier | None = None,
+        test_selector: Callable[[str], list[str]] | None = None,
+    ) -> None:
         self.client = client
         self.applier = applier or UnifiedDiffApplier()
+        self.test_selector = test_selector
         self._actions: dict[str, Callable[[str], str]] = {
             "improve_readability": lambda code: f"Improve readability of this code and return a unified diff:\n{code}",
             "optimize_imports": lambda code: f"Optimize imports for this file and return a unified diff:\n{code}",
@@ -113,6 +119,11 @@ class RefactorPipeline:
         cursor.beginEditBlock()
         editor.setPlainText(new_text)
         cursor.endEditBlock()
+
+    def suggest_tests(self, file_path: str) -> list[str]:
+        if self.test_selector:
+            return self.test_selector(file_path)
+        return []
 
 
 def run_code_action(editor: CodeEditor, client: AIClient, action: str, hint: str = "") -> str:

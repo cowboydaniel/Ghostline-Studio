@@ -10,6 +10,7 @@ import yaml
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "ghostline"
 DEFAULTS_PATH = Path(__file__).resolve().parent.parent / "settings" / "defaults.yaml"
 USER_SETTINGS_PATH = CONFIG_DIR / "settings.yaml"
+WORKSPACE_MEMORY_PATH = CONFIG_DIR / "workspace_memory.json"
 
 
 class ConfigManager:
@@ -23,6 +24,7 @@ class ConfigManager:
         else:
             self.user_settings = {}
         self.settings = {**self.defaults, **self.user_settings}
+        self.workspace_memory_path = Path(self.settings.get("workspace_memory_path", WORKSPACE_MEMORY_PATH))
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         if not path.exists():
@@ -35,6 +37,10 @@ class ConfigManager:
 
     def set(self, key: str, value: Any) -> None:
         self.settings[key] = value
+
+    def path_for(self, key: str, fallback: Path) -> Path:
+        value = self.settings.get(key)
+        return Path(value) if value else fallback
 
     def save(self) -> None:
         USER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)

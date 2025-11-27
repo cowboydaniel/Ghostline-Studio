@@ -14,16 +14,26 @@ class RemoteCursor:
 
 class CRDTEngine:
     def __init__(self) -> None:
-        self.buffer: list[str] = []
+        self.buffers: dict[str, list[str]] = {}
         self.remote_cursors: list[RemoteCursor] = []
+        self.user_history: dict[str, list[str]] = {}
 
-    def apply_local_change(self, text: str) -> list[Tuple[int, str]]:
-        self.buffer = list(text)
+    def apply_local_change(self, file_id: str, text: str, user: str | None = None) -> list[Tuple[int, str]]:
+        self.buffers[file_id] = list(text)
+        if user:
+            self.user_history.setdefault(user, []).append(text)
         return []
 
-    def apply_remote_patch(self, patch: str) -> str:
-        self.buffer = list(patch)
-        return "".join(self.buffer)
+    def undo(self, user: str) -> str | None:
+        history = self.user_history.get(user, [])
+        if history:
+            history.pop()
+            return history[-1] if history else ""
+        return None
+
+    def apply_remote_patch(self, file_id: str, patch: str) -> str:
+        self.buffers[file_id] = list(patch)
+        return "".join(self.buffers[file_id])
 
     def set_remote_cursor(self, cursor: RemoteCursor) -> None:
         self.remote_cursors.append(cursor)
