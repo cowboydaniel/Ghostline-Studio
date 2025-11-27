@@ -4,8 +4,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QHBoxLayout,
     QStackedLayout,
+    QLineEdit,
+    QMessageBox,
 )
 
 from ghostline.core.config import ConfigManager
@@ -50,6 +52,8 @@ from ghostline.search.symbol_search import SymbolSearcher
 from ghostline.plugins.loader import PluginLoader
 from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
+from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
+from ghostline.ui.dialogs.ai_settings_dialog import AISettingsDialog
 from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.layout_manager import LayoutManager
@@ -133,7 +137,7 @@ class MainWindow(QMainWindow):
         self.plugin_loader = PluginLoader(self, self.command_registry, self.menuBar(), self)
         self.layout_manager = LayoutManager(self)
         self.git_service = GitService(self.workspace_manager.current_workspace)
-        self.first_run = not bool(self.workspace_manager.recent_items)
+        self.first_run = not bool(self.config.get("first_run_completed", False))
         self._recent_files_by_workspace: dict[str, list[str]] = {}
 
         self.setWindowTitle("Ghostline Studio")
@@ -178,8 +182,11 @@ class MainWindow(QMainWindow):
         self.command_palette.set_registry(self.command_registry)
         self.command_palette.set_navigation_assistant(self.navigation_assistant)
         self.command_palette.set_autoflow_mode("passive")
+        self.command_palette.set_file_provider(self._search_workspace_files)
+        self.command_palette.set_open_file_handler(self.open_file)
         self._create_actions()
         self._create_menus()
+        self._create_menu_search()
         self._create_terminal_dock()
         self._create_project_dock()
         self._create_ai_dock()
@@ -300,6 +307,17 @@ class MainWindow(QMainWindow):
         if hasattr(self, "terminal_dock") and hasattr(self, "diagnostics_dock"):
             self.resizeDocks([self.terminal_dock, self.diagnostics_dock], [280, 220], Qt.Vertical)
 
+    def apply_initial_window_state(self, force_maximize: bool = False) -> None:
+        window_cfg = self.config.get("window", {}) if self.config else {}
+        geometry_hex = window_cfg.get("geometry")
+        if geometry_hex:
+            try:
+                self.restoreGeometry(QByteArray.fromHex(bytes(geometry_hex, "ascii")))
+            except Exception:
+                pass
+        if force_maximize or window_cfg.get("maximized", True):
+            self.showMaximized()
+
     def _update_workspace_state(self) -> None:
         workspace = self.workspace_manager.current_workspace
         has_workspace = workspace is not None
@@ -349,6 +367,9 @@ class MainWindow(QMainWindow):
         self.action_open_folder = QAction("Open Folder", self)
         self.action_open_folder.triggered.connect(self._prompt_open_folder)
 
+        self.action_close_folder = QAction("Close Folder", self)
+        self.action_close_folder.triggered.connect(self._close_folder)
+
         self.action_global_search = QAction("Global Search", self)
         self.action_global_search.setShortcut("Ctrl+Shift+F")
         self.action_global_search.triggered.connect(self._open_global_search)
@@ -362,6 +383,9 @@ class MainWindow(QMainWindow):
         self.action_command_palette = QAction("Command Palette", self)
         self.action_command_palette.setShortcut("Ctrl+P")
         self.action_command_palette.triggered.connect(self.show_command_palette)
+
+        self.action_search_bar = QAction("Search", self)
+        self.action_search_bar.setShortcut("Ctrl+P")
 
         self.action_toggle_autoflow = QAction("Toggle Autoflow Mode", self)
         self.action_toggle_autoflow.triggered.connect(self._toggle_autoflow_mode)
@@ -378,6 +402,12 @@ class MainWindow(QMainWindow):
         self.action_settings = QAction("Settings", self)
         self.action_settings.triggered.connect(self._open_settings)
 
+        self.action_ai_settings = QAction("AI Settings…", self)
+        self.action_ai_settings.triggered.connect(self._open_ai_settings)
+
+        self.action_setup_wizard = QAction("Re-run Setup Wizard…", self)
+        self.action_setup_wizard.triggered.connect(self.show_setup_wizard)
+
         self.action_ai_explain = QAction("Explain Selection", self)
         self.action_ai_explain.triggered.connect(lambda: self._run_ai_command(explain_selection))
 
@@ -386,6 +416,9 @@ class MainWindow(QMainWindow):
 
         self.action_ai_code_actions = QAction("AI Code Actions...", self)
         self.action_ai_code_actions.triggered.connect(lambda: self._run_ai_command(ai_code_actions))
+
+        self.action_ask_ai = QAction("Ask Ghostline AI…", self)
+        self.action_ask_ai.triggered.connect(self._focus_ai_dock)
 
         self.action_open_plugins = QAction("Plugins", self)
         self.action_open_plugins.triggered.connect(self._open_plugin_manager)
@@ -400,13 +433,94 @@ class MainWindow(QMainWindow):
         self.action_format_document = QAction("Format Document", self)
         self.action_format_document.triggered.connect(self._format_current_document)
 
+        # Edit actions
+        self.action_undo = QAction("Undo", self)
+        self.action_undo.setShortcut("Ctrl+Z")
+        self.action_undo.triggered.connect(lambda: self._with_editor(lambda e: e.undo()))
+
+        self.action_redo = QAction("Redo", self)
+        self.action_redo.setShortcut("Ctrl+Shift+Z")
+        self.action_redo.triggered.connect(lambda: self._with_editor(lambda e: e.redo()))
+
+        self.action_cut = QAction("Cut", self)
+        self.action_cut.setShortcut("Ctrl+X")
+        self.action_cut.triggered.connect(lambda: self._with_editor(lambda e: e.cut()))
+
+        self.action_copy = QAction("Copy", self)
+        self.action_copy.setShortcut("Ctrl+C")
+        self.action_copy.triggered.connect(lambda: self._with_editor(lambda e: e.copy()))
+
+        self.action_paste = QAction("Paste", self)
+        self.action_paste.setShortcut("Ctrl+V")
+        self.action_paste.triggered.connect(lambda: self._with_editor(lambda e: e.paste()))
+
+        self.action_find = QAction("Find", self)
+        self.action_find.setShortcut("Ctrl+F")
+        self.action_find.triggered.connect(self._open_global_search)
+
+        self.action_replace = QAction("Replace", self)
+        self.action_replace.setShortcut("Ctrl+H")
+        self.action_replace.triggered.connect(self._open_global_search)
+
+        # Project/Run/Debug
+        self.action_project_settings = QAction("Project Settings", self)
+        self.action_project_settings.triggered.connect(lambda: self.status.show_message("Project settings coming soon"))
+
+        self.action_run = QAction("Run", self)
+        self.action_run.triggered.connect(lambda: self.status.show_message("Run current project"))
+
+        self.action_run_tests = QAction("Run Tests", self)
+        self.action_run_tests.triggered.connect(self._run_tests)
+
+        self.action_run_tasks = QAction("Run Tasks", self)
+        self.action_run_tasks.triggered.connect(self._run_task_command)
+
+        self.action_start_debugging = QAction("Start Debugging", self)
+        self.action_start_debugging.triggered.connect(lambda: self.status.show_message("Starting debugger"))
+
+        self.action_stop_debugging = QAction("Stop Debugging", self)
+        self.action_stop_debugging.triggered.connect(lambda: self.status.show_message("Debugger stopped"))
+
+        self.action_step_over = QAction("Step Over", self)
+        self.action_step_over.triggered.connect(lambda: self.status.show_message("Step over"))
+
+        self.action_step_into = QAction("Step Into", self)
+        self.action_step_into.triggered.connect(lambda: self.status.show_message("Step into"))
+
+        self.action_step_out = QAction("Step Out", self)
+        self.action_step_out.triggered.connect(lambda: self.status.show_message("Step out"))
+
+        # Help actions
+        self.action_docs = QAction("Documentation", self)
+        self.action_docs.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com")))
+
+        self.action_report_issue = QAction("Report Issue", self)
+        self.action_report_issue.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com")))
+
+        self.action_about = QAction("About Ghostline Studio", self)
+        self.action_about.triggered.connect(self._show_about)
+
     def _create_menus(self) -> None:
-        file_menu = self.menuBar().addMenu("File")
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("File")
         file_menu.addAction(self.action_open_file)
         file_menu.addAction(self.action_open_folder)
+        file_menu.addAction(self.action_close_folder)
+        file_menu.addSeparator()
         file_menu.addAction(self.action_settings)
 
-        self.view_menu = self.menuBar().addMenu("View")
+        edit_menu = menubar.addMenu("Edit")
+        edit_menu.addAction(self.action_undo)
+        edit_menu.addAction(self.action_redo)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.action_cut)
+        edit_menu.addAction(self.action_copy)
+        edit_menu.addAction(self.action_paste)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.action_find)
+        edit_menu.addAction(self.action_replace)
+
+        self.view_menu = menubar.addMenu("View")
         self.view_menu.addAction(self.action_command_palette)
         self.view_menu.addAction(self.action_toggle_project)
         self.view_menu.addAction(self.action_toggle_terminal)
@@ -416,15 +530,72 @@ class MainWindow(QMainWindow):
         self.view_menu.addAction(self.action_toggle_architecture_map)
         self.view_menu.addAction(self.action_restart_language)
 
-        ai_menu = self.menuBar().addMenu("AI")
+        project_menu = menubar.addMenu("Project")
+        project_menu.addAction(self.action_open_folder)
+        project_menu.addAction(self.action_close_folder)
+        project_menu.addAction(self.action_project_settings)
+
+        run_menu = menubar.addMenu("Run")
+        run_menu.addAction(self.action_run)
+        run_menu.addAction(self.action_run_tests)
+        run_menu.addAction(self.action_run_tasks)
+
+        debug_menu = menubar.addMenu("Debug")
+        debug_menu.addAction(self.action_start_debugging)
+        debug_menu.addAction(self.action_stop_debugging)
+        debug_menu.addAction(self.action_step_over)
+        debug_menu.addAction(self.action_step_into)
+        debug_menu.addAction(self.action_step_out)
+
+        ai_menu = menubar.addMenu("AI")
+        ai_menu.addAction(self.action_ask_ai)
         ai_menu.addAction(self.action_ai_explain)
         ai_menu.addAction(self.action_ai_refactor)
         ai_menu.addAction(self.action_ai_code_actions)
+        ai_menu.addSeparator()
+        ai_menu.addAction(self.action_ai_settings)
+        ai_menu.addAction(self.action_setup_wizard)
 
-        tools_menu = self.menuBar().addMenu("Tools")
+        tools_menu = menubar.addMenu("Tools")
         tools_menu.addAction(self.action_open_plugins)
         tools_menu.addAction(self.action_run_task)
         tools_menu.addAction(self.action_format_document)
+
+        help_menu = menubar.addMenu("Help")
+        help_menu.addAction(self.action_docs)
+        help_menu.addAction(self.action_report_issue)
+        help_menu.addAction(self.action_about)
+
+    def _create_menu_search(self) -> None:
+        container = QWidget(self)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 2, 8, 2)
+        layout.setSpacing(6)
+        self.menu_search = QLineEdit(container)
+        self.menu_search.setPlaceholderText("Search files and commands…")
+        self.menu_search.returnPressed.connect(self._handle_menu_search)
+        hint = QLabel("Ctrl+P", container)
+        hint.setStyleSheet("color: palette(mid); font-size: 11px;")
+        layout.addWidget(self.menu_search)
+        layout.addWidget(hint)
+        self.menuBar().setCornerWidget(container, Qt.TopRightCorner)
+
+    def _handle_menu_search(self) -> None:
+        text = self.menu_search.text()
+        self.show_command_palette(text)
+
+    def _search_workspace_files(self, query: str):
+        workspace = self.workspace_manager.current_workspace
+        if not workspace or not query:
+            return []
+        lowered = query.lower()
+        results = []
+        for path in workspace.rglob("*"):
+            if len(results) >= 20:
+                break
+            if path.is_file() and lowered in path.name.lower():
+                results.append(path)
+        return results
 
     def _create_terminal_dock(self) -> None:
         dock = QDockWidget("Terminal", self)
@@ -602,9 +773,12 @@ class MainWindow(QMainWindow):
         self._register_dock_action(dock)
         self.runtime_dock = dock
 
-    def show_command_palette(self) -> None:
+    def show_command_palette(self, preset: str | None = None) -> None:
         self._register_core_commands()
-        self.command_palette.open_palette()
+        if preset:
+            self.command_palette.open_with_query(preset)
+        else:
+            self.command_palette.open_palette()
 
     def _toggle_autoflow_mode(self) -> None:
         new_mode = "active" if self.command_palette.autoflow_mode == "passive" else "passive"
@@ -664,8 +838,20 @@ class MainWindow(QMainWindow):
         self.status.show_message("Pipelines executed")
         self.status.show_message("Saved all files")
 
+    def _run_tests(self) -> None:
+        if self.workspace_manager.current_workspace:
+            self.test_manager.run_all()
+            self.status.show_message("Running tests...")
+        else:
+            self.status.show_message("Open a workspace to run tests")
+
     def get_current_editor(self) -> CodeEditor | None:
         return self.editor_tabs.current_editor()
+
+    def _with_editor(self, func) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            func(editor)
 
     def register_dock(self, identifier: str, widget: QDockWidget) -> None:
         widget.setObjectName(identifier)
@@ -689,6 +875,13 @@ class MainWindow(QMainWindow):
         if folder:
             self.open_folder(folder)
 
+    def _close_folder(self) -> None:
+        self.workspace_manager.clear_workspace()
+        if hasattr(self, "project_model"):
+            self.project_model.set_workspace_root(None)
+        self._update_workspace_state()
+        self._update_central_stack()
+
     def open_file_at(self, path: str, line: int) -> None:
         self.open_file(path)
         editor = self.get_current_editor()
@@ -700,46 +893,33 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.workspace_manager.save_recents()
+        window_cfg = self.config.settings.setdefault("window", {})
+        window_cfg["maximized"] = self.isMaximized()
+        geometry = self.saveGeometry()
+        if isinstance(geometry, QByteArray):
+            window_cfg["geometry"] = bytes(geometry.toHex()).decode("ascii")
+        self.config.save()
         super().closeEvent(event)
 
     # Command registration
     def _register_core_commands(self) -> None:
-        self.command_registry.register_command(Command("file.open", "Open File", "File", self._prompt_open_file))
-        self.command_registry.register_command(
-            Command("file.save_all", "Save All", "File", self.save_all)
-        )
-        self.command_registry.register_command(
-            Command("view.toggle_project", "Toggle Project", "View", self._toggle_project)
-        )
-        self.command_registry.register_command(
-            Command("view.toggle_terminal", "Toggle Terminal", "View", self._toggle_terminal)
-        )
-        self.command_registry.register_command(
-            Command("ai.explain_selection", "Explain Selection", "AI", lambda: self._run_ai_command(explain_selection))
-        )
-        self.command_registry.register_command(
-            Command("ai.refactor_selection", "Refactor Selection", "AI", lambda: self._run_ai_command(refactor_selection))
-        )
-        self.command_registry.register_command(
-            Command("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode)
-        )
-        self.command_registry.register_command(
-            Command("search.global", "Global Search", "Navigate", self._open_global_search)
-        )
-        self.command_registry.register_command(
-            Command("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker)
-        )
-        self.command_registry.register_command(
-            Command("workflow.run", "Run Pipelines", "Automation", self._run_all_pipelines)
-        )
-        self.command_registry.register_command(
-            Command("navigate.file", "Go to File", "Navigate", self._open_file_picker)
-        )
-        self.command_registry.register_command(Command("tasks.run", "Run Task", "Tasks", self._run_task_command))
-        self.command_registry.register_command(Command("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
-        self.command_registry.register_command(
-            Command("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server)
-        )
+        registry = self.command_registry
+        registry.register_command(Command("file.open", "Open File", "File", self._prompt_open_file))
+        registry.register_command(Command("file.save_all", "Save All", "File", self.save_all))
+        registry.register_command(Command("view.toggle_project", "Toggle Project", "View", self._toggle_project))
+        registry.register_command(Command("view.toggle_terminal", "Toggle Terminal", "View", self._toggle_terminal))
+        registry.register_command(Command("ai.explain_selection", "Explain Selection", "AI", lambda: self._run_ai_command(explain_selection)))
+        registry.register_command(Command("ai.refactor_selection", "Refactor Selection", "AI", lambda: self._run_ai_command(refactor_selection)))
+        registry.register_command(Command("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode))
+        registry.register_command(Command("ai.settings", "AI Settings", "AI", self._open_ai_settings))
+        registry.register_command(Command("ai.setup", "Re-run Setup Wizard", "AI", self.show_setup_wizard))
+        registry.register_command(Command("search.global", "Global Search", "Navigate", self._open_global_search))
+        registry.register_command(Command("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker))
+        registry.register_command(Command("navigate.file", "Go to File", "Navigate", self._open_file_picker))
+        registry.register_command(Command("workflow.run", "Run Pipelines", "Automation", self._run_all_pipelines))
+        registry.register_command(Command("tasks.run", "Run Task", "Tasks", self._run_task_command))
+        registry.register_command(Command("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
+        registry.register_command(Command("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
 
     def _toggle_project(self) -> None:
         visible = not self.project_dock.isVisible()
@@ -770,6 +950,17 @@ class MainWindow(QMainWindow):
             app = QApplication.instance()
             if app:
                 self.theme.apply(app)
+
+    def _open_ai_settings(self) -> None:
+        dialog = AISettingsDialog(self.config, self)
+        dialog.exec()
+
+    def show_setup_wizard(self) -> None:
+        wizard = SetupWizardDialog(self.config, self)
+        if wizard.exec():
+            self.first_run = False
+            self.status.show_message("Setup complete")
+        self._update_workspace_state()
 
     def _open_global_search(self) -> None:
         if not hasattr(self, "_global_search_dialog"):
@@ -850,6 +1041,12 @@ class MainWindow(QMainWindow):
         if editor:
             func(editor, self.ai_client)
 
+    def _focus_ai_dock(self) -> None:
+        dock = getattr(self, "ai_dock", None)
+        if dock:
+            dock.show()
+            dock.raise_()
+
     def _handle_diagnostics(self, diagnostics) -> None:
         self.diagnostics_model.set_diagnostics(diagnostics)
         if hasattr(self, "diagnostics_empty"):
@@ -871,3 +1068,10 @@ class MainWindow(QMainWindow):
             cursor.movePosition(cursor.Start)
             cursor.movePosition(cursor.Down, cursor.MoveAnchor, line)
             editor.setTextCursor(cursor)
+
+    def _show_about(self) -> None:
+        QMessageBox.information(
+            self,
+            "About Ghostline Studio",
+            "Ghostline Studio\nA code understanding environment with AI assistance.",
+        )

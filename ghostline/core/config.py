@@ -43,7 +43,7 @@ class ConfigManager:
             self.user_settings = self._load_yaml(USER_SETTINGS_PATH)
         else:
             self.user_settings = {}
-        self.settings = {**self.defaults, **self.user_settings}
+        self.settings = self._deep_merge(self.defaults, self.user_settings)
         self.workspace_memory_path = Path(self.settings.get("workspace_memory_path", WORKSPACE_MEMORY_PATH))
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
@@ -66,6 +66,15 @@ class ConfigManager:
         USER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with USER_SETTINGS_PATH.open("w", encoding="utf-8") as handle:
             yaml.safe_dump(self.settings, handle)
+
+    def _deep_merge(self, base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+        merged: dict[str, Any] = dict(base)
+        for key, value in override.items():
+            if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                merged[key] = self._deep_merge(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
 
     def self_healing_enabled(self) -> bool:
         """Flag for enabling the self-healing service."""

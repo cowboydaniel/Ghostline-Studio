@@ -22,7 +22,7 @@ class WorkspaceDashboard(QWidget):
         self._open_palette = open_palette
         self._workspace: Path | None = None
 
-        self.title = QLabel("Workspace Ready", self)
+        self.title = QLabel("Ghostline Dashboard", self)
         self.title.setAlignment(Qt.AlignCenter)
         self.subtitle = QLabel("Open a file to start editing.", self)
         self.subtitle.setAlignment(Qt.AlignCenter)
@@ -48,7 +48,7 @@ class WorkspaceDashboard(QWidget):
     def set_workspace(self, workspace: Path | None, recent_files: Iterable[str]) -> None:
         self._workspace = workspace
         name = workspace.name if workspace else "Workspace"
-        self.title.setText(f"{name} Dashboard")
+        self.title.setText(f"Ghostline Dashboard — {name}")
         self.subtitle.setText("Pick up where you left off or open a file from the Project tree.")
         self._populate_recents(recent_files)
 
