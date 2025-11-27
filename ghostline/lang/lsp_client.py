@@ -6,6 +6,7 @@ import logging
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QProcess, QByteArray, Signal
+from shiboken6 import isValid
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,8 @@ class LSPClient(QObject):
         self.process.start(program, args)
 
     def stop(self) -> None:
+        if not isValid(self.process):
+            return
         if self.process.state() == QProcess.Running:
             self.process.terminate()
 

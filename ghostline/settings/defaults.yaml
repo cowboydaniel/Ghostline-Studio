@@ -25,7 +25,7 @@ lsp:
         enabled: true
       analyzers:
         - command: "ruff-lsp"
-          enabled: true
+          enabled: false
       formatter:
         enabled: false
     typescript:
