@@ -428,3 +428,14 @@ class CodeEditor(QPlainTextEdit):
                 QToolTip.showText(self.mapToGlobal(self.cursorRect().bottomRight()), str(value))
 
         self.lsp_manager.request_hover(str(self.path), position, callback=_show_hover)
+
+    def apply_unified_patch(self, patch: str) -> None:
+        """Apply a unified diff to the current buffer as a single undo step."""
+        from ghostline.ai.refactor_pipeline import UnifiedDiffApplier
+
+        applier = UnifiedDiffApplier()
+        updated = applier.apply(self.toPlainText(), patch)
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        self.setPlainText(updated)
+        cursor.endEditBlock()

@@ -31,6 +31,12 @@ class TestManager:
         command = self._build_command(path)
         self._run_command(command)
 
+    def run_coverage(self, target: str | None = None) -> None:
+        workspace = self._workspace()
+        target_arg = Path(target).name if target else ""
+        command = f"coverage run -m pytest {target_arg}".strip()
+        self._run_command(command)
+
     def _build_command(self, target: str | None = None) -> str:
         framework = self.framework() or "pytest"
         if framework == "pytest":

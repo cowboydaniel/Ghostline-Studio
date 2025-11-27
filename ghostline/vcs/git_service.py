@@ -1,0 +1,45 @@
+"""Git service providing advanced operations."""
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+from typing import Iterable
+
+
+class GitService:
+    def __init__(self, workspace: str | None = None) -> None:
+        self.workspace = Path(workspace) if workspace else None
+
+    def _run(self, args: list[str]) -> str:
+        cwd = str(self.workspace) if self.workspace else None
+        try:
+            result = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, check=True)
+            return result.stdout.strip()
+        except Exception:
+            return ""
+
+    def stash(self, message: str = "WIP") -> str:
+        return self._run(["stash", "push", "-m", message])
+
+    def apply_stash(self, ref: str = "stash@{0}") -> str:
+        return self._run(["stash", "apply", ref])
+
+    def drop_stash(self, ref: str = "stash@{0}") -> str:
+        return self._run(["stash", "drop", ref])
+
+    def history(self) -> list[str]:
+        log = self._run(["log", "--oneline", "-n", "50"])
+        return log.splitlines() if log else []
+
+    def branches(self) -> list[str]:
+        out = self._run(["branch", "--format", "%(refname:short)"])
+        return out.splitlines() if out else []
+
+    def graph(self) -> str:
+        return self._run(["log", "--graph", "--oneline", "--decorate", "--all"])
+
+    def diff_commit(self, ref: str) -> str:
+        return self._run(["show", ref])
+
+    def merge_conflicts(self) -> str:
+        return self._run(["diff", "--name-only", "--diff-filter=U"])

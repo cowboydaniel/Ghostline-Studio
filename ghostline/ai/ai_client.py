@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Generator
 from urllib import error, request
+import json
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import get_logger
