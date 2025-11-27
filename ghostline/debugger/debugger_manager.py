@@ -58,6 +58,12 @@ class DebuggerManager(QObject):
     def step(self, action: str = "over") -> None:
         self.output.emit(f"Step {action} requested (DAP stub)")
 
+    def propose_watchpoints(self, variables: list[str]) -> list[str]:
+        """Suggest watchpoints when breakpoints are hit."""
+
+        self.output.emit(f"Proposed watchpoints: {', '.join(variables)}")
+        return variables
+
     def refresh_breakpoints(self, path: str) -> list[int]:
         return self.breakpoints.list_for(path)
 

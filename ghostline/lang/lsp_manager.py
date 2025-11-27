@@ -14,6 +14,7 @@ from ghostline.core.logging import LOG_FILE
 from ghostline.lang.diagnostics import Diagnostic
 from ghostline.lang.lsp_client import LSPClient
 from ghostline.workspace.workspace_manager import WorkspaceManager
+from ghostline.core.self_healing import SelfHealingService, HealthIssue
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class LSPManager(QObject):
         self._pending: dict[int, Callable[[dict], None]] = {}
         self._language_map = self._build_language_map()
         self._ensure_default_servers()
+        self.self_healing = SelfHealingService(config, lambda: self.workspace_manager.current_workspace)
 
     # Client management
     def _language_for_file(self, path: str) -> str | None:
@@ -157,6 +159,8 @@ class LSPManager(QObject):
         if error_detail:
             logger.error("LSP failure for %s: %s", language, error_detail)
         self.lsp_error.emit(message)
+        if self.config.self_healing_enabled():
+            self.self_healing.scan()
 
     def _notify_restart(self, language: str) -> None:
         self.lsp_notice.emit(f"Restarting {language} language server...")

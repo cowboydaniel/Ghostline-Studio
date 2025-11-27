@@ -20,11 +20,14 @@ class SemanticIndexManager:
         self.workers = workers or BackgroundWorkers()
         self.graph = SemanticGraph()
         self._observers: list[Callable[[Path], None]] = []
+        self._recent_paths: list[Path] = []
 
     def register_observer(self, callback: Callable[[Path], None]) -> None:
         self._observers.append(callback)
 
     def _notify(self, path: Path) -> None:
+        self._recent_paths.append(path)
+        self._recent_paths = self._recent_paths[-20:]
         for cb in self._observers:
             cb(path)
 
@@ -71,6 +74,11 @@ class SemanticIndexManager:
         for node in nodes_to_remove:
             self.graph._nodes.discard(node)
         self.graph._edges = {edge for edge in self.graph.edges() if edge.source.file != path and edge.target.file != path}
+
+    def recent_paths(self) -> list[Path]:
+        """Return recently indexed paths for UI and AI consumers."""
+
+        return list(self._recent_paths)
 
     def shutdown(self) -> None:
         self.workers.shutdown()

@@ -49,3 +49,10 @@ class WorkspaceMemory:
             lines.append(f"- {key}: {joined}")
         return "\n".join(lines)
 
+    def append_event(self, category: str, payload: Any) -> None:
+        """Record structured events for long-horizon planning."""
+
+        bucket = self.data.setdefault(category, [])
+        bucket.append(payload)
+        self._save()
+

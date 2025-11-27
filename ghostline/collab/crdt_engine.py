@@ -17,6 +17,8 @@ class CRDTEngine:
         self.buffers: dict[str, list[str]] = {}
         self.remote_cursors: list[RemoteCursor] = []
         self.user_history: dict[str, list[str]] = {}
+        self.diagnostics: list[str] = []
+        self.semantic_events: list[str] = []
 
     def apply_local_change(self, file_id: str, text: str, user: str | None = None) -> list[Tuple[int, str]]:
         self.buffers[file_id] = list(text)
@@ -40,3 +42,9 @@ class CRDTEngine:
 
     def participants(self) -> List[str]:
         return [cursor.user for cursor in self.remote_cursors]
+
+    def share_diagnostic(self, message: str) -> None:
+        self.diagnostics.append(message)
+
+    def share_semantic_event(self, node: str) -> None:
+        self.semantic_events.append(node)

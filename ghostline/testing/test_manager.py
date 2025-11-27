@@ -5,11 +5,16 @@ import shutil
 from pathlib import Path
 from typing import Iterable
 
+from PySide6.QtCore import QObject, Signal
+
 from ghostline.semantic.query import SemanticQueryEngine
 
 
-class TestManager:
+class TestManager(QObject):
+    state_changed = Signal(str)
+
     def __init__(self, task_manager, workspace_provider, semantic_query: SemanticQueryEngine | None = None) -> None:
+        super().__init__()
         self.task_manager = task_manager
         self._workspace_provider = workspace_provider
         self.semantic_query = semantic_query
@@ -29,10 +34,12 @@ class TestManager:
         return None
 
     def run_all(self) -> None:
+        self.state_changed.emit("running")
         self._run_command(self._build_command())
 
     def run_file(self, path: str) -> None:
         command = self._build_command(path)
+        self.state_changed.emit("running")
         self._run_command(command)
 
     def run_relevant(self, changed: str) -> None:
@@ -73,4 +80,5 @@ class TestManager:
         workspace = self._workspace()
         cwd = str(workspace) if workspace else ""
         self.task_manager.run_command("Tests", command, cwd=cwd)
+        self.state_changed.emit("idle")
 
