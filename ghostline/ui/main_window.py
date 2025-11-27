@@ -86,7 +86,14 @@ class MainWindow(QMainWindow):
     def __init__(
         self, config: ConfigManager, theme: ThemeManager, workspace_manager: WorkspaceManager
     ) -> None:
-        super().__init__()
+        super().__init__(None, Qt.Window)  # Set window type and parent
+        # Ensure proper window flags for maximize button
+        self.setWindowFlags(self.windowFlags() | 
+                          Qt.WindowMinimizeButtonHint | 
+                          Qt.WindowMaximizeButtonHint |
+                          Qt.WindowCloseButtonHint)
+        # Ensure the window has proper size constraints
+        self.setMinimumSize(800, 600)
         self.config = config
         self.theme = theme
         self.workspace_manager = workspace_manager
