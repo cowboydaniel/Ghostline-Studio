@@ -20,6 +20,7 @@ class TestPanel(QWidget):
 
         self.output = QTextEdit(self)
         self.output.setReadOnly(True)
+        self.output.setPlaceholderText("Test output will appear here after running tests.")
         layout.addWidget(self.output)
 
         self.run_all.clicked.connect(self.test_manager.run_all)

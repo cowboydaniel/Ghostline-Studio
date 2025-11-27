@@ -25,12 +25,22 @@ class GitPanel(QWidget):
     def refresh(self) -> None:
         self.history.clear()
         if not self.service.workspace or not self.service.is_repo():
-            self.info_label.setText("No git repository detected")
-            self.refresh_btn.setEnabled(False)
-            self.history.setEnabled(False)
+            self.set_empty_state(True)
             return
-        self.refresh_btn.setEnabled(True)
-        self.history.setEnabled(True)
-        self.info_label.setText("")
+        self.set_empty_state(False)
         for line in self.service.history():
             self.history.addItem(line)
+
+    def set_empty_state(self, missing_repo: bool) -> None:
+        if missing_repo:
+            self.info_label.setText("No Git repository detected. Initialize or open a repo to use Git tools.")
+            self.info_label.setWordWrap(True)
+            self.refresh_btn.setEnabled(False)
+            self.history.setEnabled(False)
+        else:
+            self.info_label.setText("")
+            self.refresh_btn.setEnabled(True)
+            self.history.setEnabled(True)
+
+    def has_repository(self) -> bool:
+        return bool(self.service.workspace and self.service.is_repo())

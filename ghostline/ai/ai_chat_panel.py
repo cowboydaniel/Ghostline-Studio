@@ -20,7 +20,7 @@ class AIChatPanel(QWidget):
         super().__init__(parent)
         self.client = client
 
-        self.status_label = QLabel("Idle (no workspace)", self)
+        self.status_label = QLabel("AI: Idle (no workspace)", self)
         self.status_label.setAlignment(Qt.AlignLeft)
         self.transcript = QTextEdit(self)
         self.transcript.setReadOnly(True)
@@ -77,7 +77,7 @@ class AIChatPanel(QWidget):
 
     def set_workspace_active(self, active: bool) -> None:
         self.workspace_active = active
-        label = "Ready" if active else "Idle (no workspace)"
+        label = "AI: Ready" if active else "AI: Idle (no workspace)"
         self.status_label.setText(label)
         self.input.setEnabled(active)
         self.send_button.setEnabled(active)
