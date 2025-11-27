@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 import logging
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from ghostline.core.threads import BackgroundWorkers
 from ghostline.semantic.graph import GraphEdge, GraphNode, SemanticGraph
@@ -82,6 +82,17 @@ class SemanticIndexManager:
 
     def shutdown(self) -> None:
         self.workers.shutdown()
+
+    def record_runtime_event(self, observation: Any) -> None:
+        """Merge runtime observations into the semantic graph."""
+
+        try:
+            self.graph.annotate_runtime(observation)
+            path_value = getattr(observation, "path", None)
+            if path_value:
+                self._notify(Path(path_value))
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to merge runtime observation")
 
 
 class _ASTVisitor(ast.NodeVisitor):

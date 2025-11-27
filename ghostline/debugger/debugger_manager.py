@@ -6,12 +6,15 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
 from ghostline.core.logging import get_logger
 from ghostline.debugger.breakpoints import BreakpointStore
+
+if TYPE_CHECKING:
+    from ghostline.runtime.inspector import RuntimeInspector
 
 
 class DebuggerManager(QObject):
@@ -25,6 +28,10 @@ class DebuggerManager(QObject):
         self.breakpoints = breakpoint_store or BreakpointStore.instance()
         self.process: subprocess.Popen | None = None
         self.logger = get_logger(__name__)
+        self.runtime_inspector: RuntimeInspector | None = None
+
+    def set_runtime_inspector(self, inspector: RuntimeInspector) -> None:
+        self.runtime_inspector = inspector
 
     def launch(self, script: str, args: Iterable[str] | None = None) -> None:
         command = [sys.executable, "-m", "debugpy", "--listen", "5678", script]
@@ -75,6 +82,8 @@ class DebuggerManager(QObject):
                 cleaned = line.rstrip()
                 if cleaned:
                     self.output.emit(cleaned)
+                    if self.runtime_inspector:
+                        self.runtime_inspector.record_call_path("debug-session", [cleaned])
         except Exception as exc:  # noqa: BLE001
             self.logger.exception("Debugger output read failed: %s", exc)
         finally:

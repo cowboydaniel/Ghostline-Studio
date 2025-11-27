@@ -41,6 +41,14 @@ class PromptBuilder:
             return f"[CASCADE]\n{segments.memory}\n{segments.semantic}\nUser: {user_prompt}"
         return f"{segments.merge()}\n\nUser: {user_prompt}"
 
+    def build_autoflow_prompt(self, intent: str, steps: list[str]) -> str:
+        """Specialised builder for autoflow predictions."""
+
+        semantic = self._semantic_block()
+        memory = self.memory.as_prompt_context() if self.memory else ""
+        chain = "\n".join(f"- {step}" for step in steps)
+        return f"Autoflow intent: {intent}\n{semantic}\n{memory}\nPlanned chain:\n{chain}"
+
     def update_last_response(self, text: str) -> None:
         self.last_ai_response = text
 

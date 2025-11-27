@@ -70,6 +70,26 @@ class LongHorizonPlanner:
         self.cards.append(card)
         return card
 
+    def propose_evolution(self, target: str) -> list[RoadmapCard]:
+        """Draft phased migrations for long-horizon evolution."""
+
+        migrations = [
+            RoadmapCard(
+                title=f"Phase 1: audit {target}",
+                summary="Collect metrics and guardrails before migration.",
+                difficulty="medium",
+                steps=["Capture runtime traces", "Pin failing tests", "Freeze API contracts"],
+            ),
+            RoadmapCard(
+                title=f"Phase 2: modernise {target}",
+                summary="Introduce async/class conversions where low risk.",
+                difficulty="high",
+                steps=["Convert blocking flows to async", "Extract brittle functions into classes", "Add compatibility shims"],
+            ),
+        ]
+        self.cards.extend(migrations)
+        return migrations
+
     def roadmap_feed(self) -> str:
         """Return text suitable for rendering inside roadmap UI panels."""
 

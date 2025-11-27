@@ -56,3 +56,19 @@ class WorkspaceMemory:
         bucket.append(payload)
         self._save()
 
+    def remember_signature(self, name: str, signature: str) -> None:
+        """Track code style or naming signatures preferred by the user."""
+
+        self.remember_pattern("signatures", f"{name}:{signature}")
+
+    def record_layout(self, layout: dict[str, Any]) -> None:
+        """Persist UI or workspace layout preferences for rehydration."""
+
+        self.data["layout"] = layout
+        self._save()
+
+    def tag_architecture(self, label: str) -> None:
+        """Store detected architectural patterns such as factory/event-driven."""
+
+        self.remember_pattern("architecture", label)
+

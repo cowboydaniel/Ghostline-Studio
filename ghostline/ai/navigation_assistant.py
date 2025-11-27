@@ -26,6 +26,7 @@ class NavigationAssistant:
     def __init__(self, client: AIClient, query: SemanticQueryEngine) -> None:
         self.client = client
         self.query = query
+        self.autoflow_enabled = False
 
     def go_to_function_generating(self, concept: str) -> list[NavigationResult]:
         prompt = f"Identify the function that generates {concept}. Respond with candidate names."
@@ -88,4 +89,19 @@ class NavigationAssistant:
                     )
                 )
         return predictions
+
+    def autoflow(self, context: PredictiveContext) -> list[PredictedAction]:
+        """Chain predicted actions into an ordered workflow."""
+
+        actions = self.predict_actions(context)
+        if context.cursor_symbol:
+            actions.append(
+                PredictedAction(
+                    label=f"Run pipeline for {context.cursor_symbol}",
+                    action="trigger pipeline",
+                )
+            )
+        if self.autoflow_enabled:
+            actions.append(PredictedAction(label="Apply smart refactor", action="run refactor agent"))
+        return actions
 

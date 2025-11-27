@@ -20,17 +20,29 @@ QPushButton {
     background-color: #2b7cff;
     color: white;
     border: 1px solid #2b7cff;
-    padding: 6px 10px;
+    padding: 8px 12px;
     border-radius: 4px;
+    transition: all 120ms ease-in-out;
 }
 
 QPushButton:hover {
     background-color: #3c86ff;
+    border-color: #5b9dff;
 }
 
 QPushButton:disabled {
     background-color: #3a3f47;
     color: #8a8f98;
+}
+
+QDockWidget::title {
+    padding: 6px;
+    background: #111317;
+}
+
+QListWidget::item:selected {
+    background: #2b7cff;
+    color: white;
 }
 
 QMenuBar {

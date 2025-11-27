@@ -1,0 +1,20 @@
+pipelines:
+  - name: "on-save quality"
+    enabled: true
+    triggers: ["on file save"]
+    steps:
+      - kind: "run formatter"
+      - kind: "run agents"
+        args:
+          task: "stabilise recent edits"
+      - kind: "run tests"
+        args:
+          suite: "fast"
+  - name: "scheduled refactor sweep"
+    enabled: false
+    triggers: ["scheduled"]
+    steps:
+      - kind: "apply refactors"
+        args:
+          hint: "weekly maintenance"
+      - kind: "maintenance sweep"
