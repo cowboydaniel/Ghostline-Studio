@@ -37,6 +37,7 @@ class HTTPBackend:
         self.model = ai_cfg.get("model", "")
         self.api_key = ai_cfg.get("api_key")
         self.temperature = ai_cfg.get("temperature", 0.2)
+        self.timeout = ai_cfg.get("request_timeout", 30)
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -47,7 +48,7 @@ class HTTPBackend:
     def _post(self, url: str, payload: dict) -> dict:
         data = json.dumps(payload).encode("utf-8")
         req = request.Request(url, data=data, headers=self._headers())
-        with request.urlopen(req, timeout=10) as resp:  # type: ignore[arg-type]
+        with request.urlopen(req, timeout=self.timeout) as resp:  # type: ignore[arg-type]
             return json.loads(resp.read().decode("utf-8"))
 
 
