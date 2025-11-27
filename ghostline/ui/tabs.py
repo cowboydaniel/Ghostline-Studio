@@ -10,6 +10,7 @@ from ghostline.core.config import ConfigManager
 from ghostline.core.theme import ThemeManager
 from ghostline.editor.code_editor import CodeEditor
 from ghostline.lang.lsp_manager import LSPManager
+from ghostline.ai.ai_client import AIClient
 
 
 class EditorTabs(QTabWidget):
@@ -20,11 +21,13 @@ class EditorTabs(QTabWidget):
         config: ConfigManager | None = None,
         theme: ThemeManager | None = None,
         lsp_manager: LSPManager | None = None,
+        ai_client: AIClient | None = None,
     ) -> None:
         super().__init__(parent)
         self.config = config
         self.theme = theme
         self.lsp_manager = lsp_manager
+        self.ai_client = ai_client
         self.setTabsClosable(True)
         self.tabCloseRequested.connect(self._close_tab)
 
@@ -34,6 +37,7 @@ class EditorTabs(QTabWidget):
             config=self.config,
             theme=self.theme,
             lsp_manager=self.lsp_manager,
+            ai_client=self.ai_client,
         )
         self.addTab(editor, path.name)
         self.setCurrentWidget(editor)

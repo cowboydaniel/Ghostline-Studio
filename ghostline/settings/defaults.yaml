@@ -21,3 +21,19 @@ lsp:
       command: "typescript-language-server"
       args:
         - "--stdio"
+    c_cpp:
+      command: "clangd"
+      args: []
+    rust:
+      command: "rust-analyzer"
+      args: []
+    java:
+      command: "jdtls"
+      args: []
+  extension_map:
+    cpp: "c_cpp"
+    c: "c_cpp"
+    h: "c_cpp"
+    hpp: "c_cpp"
+    rs: "rust"
+    java: "java"

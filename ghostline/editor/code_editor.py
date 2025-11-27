@@ -4,11 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
     QKeyEvent,
+    QMouseEvent,
     QPainter,
     QTextCharFormat,
     QTextCursor,
@@ -23,6 +24,11 @@ from ghostline.core.config import ConfigManager
 from ghostline.core.theme import ThemeManager
 from ghostline.lang.diagnostics import Diagnostic
 from ghostline.lang.lsp_manager import LSPManager
+from ghostline.editor.folding import FoldingManager
+from ghostline.editor.minimap import MiniMap
+from ghostline.ai.ai_inline import InlineCompletionController
+from ghostline.debugger.breakpoints import BreakpointStore
+from ghostline.ai.ai_client import AIClient
 
 
 class LineNumberArea(QWidget):
@@ -37,6 +43,9 @@ class LineNumberArea(QWidget):
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         self.code_editor._paint_line_numbers(event)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        self.code_editor.toggle_breakpoint_from_gutter(event)
 
 
 class PythonHighlighter(QSyntaxHighlighter):
@@ -105,6 +114,7 @@ class CodeEditor(QPlainTextEdit):
         config: ConfigManager | None = None,
         theme: ThemeManager | None = None,
         lsp_manager: LSPManager | None = None,
+        ai_client: AIClient | None = None,
     ) -> None:
         super().__init__(parent)
         self.path = path
@@ -113,6 +123,9 @@ class CodeEditor(QPlainTextEdit):
         self.lsp_manager = lsp_manager
         self._document_version = 0
         self._diagnostics: list[Diagnostic] = []
+        self._extra_cursors: list[QTextCursor] = []
+        self._bracket_selection: list[QPlainTextEdit.ExtraSelection] = []
+        self.breakpoints = BreakpointStore.instance()
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
@@ -123,11 +136,15 @@ class CodeEditor(QPlainTextEdit):
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" " * tab_size))
 
         self.cursorPositionChanged.connect(self._highlight_current_line)
+        self.cursorPositionChanged.connect(self._update_bracket_match)
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.textChanged.connect(self._notify_lsp_change)
 
         self._highlighter = PythonHighlighter(self.document(), self.theme)
+        self.folding = FoldingManager(self)
+        self.minimap = MiniMap(self)
+        self.inline_ai = InlineCompletionController(self, self.config, ai_client)
 
         self._update_line_number_area_width(self.blockCount())
         if path and path.exists():
@@ -178,10 +195,53 @@ class CodeEditor(QPlainTextEdit):
                     Qt.AlignRight,
                     number,
                 )
+                if self.path and self.breakpoints.has(str(self.path), block_number):
+                    radius = 5
+                    painter.setBrush(QColor(200, 80, 80))
+                    painter.setPen(Qt.NoPen)
+                    painter.drawEllipse(
+                        self.line_number_area.width() - 2 * radius - 2,
+                        top + (self.fontMetrics().height() - radius) / 2,
+                        radius * 2,
+                        radius * 2,
+                    )
             block = block.next()
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
+
+    def _block_at_position(self, y: float):
+        block = self.firstVisibleBlock()
+        top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
+        bottom = top + int(self.blockBoundingRect(block).height())
+        while block.isValid() and top <= y:
+            if block.isVisible() and bottom >= y:
+                return block
+            block = block.next()
+            top = bottom
+            bottom = top + int(self.blockBoundingRect(block).height())
+        return None
+
+    def toggle_breakpoint_from_gutter(self, event: QMouseEvent) -> None:
+        block = self._block_at_position(event.position().y())
+        if block and self.path:
+            self.breakpoints.toggle(str(self.path), block.blockNumber())
+            self.line_number_area.update()
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        super().paintEvent(event)
+        if self.inline_ai:
+            self.inline_ai.paint_hint()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        if event.modifiers() & Qt.AltModifier:
+            cursor = self.cursorForPosition(event.position().toPoint())
+            self._extra_cursors.append(cursor)
+            self._highlight_current_line()
+            return
+        super().mousePressEvent(event)
+        self._extra_cursors.clear()
+        self._highlight_current_line()
 
     # File operations
     def _load_file(self, path: Path) -> None:
@@ -196,8 +256,14 @@ class CodeEditor(QPlainTextEdit):
 
     # Indentation helpers
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        if self.inline_ai and self.inline_ai.handle_key(event):
+            return
         if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_K:
             self._request_hover()
+            return
+        if event.key() == Qt.Key_Escape and self._extra_cursors:
+            self._extra_cursors.clear()
+            self._highlight_current_line()
             return
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
             cursor = self.textCursor()
@@ -210,6 +276,22 @@ class CodeEditor(QPlainTextEdit):
                 tab_size = self.config.get("tabs", {}).get("tab_size", 4)
                 indent_str = "\t" * max(1, indent // tab_size) if indent else ""
             self.insertPlainText(indent_str)
+            return
+        if self._extra_cursors and event.text() and not event.modifiers():
+            text = event.text()
+            for cursor in self._extra_cursors:
+                cursor.insertText(text)
+            super().keyPressEvent(event)
+            self._sync_extra_cursors()
+            return
+        if self._extra_cursors and event.key() == Qt.Key_Backspace:
+            for cursor in self._extra_cursors:
+                if cursor.hasSelection():
+                    cursor.removeSelectedText()
+                else:
+                    cursor.deletePreviousChar()
+            super().keyPressEvent(event)
+            self._sync_extra_cursors()
             return
         super().keyPressEvent(event)
 
@@ -225,7 +307,49 @@ class CodeEditor(QPlainTextEdit):
             selection.cursor.clearSelection()
             extra_selections.append(selection)
         extra_selections.extend(self._diagnostic_selections())
+        extra_selections.extend(self._bracket_selection)
+        extra_selections.extend(self._multi_cursor_selections())
         self.setExtraSelections(extra_selections)
+
+    def _update_bracket_match(self) -> None:
+        brackets = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"}
+        cursor = self.textCursor()
+        doc_text = self.toPlainText()
+        pos = cursor.position()
+        char = doc_text[pos:pos + 1]
+        backward = False
+        if char not in brackets and pos > 0:
+            char = doc_text[pos - 1:pos]
+            pos -= 1
+            backward = True
+        if char not in brackets:
+            self._bracket_selection = []
+            self._highlight_current_line()
+            return
+        target = brackets[char]
+        step = -1 if backward or char in ")]}" else 1
+        depth = 0
+        idx = pos + step
+        match_pos = None
+        while 0 <= idx < len(doc_text):
+            token = doc_text[idx]
+            if token == char:
+                depth += 1
+            elif token == target:
+                if depth == 0:
+                    match_pos = idx
+                    break
+                depth -= 1
+            idx += step
+        if match_pos is None:
+            self._bracket_selection = []
+            self._highlight_current_line()
+            return
+        self._bracket_selection = [
+            self._selection_for_position(pos),
+            self._selection_for_position(match_pos),
+        ]
+        self._highlight_current_line()
 
     def _diagnostic_selections(self) -> list[QPlainTextEdit.ExtraSelection]:
         selections: list[QPlainTextEdit.ExtraSelection] = []
@@ -242,6 +366,34 @@ class CodeEditor(QPlainTextEdit):
             selection.cursor = cursor
             selections.append(selection)
         return selections
+
+    def _selection_for_position(self, position: int) -> QPlainTextEdit.ExtraSelection:
+        selection = QPlainTextEdit.ExtraSelection()
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(position)
+        cursor.setPosition(position + 1, QTextCursor.KeepAnchor)
+        selection.cursor = cursor
+        selection.format.setBackground(QColor(80, 120, 200, 120))
+        return selection
+
+    def _multi_cursor_selections(self) -> list[QPlainTextEdit.ExtraSelection]:
+        selections: list[QPlainTextEdit.ExtraSelection] = []
+        for cursor in self._extra_cursors:
+            sel = QPlainTextEdit.ExtraSelection()
+            sel.cursor = cursor
+            sel.format.setProperty(QTextFormat.FullWidthSelection, True)
+            sel.format.setBackground(QColor(90, 90, 120, 80))
+            selections.append(sel)
+        return selections
+
+    def _sync_extra_cursors(self) -> None:
+        synced: list[QTextCursor] = []
+        for cursor in self._extra_cursors:
+            clone = QTextCursor(self.document())
+            clone.setPosition(cursor.position())
+            synced.append(clone)
+        self._extra_cursors = synced
+        self._highlight_current_line()
 
     # LSP integration
     def _open_in_lsp(self) -> None:

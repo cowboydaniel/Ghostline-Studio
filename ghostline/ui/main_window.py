@@ -14,6 +14,11 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
     QTableView,
+    QInputDialog,
+    QDialog,
+    QVBoxLayout,
+    QListWidget,
+    QListWidgetItem,
 )
 
 from ghostline.core.config import ConfigManager
@@ -25,6 +30,8 @@ from ghostline.ai.ai_client import AIClient
 from ghostline.ai.ai_chat_panel import AIChatPanel
 from ghostline.ai.ai_commands import explain_selection, refactor_selection
 from ghostline.editor.code_editor import CodeEditor
+from ghostline.search.global_search import GlobalSearchDialog
+from ghostline.search.symbol_search import SymbolSearcher
 from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.status_bar import StudioStatusBar
@@ -34,6 +41,8 @@ from ghostline.workspace.project_model import ProjectModel
 from ghostline.workspace.project_view import ProjectView
 from ghostline.terminal.terminal_widget import TerminalWidget
 from ghostline.vcs.git_integration import GitIntegration
+from ghostline.debugger.debugger_manager import DebuggerManager
+from ghostline.debugger.debugger_panel import DebuggerPanel
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +61,14 @@ class MainWindow(QMainWindow):
         self.lsp_manager = LSPManager(config, workspace_manager)
         self.command_registry = CommandRegistry()
         self.ai_client = AIClient(config)
+        self.symbols = SymbolSearcher(self.lsp_manager)
+        self.debugger = DebuggerManager()
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
 
         self.editor_tabs = EditorTabs(
-            self, config=self.config, theme=self.theme, lsp_manager=self.lsp_manager
+            self, config=self.config, theme=self.theme, lsp_manager=self.lsp_manager, ai_client=self.ai_client
         )
         self.setCentralWidget(self.editor_tabs)
 
@@ -72,8 +83,10 @@ class MainWindow(QMainWindow):
         self._create_project_dock()
         self._create_ai_dock()
         self._create_diagnostics_dock()
+        self._create_debugger_dock()
 
         self.lsp_manager.subscribe_diagnostics(self._handle_diagnostics)
+        self.lsp_manager.lsp_error.connect(lambda msg: self.status.show_message(msg))
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
@@ -81,6 +94,16 @@ class MainWindow(QMainWindow):
 
         self.action_open_folder = QAction("Open Folder", self)
         self.action_open_folder.triggered.connect(self._prompt_open_folder)
+
+        self.action_global_search = QAction("Global Search", self)
+        self.action_global_search.setShortcut("Ctrl+Shift+F")
+        self.action_global_search.triggered.connect(self._open_global_search)
+
+        self.action_goto_symbol = QAction("Go to Symbol", self)
+        self.action_goto_symbol.triggered.connect(self._open_symbol_picker)
+
+        self.action_goto_file = QAction("Go to File", self)
+        self.action_goto_file.triggered.connect(self._open_file_picker)
 
         self.action_command_palette = QAction("Command Palette", self)
         self.action_command_palette.setShortcut("Ctrl+P")
@@ -111,6 +134,9 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.action_command_palette)
         view_menu.addAction(self.action_toggle_project)
         view_menu.addAction(self.action_toggle_terminal)
+        view_menu.addAction(self.action_global_search)
+        view_menu.addAction(self.action_goto_symbol)
+        view_menu.addAction(self.action_goto_file)
 
         ai_menu = self.menuBar().addMenu("AI")
         ai_menu.addAction(self.action_ai_explain)
@@ -155,6 +181,14 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self.diagnostics_view = table
         self.diagnostics_dock = dock
+
+    def _create_debugger_dock(self) -> None:
+        dock = QDockWidget("Debugger", self)
+        dock.setObjectName("debuggerDock")
+        panel = DebuggerPanel(self.debugger, self)
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.debugger_dock = dock
 
     def show_command_palette(self) -> None:
         self._register_core_commands()
@@ -204,6 +238,15 @@ class MainWindow(QMainWindow):
         if folder:
             self.open_folder(folder)
 
+    def open_file_at(self, path: str, line: int) -> None:
+        self.open_file(path)
+        editor = self.get_current_editor()
+        if editor:
+            cursor = editor.textCursor()
+            cursor.movePosition(cursor.Start)
+            cursor.movePosition(cursor.Down, cursor.MoveAnchor, line)
+            editor.setTextCursor(cursor)
+
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.workspace_manager.save_recents()
         super().closeEvent(event)
@@ -226,6 +269,15 @@ class MainWindow(QMainWindow):
         self.command_registry.register_command(
             Command("ai.refactor_selection", "Refactor Selection", "AI", lambda: self._run_ai_command(refactor_selection))
         )
+        self.command_registry.register_command(
+            Command("search.global", "Global Search", "Navigate", self._open_global_search)
+        )
+        self.command_registry.register_command(
+            Command("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker)
+        )
+        self.command_registry.register_command(
+            Command("navigate.file", "Go to File", "Navigate", self._open_file_picker)
+        )
 
     def _toggle_project(self) -> None:
         visible = not self.project_dock.isVisible()
@@ -241,6 +293,58 @@ class MainWindow(QMainWindow):
             app = QApplication.instance()
             if app:
                 self.theme.apply_theme(app)
+
+    def _open_global_search(self) -> None:
+        if not hasattr(self, "_global_search_dialog"):
+            self._global_search_dialog = GlobalSearchDialog(
+                lambda: self.workspace_manager.current_workspace,
+                lambda path, line: self.open_file_at(path, line),
+                self,
+            )
+        self._global_search_dialog.show()
+
+    def _open_symbol_picker(self) -> None:
+        query, ok = QInputDialog.getText(self, "Go to Symbol", "Name contains:")
+        if not ok or not query:
+            return
+
+        def _show(symbols):
+            if not symbols:
+                self.status.show_message("No symbols found")
+                return
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Symbols")
+            layout = QVBoxLayout(dialog)
+            list_widget = QListWidget(dialog)
+            for symbol in symbols:
+                item = QListWidgetItem(f"{Path(symbol.file).name}:{symbol.line + 1} {symbol.name}")
+                item.setData(Qt.UserRole, symbol)
+                list_widget.addItem(item)
+
+            def _activate(item):
+                sym = item.data(Qt.UserRole)
+                self.open_file_at(sym.file, sym.line)
+                dialog.accept()
+
+            list_widget.itemActivated.connect(_activate)
+            layout.addWidget(list_widget)
+            dialog.exec()
+
+        self.symbols.workspace_symbols(query, _show)
+
+    def _open_file_picker(self) -> None:
+        files = [p for p in self.workspace_manager.iter_workspace_files() if p.is_file()]
+        if not files:
+            return
+        name, ok = QInputDialog.getText(self, "Go to File", "Filename contains:")
+        if not ok:
+            return
+        lowered = name.lower()
+        for file in files:
+            if lowered in file.name.lower():
+                self.open_file(str(file))
+                return
+        self.status.show_message("No matching file found")
 
     def _run_ai_command(self, func) -> None:
         editor = self.get_current_editor()
