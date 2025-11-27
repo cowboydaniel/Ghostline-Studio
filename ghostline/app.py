@@ -45,13 +45,18 @@ class GhostlineApplication:
         self.qt_app.processEvents()
 
     def _on_splash_finished(self) -> None:
-        if self.args.path:
-            self._open_initial_path(self.args.path)
-        else:
-            last_workspace = self.workspace_manager.last_recent_workspace()
-            if last_workspace:
-                self.main_window.open_folder(str(last_workspace))
+        first_run_needed = not bool(self.config.get("first_run_completed", False))
+        self.main_window.apply_initial_window_state(force_maximize=first_run_needed)
+        if not first_run_needed:
+            if self.args.path:
+                self._open_initial_path(self.args.path)
+            else:
+                last_workspace = self.workspace_manager.last_recent_workspace()
+                if last_workspace:
+                    self.main_window.open_folder(str(last_workspace))
         self.main_window.show()
+        if first_run_needed:
+            self.main_window.show_setup_wizard()
 
     def run(self) -> int:
         try:
