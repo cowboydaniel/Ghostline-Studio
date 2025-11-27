@@ -45,13 +45,11 @@ class ArchitectureScene(QWidget):
 
         self._stack = QStackedLayout(self)
         self._stack.setContentsMargins(0, 0, 0, 0)
-        fallback_label = QLabel(
-            "3D Architecture Map is unavailable (Qt3D backend missing or no semantic graph).",
-            self,
-        )
+        fallback_label = QLabel(self)
         fallback_label.setWordWrap(True)
         fallback_label.setAlignment(Qt.AlignCenter)
         self._fallback_label = fallback_label
+        self._update_placeholder(has_nodes=False)
         self._stack.addWidget(fallback_label)
 
         if QT3D_AVAILABLE:
@@ -68,6 +66,7 @@ class ArchitectureScene(QWidget):
 
         self._graph = graph or {"nodes": [], "edges": []}
         has_nodes = bool(self._graph.get("nodes"))
+        self._update_placeholder(has_nodes)
         self._render_available = QT3D_AVAILABLE and has_nodes
         if QT3D_AVAILABLE and has_nodes:
             self._build_scene()
@@ -136,6 +135,23 @@ class ArchitectureScene(QWidget):
         self._node_entities.clear()
         self._edge_entities.clear()
         self._positions.clear()
+
+    def _update_placeholder(self, has_nodes: bool) -> None:
+        if not QT3D_AVAILABLE:
+            message = (
+                "3D Architecture Map requires Qt3D support. Install a PySide6 build with "
+                "Qt3D enabled to view the semantic graph."
+            )
+        elif not has_nodes:
+            message = (
+                "Semantic graph not available yet. Open a workspace or wait for indexing to "
+                "finish, then refresh the Architecture Map."
+            )
+        else:
+            message = ""
+
+        if message:
+            self._fallback_label.setText(message)
 
     def _build_scene(self) -> None:
         if self._graph is None:
