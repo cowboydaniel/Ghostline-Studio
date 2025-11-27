@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import threading
 from urllib import request
 
@@ -383,6 +384,32 @@ class SetupWizardDialog(QDialog):
         threading.Thread(target=monitor, daemon=True).start()
 
     def _open_ollama_download(self) -> None:
+        if sys.platform.startswith("linux"):
+            self.ollama_logs.append("Installing Ollama for Linux…")
+            self.install_ollama_btn.setEnabled(False)
+            self.refresh_ollama_btn.setEnabled(False)
+
+            process = subprocess.Popen(
+                ["sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            def monitor_install() -> None:
+                assert process.stdout
+                for line in process.stdout:
+                    cleaned = line.strip()
+                    if cleaned:
+                        QTimer.singleShot(0, lambda txt=cleaned: self.ollama_logs.append(txt))
+                process.wait()
+                QTimer.singleShot(0, lambda: self.install_ollama_btn.setEnabled(True))
+                QTimer.singleShot(0, lambda: self.refresh_ollama_btn.setEnabled(True))
+                QTimer.singleShot(500, self._check_ollama)
+
+            threading.Thread(target=monitor_install, daemon=True).start()
+            return
+
         QDesktopServices.openUrl(QUrl("https://ollama.com/download"))
         QTimer.singleShot(4000, self._check_ollama)
 
