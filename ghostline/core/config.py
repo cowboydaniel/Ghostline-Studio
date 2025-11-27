@@ -33,6 +33,9 @@ class ConfigManager:
     def get(self, key: str, default: Any | None = None) -> Any:
         return self.settings.get(key, default)
 
+    def set(self, key: str, value: Any) -> None:
+        self.settings[key] = value
+
     def save(self) -> None:
         USER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with USER_SETTINGS_PATH.open("w", encoding="utf-8") as handle:
