@@ -14,6 +14,7 @@ from ghostline.core.logging import configure_logging, get_logger
 from ghostline.core.theme import ThemeManager
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.ui.main_window import MainWindow
+from ghostline.ui.splash_screen import GhostlineSplash
 
 
 class GhostlineApplication:
@@ -30,21 +31,31 @@ class GhostlineApplication:
         self.config = ConfigManager()
         self.workspace_manager = WorkspaceManager()
         self.main_window = MainWindow(self.config, self.theme, self.workspace_manager)
+        self.splash: GhostlineSplash | None = None
 
     def _parse_args(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(description="Ghostline Studio")
         parser.add_argument("path", nargs="?", help="File or folder to open")
         return parser.parse_args()
 
+    def _show_splash(self) -> None:
+        self.splash = GhostlineSplash()
+        self.splash.splashFinished.connect(self._on_splash_finished)
+        self.splash.show()
+        self.qt_app.processEvents()
+
+    def _on_splash_finished(self) -> None:
+        if self.args.path:
+            self._open_initial_path(self.args.path)
+        else:
+            last_workspace = self.workspace_manager.last_recent_workspace()
+            if last_workspace:
+                self.main_window.open_folder(str(last_workspace))
+        self.main_window.show()
+
     def run(self) -> int:
         try:
-            if self.args.path:
-                self._open_initial_path(self.args.path)
-            else:
-                last_workspace = self.workspace_manager.last_recent_workspace()
-                if last_workspace:
-                    self.main_window.open_folder(str(last_workspace))
-            self.main_window.show()
+            self._show_splash()
             return self.qt_app.exec()
         except Exception as e:
             self.logger.exception("Unhandled exception in main loop")
@@ -60,6 +71,11 @@ class GhostlineApplication:
                 self.main_window.close()
                 self.main_window.deleteLater()
                 self.main_window = None
+
+            if hasattr(self, 'splash') and self.splash:
+                self.splash.close()
+                self.splash.deleteLater()
+                self.splash = None
 
             # Clean up workspace manager
             if hasattr(self, 'workspace_manager') and self.workspace_manager:
