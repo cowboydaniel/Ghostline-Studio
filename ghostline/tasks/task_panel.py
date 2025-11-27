@@ -10,10 +10,13 @@ class TaskPanel(QWidget):
         self.task_manager = task_manager
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
         self.task_list = QListWidget(self)
         layout.addWidget(self.task_list)
 
         controls = QHBoxLayout()
+        controls.setSpacing(6)
         self.run_button = QPushButton("Run Task", self)
         self.stop_button = QPushButton("Stop", self)
         controls.addWidget(self.run_button)

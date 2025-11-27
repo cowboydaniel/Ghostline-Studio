@@ -25,8 +25,9 @@ class GhostlineApplication:
         self.logger = get_logger(__name__)
         self.qt_app = QApplication(sys.argv)
         self._install_exception_hook()
+        self.theme = ThemeManager()
+        self.theme.apply(self.qt_app)
         self.config = ConfigManager()
-        self.theme = ThemeManager(self.config)
         self.workspace_manager = WorkspaceManager()
         self.main_window = MainWindow(self.config, self.theme, self.workspace_manager)
 
@@ -37,7 +38,6 @@ class GhostlineApplication:
 
     def run(self) -> int:
         try:
-            self.theme.apply_theme(self.qt_app)
             if self.args.path:
                 self._open_initial_path(self.args.path)
             else:

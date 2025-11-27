@@ -30,7 +30,7 @@ class AgentConsole(QDockWidget):
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         layout.addWidget(QLabel("Agents"))
         layout.addWidget(self.status_list)

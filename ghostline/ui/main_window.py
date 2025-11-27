@@ -148,6 +148,7 @@ class MainWindow(QMainWindow):
         self.central_stack.addWidget(self.empty_state)
         self.central_stack.addWidget(self.editor_tabs)
         central_container = QWidget(self)
+        central_container.setObjectName("EditorArea")
         central_container.setLayout(self.central_stack)
         self.setCentralWidget(central_container)
 
@@ -404,7 +405,7 @@ class MainWindow(QMainWindow):
         self.project_placeholder.setWordWrap(True)
         container = QWidget(self)
         self.project_stack = QStackedLayout(container)
-        self.project_stack.setContentsMargins(6, 6, 6, 6)
+        self.project_stack.setContentsMargins(8, 8, 8, 8)
         self.project_stack.addWidget(self.project_placeholder)
         self.project_stack.addWidget(self.project_view)
         dock.setWidget(container)
@@ -705,7 +706,7 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             app = QApplication.instance()
             if app:
-                self.theme.apply_theme(app)
+                self.theme.apply(app)
 
     def _open_global_search(self) -> None:
         if not hasattr(self, "_global_search_dialog"):

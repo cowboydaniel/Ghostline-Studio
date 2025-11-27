@@ -41,7 +41,7 @@ class AIChatPanel(QWidget):
         input_row.addWidget(self.context_button)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         layout.addWidget(self.status_label)
         layout.addWidget(self.transcript)

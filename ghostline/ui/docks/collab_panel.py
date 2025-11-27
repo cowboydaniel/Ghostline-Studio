@@ -23,6 +23,8 @@ class CollabPanel(QDockWidget):
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
         layout.addWidget(self.users)
         layout.addWidget(self.chat)
         layout.addWidget(self.follow_button)

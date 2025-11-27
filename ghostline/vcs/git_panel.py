@@ -11,7 +11,7 @@ class GitPanel(QWidget):
         super().__init__(parent)
         self.service = service
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         self.info_label = QLabel("", self)
         self.history = QListWidget(self)
