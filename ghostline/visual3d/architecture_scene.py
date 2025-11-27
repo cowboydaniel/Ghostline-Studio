@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from math import cos, sin, pi
 from typing import Dict, Iterable, List, Optional
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QQuaternion, QVector3D
 from PySide6.QtWidgets import QLabel, QStackedLayout, QVBoxLayout, QWidget
 
