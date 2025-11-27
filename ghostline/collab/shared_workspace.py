@@ -15,6 +15,7 @@ class SharedState:
     build_queue: list[str] = field(default_factory=list)
     test_status: dict[str, str] = field(default_factory=dict)
     semantic_updates: list[str] = field(default_factory=list)
+    agent_outputs: list[str] = field(default_factory=list)
 
 
 class SharedWorkspace(QObject):
@@ -23,6 +24,7 @@ class SharedWorkspace(QObject):
     build_queue_changed = Signal(list)
     test_state_changed = Signal(dict)
     semantic_changed = Signal(list)
+    agent_outputs_changed = Signal(list)
 
     def __init__(
         self,
@@ -48,3 +50,7 @@ class SharedWorkspace(QObject):
     def record_semantic_update(self, path: str) -> None:
         self.state.semantic_updates.append(path)
         self.semantic_changed.emit(list(self.state.semantic_updates))
+
+    def publish_agent_output(self, message: str) -> None:
+        self.state.agent_outputs.append(message)
+        self.agent_outputs_changed.emit(list(self.state.agent_outputs))

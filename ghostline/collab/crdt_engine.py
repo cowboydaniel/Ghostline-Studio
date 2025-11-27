@@ -19,6 +19,8 @@ class CRDTEngine:
         self.user_history: dict[str, list[str]] = {}
         self.diagnostics: list[str] = []
         self.semantic_events: list[str] = []
+        self.task_queue: list[str] = []
+        self.patch_proposals: list[str] = []
 
     def apply_local_change(self, file_id: str, text: str, user: str | None = None) -> list[Tuple[int, str]]:
         self.buffers[file_id] = list(text)
@@ -48,3 +50,19 @@ class CRDTEngine:
 
     def share_semantic_event(self, node: str) -> None:
         self.semantic_events.append(node)
+
+    def enqueue_task(self, task: str) -> None:
+        self.task_queue.append(task)
+
+    def propose_patch(self, description: str) -> None:
+        self.patch_proposals.append(description)
+
+    def resolve_conflicts(self) -> dict[str, list[str]]:
+        """Return a combined view of collaborative layers."""
+
+        return {
+            "buffers": list(self.buffers.keys()),
+            "tasks": list(self.task_queue),
+            "patches": list(self.patch_proposals),
+            "semantics": list(self.semantic_events),
+        }

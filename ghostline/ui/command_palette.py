@@ -22,6 +22,7 @@ class CommandPalette(QDialog):
         self.registry: CommandRegistry | None = None
         self.navigation_assistant: NavigationAssistant | None = None
         self.predictive_context: PredictiveContext | None = None
+        self.autoflow_mode = "passive"
 
         self.input = QLineEdit(self)
         self.input.setPlaceholderText("Type a command...")
@@ -69,17 +70,28 @@ class CommandPalette(QDialog):
             self.list_widget.addItem(nav_item)
         if self.navigation_assistant:
             context = self.predictive_context or PredictiveContext(cursor_symbol=self.input.text().strip())
-            for predicted in self.navigation_assistant.predict_actions(context):
+            suggestions = (
+                self.navigation_assistant.autoflow(context)
+                if self.autoflow_mode == "active"
+                else self.navigation_assistant.predict_actions(context)
+            )
+            for predicted in suggestions:
                 cmd = Command(
                     text=predicted.label,
                     callback=lambda action=predicted.action: self._execute_prediction(action),
-                    category="prediction",
+                    category="autoflow" if self.autoflow_mode == "active" else "prediction",
                 )
                 item = QListWidgetItem(f"{cmd.text} ({cmd.category})")
                 item.setData(Qt.UserRole, cmd)
                 self.list_widget.addItem(item)
         if self.list_widget.count():
             self.list_widget.setCurrentRow(0)
+
+    def set_autoflow_mode(self, mode: str) -> None:
+        """Switch between passive suggestions and active autoflow."""
+
+        if mode in {"passive", "active"}:
+            self.autoflow_mode = mode
 
     def _execute_selected(self) -> None:
         item = self.list_widget.currentItem()

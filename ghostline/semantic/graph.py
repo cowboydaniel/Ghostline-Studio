@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Set, Tuple
+from typing import Any, Dict, Iterable, List, Set, Tuple
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,8 @@ class SemanticGraph:
         self._nodes: Set[GraphNode] = set()
         self._edges: Set[GraphEdge] = set()
         self._by_name: Dict[str, Set[GraphNode]] = {}
+        self._pattern_tags: set[str] = set()
+        self._runtime_hotspots: dict[str, int] = {}
 
     def add_node(self, node: GraphNode) -> None:
         self._nodes.add(node)
@@ -118,11 +120,32 @@ class SemanticGraph:
         modules = sorted(self.module_map().keys())
         cycles = ["->".join(node.name for node in cycle) for cycle in self.find_cycles()]
         imports = sorted({edge.target.name for edge in self.import_edges()})
+        patterns = ", ".join(sorted(self._pattern_tags)) or "none"
+        hotspots = ", ".join(sorted(self._runtime_hotspots.keys())) or "none"
         return "\n".join(
             [
                 f"Modules: {', '.join(modules)}",
                 f"Imports: {', '.join(imports)}",
                 f"Cycles: {', '.join(cycles)}" if cycles else "Cycles: none",
+                f"Patterns: {patterns}",
+                f"Runtime hotspots: {hotspots}",
             ]
         )
+
+    def tag_pattern(self, label: str) -> None:
+        """Record a pattern tag such as an architecture style."""
+
+        if label:
+            self._pattern_tags.add(label)
+
+    def annotate_runtime(self, observation: Any) -> None:
+        """Track runtime hotspots and bind them to the semantic graph."""
+
+        path = getattr(observation, "path", "")
+        if not path:
+            return
+        self._runtime_hotspots[path] = self._runtime_hotspots.get(path, 0) + 1
+        for call in getattr(observation, "calls", []) or []:
+            node = GraphNode(call, "function", Path(path))
+            self.add_node(node)
 

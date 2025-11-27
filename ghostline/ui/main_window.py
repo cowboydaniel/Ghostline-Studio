@@ -26,6 +26,7 @@ from ghostline.core.events import Command, CommandRegistry
 from ghostline.core.theme import ThemeManager
 from ghostline.lang.diagnostics import DiagnosticsModel
 from ghostline.lang.lsp_manager import LSPManager
+from ghostline.agents.agent_manager import AgentManager
 from ghostline.ai.ai_client import AIClient
 from ghostline.ai.ai_chat_panel import AIChatPanel
 from ghostline.ai.ai_commands import ai_code_actions, explain_selection, refactor_selection
@@ -39,6 +40,7 @@ from ghostline.semantic.query import SemanticQueryEngine
 from ghostline.build.build_manager import BuildManager
 from ghostline.editor.code_editor import CodeEditor
 from ghostline.formatter.formatter_manager import FormatterManager
+from ghostline.runtime.inspector import RuntimeInspector
 from ghostline.indexer.index_manager import IndexManager
 from ghostline.search.global_search import GlobalSearchDialog
 from ghostline.search.symbol_search import SymbolSearcher
@@ -51,8 +53,11 @@ from ghostline.ui.layout_manager import LayoutManager
 from ghostline.ui.tabs import EditorTabs
 from ghostline.ui.docks.architecture_panel import ArchitecturePanel
 from ghostline.ui.docks.build_panel import BuildPanel
+from ghostline.ui.docks.agent_console import AgentConsole
 from ghostline.ui.docks.collab_panel import CollabPanel
 from ghostline.ui.docks.doc_panel import DocPanel
+from ghostline.ui.docks.pipeline_panel import PipelinePanel
+from ghostline.ui.docks.runtime_panel import RuntimePanel
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.workspace.project_model import ProjectModel
 from ghostline.workspace.project_view import ProjectView
@@ -67,6 +72,7 @@ from ghostline.tasks.task_panel import TaskPanel
 from ghostline.testing.test_manager import TestManager
 from ghostline.testing.test_panel import TestPanel
 from ghostline.testing.coverage_panel import CoveragePanel
+from ghostline.workflows.pipeline_manager import PipelineManager
 from ghostline.collab.session_manager import SessionManager
 from ghostline.collab.crdt_engine import CRDTEngine
 from ghostline.collab.transport import WebSocketTransport
@@ -93,6 +99,10 @@ class MainWindow(QMainWindow):
         self.semantic_index = SemanticIndexManager(lambda: self.workspace_manager.current_workspace)
         self.semantic_query = SemanticQueryEngine(self.semantic_index.graph)
         self.workspace_memory = WorkspaceMemory(self.config.workspace_memory_path)
+        self.agent_manager = AgentManager(self.workspace_memory, self.semantic_index.graph)
+        pipeline_config = Path(__file__).resolve().parent.parent / "workflows" / "pipeline.yaml"
+        self.pipeline_manager = PipelineManager(pipeline_config, self.agent_manager)
+        self.runtime_inspector = RuntimeInspector(self.semantic_index.graph)
         self.architecture_assistant = ArchitectureAssistant(self.ai_client, self.semantic_query)
         self.navigation_assistant = NavigationAssistant(self.ai_client, self.semantic_query)
         self.doc_generator = DocGenerator(self.ai_client, self.semantic_query)
@@ -100,6 +110,7 @@ class MainWindow(QMainWindow):
         self.analysis_service = AnalysisService(self.ai_client)
         self.formatter = FormatterManager(self.lsp_manager)
         self.debugger = DebuggerManager()
+        self.debugger.set_runtime_inspector(self.runtime_inspector)
         self.task_manager = TaskManager(lambda: self.workspace_manager.current_workspace)
         self.test_manager = TestManager(
             self.task_manager, lambda: self.workspace_manager.current_workspace, semantic_query=self.semantic_query
@@ -126,6 +137,7 @@ class MainWindow(QMainWindow):
         self.command_palette = CommandPalette(self)
         self.command_palette.set_registry(self.command_registry)
         self.command_palette.set_navigation_assistant(self.navigation_assistant)
+        self.command_palette.set_autoflow_mode("passive")
         self._create_actions()
         self._create_menus()
         self._create_terminal_dock()
@@ -141,6 +153,9 @@ class MainWindow(QMainWindow):
         self._create_architecture_dock()
         self._create_build_dock()
         self._create_doc_dock()
+        self._create_agent_console_dock()
+        self._create_pipeline_dock()
+        self._create_runtime_dock()
 
         self.lsp_manager.subscribe_diagnostics(self._handle_diagnostics)
         self.lsp_manager.lsp_error.connect(lambda msg: self.status.show_message(msg))
@@ -168,6 +183,9 @@ class MainWindow(QMainWindow):
         self.action_command_palette = QAction("Command Palette", self)
         self.action_command_palette.setShortcut("Ctrl+P")
         self.action_command_palette.triggered.connect(self.show_command_palette)
+
+        self.action_toggle_autoflow = QAction("Toggle Autoflow Mode", self)
+        self.action_toggle_autoflow.triggered.connect(self._toggle_autoflow_mode)
 
         self.action_toggle_project = QAction("Project Explorer", self)
         self.action_toggle_project.triggered.connect(self._toggle_project)
@@ -334,9 +352,33 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self.collab_dock = dock
 
+    def _create_agent_console_dock(self) -> None:
+        dock = AgentConsole(self.agent_manager, self)
+        dock.setObjectName("agentConsoleDock")
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.agent_console_dock = dock
+
+    def _create_pipeline_dock(self) -> None:
+        dock = PipelinePanel(self.pipeline_manager, self)
+        dock.setObjectName("pipelineDock")
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.pipeline_dock = dock
+
+    def _create_runtime_dock(self) -> None:
+        dock = RuntimePanel(self.runtime_inspector, self)
+        dock.setObjectName("runtimeDock")
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.runtime_dock = dock
+
     def show_command_palette(self) -> None:
         self._register_core_commands()
         self.command_palette.open_palette()
+
+    def _toggle_autoflow_mode(self) -> None:
+        new_mode = "active" if self.command_palette.autoflow_mode == "passive" else "passive"
+        self.command_palette.set_autoflow_mode(new_mode)
+        self.navigation_assistant.autoflow_enabled = new_mode == "active"
+        self.status.show_message(f"Autoflow mode: {new_mode}")
 
     def open_file(self, path: str) -> None:
         editor = self.editor_tabs.add_editor_for_file(Path(path))
@@ -364,6 +406,12 @@ class MainWindow(QMainWindow):
             editor.save()
             if editor.path:
                 self.plugin_loader.emit_event("file.saved", path=str(editor.path))
+
+    def _run_all_pipelines(self) -> None:
+        for pipeline in self.pipeline_manager.pipelines:
+            if pipeline.enabled:
+                self.pipeline_manager.run_pipeline(pipeline)
+        self.status.show_message("Pipelines executed")
         self.status.show_message("Saved all files")
 
     def get_current_editor(self) -> CodeEditor | None:
@@ -422,10 +470,16 @@ class MainWindow(QMainWindow):
             Command("ai.refactor_selection", "Refactor Selection", "AI", lambda: self._run_ai_command(refactor_selection))
         )
         self.command_registry.register_command(
+            Command("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode)
+        )
+        self.command_registry.register_command(
             Command("search.global", "Global Search", "Navigate", self._open_global_search)
         )
         self.command_registry.register_command(
             Command("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker)
+        )
+        self.command_registry.register_command(
+            Command("workflow.run", "Run Pipelines", "Automation", self._run_all_pipelines)
         )
         self.command_registry.register_command(
             Command("navigate.file", "Go to File", "Navigate", self._open_file_picker)
