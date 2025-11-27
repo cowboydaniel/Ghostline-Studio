@@ -54,6 +54,7 @@ from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.layout_manager import LayoutManager
 from ghostline.ui.tabs import EditorTabs
+from ghostline.ui.workspace_dashboard import WorkspaceDashboard
 from ghostline.visual3d.architecture_dock import ArchitectureDock
 from ghostline.ui.docks.build_panel import BuildPanel
 from ghostline.ui.docks.agent_console import AgentConsole
@@ -133,6 +134,7 @@ class MainWindow(QMainWindow):
         self.layout_manager = LayoutManager(self)
         self.git_service = GitService(self.workspace_manager.current_workspace)
         self.first_run = not bool(self.workspace_manager.recent_items)
+        self._recent_files_by_workspace: dict[str, list[str]] = {}
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -143,9 +145,14 @@ class MainWindow(QMainWindow):
         self.editor_tabs.countChanged.connect(self._update_central_stack)
 
         self.empty_state = self._create_empty_state()
+        self.workspace_dashboard = WorkspaceDashboard(
+            open_file=self.open_file,
+            open_palette=self.show_command_palette,
+        )
         self.central_stack = QStackedLayout()
         self.central_stack.setContentsMargins(0, 0, 0, 0)
         self.central_stack.addWidget(self.empty_state)
+        self.central_stack.addWidget(self.workspace_dashboard)
         self.central_stack.addWidget(self.editor_tabs)
         central_container = QWidget(self)
         central_container.setObjectName("EditorArea")
@@ -154,7 +161,18 @@ class MainWindow(QMainWindow):
 
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
+        self.status.setContentsMargins(4, 0, 12, 0)
         self.analysis_service.suggestions_changed.connect(lambda items: self.status.set_ai_suggestions_available(bool(items)))
+
+        self.setStyleSheet(
+            """
+            QMainWindow::separator { background: palette(mid); width: 6px; }
+            QMainWindow::separator:hover { background: palette(highlight); }
+            QDockWidget::title { font-size: 12px; padding: 6px 8px; }
+            QTreeView { font-size: 12px; }
+            QStatusBar QLabel { font-size: 11px; }
+            """
+        )
 
         self.command_palette = CommandPalette(self)
         self.command_palette.set_registry(self.command_registry)
@@ -221,8 +239,21 @@ class MainWindow(QMainWindow):
         return widget
 
     def _update_central_stack(self) -> None:
+        workspace = self.workspace_manager.current_workspace
         if self.editor_tabs.count():
             self.central_stack.setCurrentWidget(self.editor_tabs)
+            return
+
+        if workspace:
+            workspace_str = str(workspace)
+            last_path = self._recent_files_by_workspace.get(workspace_str, [None])
+            last_file = last_path[0] if last_path else None
+            if last_file and Path(last_file).exists():
+                self.open_file(last_file)
+                return
+
+            self.workspace_dashboard.set_workspace(workspace, self._recent_files_by_workspace.get(workspace_str, []))
+            self.central_stack.setCurrentWidget(self.workspace_dashboard)
         else:
             self.central_stack.setCurrentWidget(self.empty_state)
 
@@ -236,29 +267,36 @@ class MainWindow(QMainWindow):
         if hasattr(self, "build_dock"):
             self.tabifyDockWidget(self.diagnostics_dock, self.build_dock)
 
-        if self.first_run:
-            for dock in [
-                getattr(self, name)
-                for name in (
-                    "debugger_dock",
-                    "coverage_dock",
-                    "collab_dock",
-                    "test_dock",
-                    "build_dock",
-                    "task_dock",
-                    "pipeline_dock",
-                    "runtime_dock",
-                    "doc_dock",
-                    "agent_console_dock",
-                    "architecture_dock",
-                    "git_dock",
-                )
-                if hasattr(self, name)
-            ]:
-                dock.hide()
+        optional_right = [
+            getattr(self, name)
+            for name in (
+                "coverage_dock",
+                "collab_dock",
+                "pipeline_dock",
+                "runtime_dock",
+                "doc_dock",
+                "agent_console_dock",
+                "architecture_dock",
+                "git_dock",
+            )
+            if hasattr(self, name)
+        ]
+        for dock in optional_right:
+            dock.hide()
+
+        bottom_docks = [
+            getattr(self, name)
+            for name in ("terminal_dock", "diagnostics_dock", "task_dock", "test_dock", "build_dock")
+            if hasattr(self, name)
+        ]
+        for dock in bottom_docks:
+            dock.hide()
+
+        if self.first_run and hasattr(self, "debugger_dock"):
+            self.debugger_dock.show()
 
         if hasattr(self, "project_dock") and hasattr(self, "ai_dock"):
-            self.resizeDocks([self.project_dock, self.ai_dock], [280, 720], Qt.Horizontal)
+            self.resizeDocks([self.project_dock, self.ai_dock], [320, 720], Qt.Horizontal)
         if hasattr(self, "terminal_dock") and hasattr(self, "diagnostics_dock"):
             self.resizeDocks([self.terminal_dock, self.diagnostics_dock], [280, 220], Qt.Vertical)
 
@@ -288,6 +326,11 @@ class MainWindow(QMainWindow):
             self.git_service.set_workspace(workspace)
         if hasattr(self, "git_panel"):
             self.git_panel.refresh()
+            has_repo = self.git_panel.has_repository()
+            if hasattr(self, "git_dock"):
+                self.git_dock.setVisible(has_repo)
+            if not has_repo:
+                self.git_panel.set_empty_state(True)
 
         if hasattr(self, "debugger_panel"):
             config_exists = bool(workspace and (Path(workspace) / ".vscode" / "launch.json").exists())
@@ -396,9 +439,14 @@ class MainWindow(QMainWindow):
     def _create_project_dock(self) -> None:
         dock = QDockWidget("Project", self)
         dock.setObjectName("projectDock")
-        dock.setMinimumWidth(220)
+        dock.setMinimumWidth(280)
+        dock.setMaximumWidth(520)
         self.project_model = ProjectModel(self)
         self.project_view = ProjectView(self)
+        self.project_view.setTextElideMode(Qt.ElideRight)
+        self.project_view.setStyleSheet("QTreeView { font-size: 12px; }")
+        self.project_view.setIndentation(18)
+        self.project_view.setColumnWidth(0, 280)
         self.project_view.set_model(self.project_model)
         self.project_placeholder = QLabel("No workspace open. Use File → Open Folder…", self)
         self.project_placeholder.setAlignment(Qt.AlignCenter)
@@ -432,7 +480,15 @@ class MainWindow(QMainWindow):
         self.diagnostics_model = DiagnosticsModel(self)
         table.setModel(self.diagnostics_model)
         table.doubleClicked.connect(self._jump_to_diagnostic)
-        dock.setWidget(table)
+        self.diagnostics_empty = QLabel("No diagnostics yet. Run analysis or tests to see issues.", self)
+        self.diagnostics_empty.setAlignment(Qt.AlignCenter)
+        container = QWidget(self)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+        layout.addWidget(self.diagnostics_empty)
+        layout.addWidget(table)
+        dock.setWidget(container)
         dock.setMinimumHeight(140)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self._register_dock_action(dock)
@@ -561,6 +617,12 @@ class MainWindow(QMainWindow):
         self.status.show_path(path)
         self.workspace_manager.register_recent(path)
         workspace = self.workspace_manager.current_workspace
+        if workspace:
+            workspace_str = str(workspace)
+            files = self._recent_files_by_workspace.get(workspace_str, [])
+            files = [p for p in files if p != path]
+            files.insert(0, path)
+            self._recent_files_by_workspace[workspace_str] = files[:5]
         self.status.update_git(str(workspace) if workspace else None)
         logger.info("Opened file: %s", path)
         self.plugin_loader.emit_event("file.opened", path=path)
@@ -587,6 +649,7 @@ class MainWindow(QMainWindow):
         self.plugin_loader.emit_event("workspace.opened", path=folder)
         self.task_manager.load_workspace_tasks()
         self.semantic_index.reindex()
+        self._update_central_stack()
 
     def save_all(self) -> None:
         for editor in self.editor_tabs.iter_editors():
@@ -789,6 +852,10 @@ class MainWindow(QMainWindow):
 
     def _handle_diagnostics(self, diagnostics) -> None:
         self.diagnostics_model.set_diagnostics(diagnostics)
+        if hasattr(self, "diagnostics_empty"):
+            has_items = bool(diagnostics)
+            self.diagnostics_empty.setVisible(not has_items)
+            self.diagnostics_view.setVisible(has_items)
         for editor in self.editor_tabs.iter_editors():
             file_diags = [d for d in diagnostics if d.file == str(editor.path)]
             editor.apply_diagnostics(file_diags)

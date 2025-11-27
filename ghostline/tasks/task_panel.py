@@ -13,6 +13,7 @@ class TaskPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         self.task_list = QListWidget(self)
+        self.task_list.setPlaceholderText("No tasks loaded yet.")
         layout.addWidget(self.task_list)
 
         controls = QHBoxLayout()
@@ -25,6 +26,7 @@ class TaskPanel(QWidget):
 
         self.output = QTextEdit(self)
         self.output.setReadOnly(True)
+        self.output.setPlaceholderText("Task output will appear here when a task runs.")
         layout.addWidget(self.output)
 
         self.run_button.clicked.connect(self._run_selected)
