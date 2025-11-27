@@ -18,7 +18,7 @@ from PySide6.QtGui import (
     QTextDocument,
     QPalette,
 )
-from PySide6.QtWidgets import QPlainTextEdit, QWidget, QToolTip
+from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget, QToolTip
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.theme import ThemeManager
@@ -124,7 +124,7 @@ class CodeEditor(QPlainTextEdit):
         self._document_version = 0
         self._diagnostics: list[Diagnostic] = []
         self._extra_cursors: list[QTextCursor] = []
-        self._bracket_selection: list[QPlainTextEdit.ExtraSelection] = []
+        self._bracket_selection: list[QTextEdit.ExtraSelection] = []
         self.breakpoints = BreakpointStore.instance()
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
@@ -299,7 +299,7 @@ class CodeEditor(QPlainTextEdit):
     def _highlight_current_line(self) -> None:
         extra_selections = []
         if not self.isReadOnly():
-            selection = QPlainTextEdit.ExtraSelection()
+            selection = QTextEdit.ExtraSelection()
             line_color = self.theme.color(QPalette.AlternateBase) if self.theme else QColor(60, 65, 70)
             selection.format.setBackground(line_color)
             selection.format.setProperty(QTextFormat.FullWidthSelection, True)
@@ -351,10 +351,10 @@ class CodeEditor(QPlainTextEdit):
         ]
         self._highlight_current_line()
 
-    def _diagnostic_selections(self) -> list[QPlainTextEdit.ExtraSelection]:
-        selections: list[QPlainTextEdit.ExtraSelection] = []
+    def _diagnostic_selections(self) -> list[QTextEdit.ExtraSelection]:
+        selections: list[QTextEdit.ExtraSelection] = []
         for diag in self._diagnostics:
-            selection = QPlainTextEdit.ExtraSelection()
+            selection = QTextEdit.ExtraSelection()
             fmt = QTextCharFormat()
             fmt.setUnderlineColor(QColor(255, 99, 71))
             fmt.setUnderlineStyle(QTextCharFormat.SpellCheckUnderline)
@@ -367,8 +367,8 @@ class CodeEditor(QPlainTextEdit):
             selections.append(selection)
         return selections
 
-    def _selection_for_position(self, position: int) -> QPlainTextEdit.ExtraSelection:
-        selection = QPlainTextEdit.ExtraSelection()
+    def _selection_for_position(self, position: int) -> QTextEdit.ExtraSelection:
+        selection = QTextEdit.ExtraSelection()
         cursor = QTextCursor(self.document())
         cursor.setPosition(position)
         cursor.setPosition(position + 1, QTextCursor.KeepAnchor)
@@ -376,10 +376,10 @@ class CodeEditor(QPlainTextEdit):
         selection.format.setBackground(QColor(80, 120, 200, 120))
         return selection
 
-    def _multi_cursor_selections(self) -> list[QPlainTextEdit.ExtraSelection]:
-        selections: list[QPlainTextEdit.ExtraSelection] = []
+    def _multi_cursor_selections(self) -> list[QTextEdit.ExtraSelection]:
+        selections: list[QTextEdit.ExtraSelection] = []
         for cursor in self._extra_cursors:
-            sel = QPlainTextEdit.ExtraSelection()
+            sel = QTextEdit.ExtraSelection()
             sel.cursor = cursor
             sel.format.setProperty(QTextFormat.FullWidthSelection, True)
             sel.format.setBackground(QColor(90, 90, 120, 80))
