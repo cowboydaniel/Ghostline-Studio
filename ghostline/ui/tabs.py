@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterator
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QTabWidget
 
 from ghostline.core.config import ConfigManager
@@ -14,6 +15,8 @@ from ghostline.ai.ai_client import AIClient
 
 
 class EditorTabs(QTabWidget):
+    countChanged = Signal(int)
+
     def __init__(
         self,
         parent=None,
@@ -41,6 +44,7 @@ class EditorTabs(QTabWidget):
         )
         self.addTab(editor, path.name)
         self.setCurrentWidget(editor)
+        self.countChanged.emit(self.count())
         return editor
 
     def _close_tab(self, index: int) -> None:
@@ -48,6 +52,7 @@ class EditorTabs(QTabWidget):
         if widget:
             widget.deleteLater()
         self.removeTab(index)
+        self.countChanged.emit(self.count())
 
     def iter_editors(self) -> Iterator[CodeEditor]:
         for index in range(self.count()):

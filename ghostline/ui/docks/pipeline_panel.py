@@ -34,6 +34,8 @@ class PipelinePanel(QDockWidget):
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
         layout.addWidget(QLabel("Configured pipelines"))
         layout.addWidget(self.pipeline_list)
         layout.addWidget(self.details)
@@ -41,6 +43,7 @@ class PipelinePanel(QDockWidget):
         layout.addWidget(self.run_button)
         layout.addWidget(self.import_button)
         self.setWidget(content)
+        self.setMinimumWidth(260)
 
         self.pipeline_list.currentItemChanged.connect(self._refresh_details)
         self.run_button.clicked.connect(self._run_selected)

@@ -19,9 +19,12 @@ class DocPanel(QDockWidget):
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
         layout.addWidget(self.text)
         layout.addWidget(self.refresh_button)
         self.setWidget(content)
+        self.setMinimumWidth(260)
 
         self._current_path: Path | None = None
 

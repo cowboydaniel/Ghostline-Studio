@@ -40,6 +40,10 @@ class GhostlineApplication:
             self.theme.apply_theme(self.qt_app)
             if self.args.path:
                 self._open_initial_path(self.args.path)
+            else:
+                last_workspace = self.workspace_manager.last_recent_workspace()
+                if last_workspace:
+                    self.main_window.open_folder(str(last_workspace))
             self.main_window.show()
             return self.qt_app.exec()
         except Exception as e:

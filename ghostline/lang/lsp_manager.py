@@ -90,7 +90,8 @@ class LSPManager(QObject):
         return role_map
 
     def _get_client(self, language: str, role: str = "primary") -> LSPClient | None:
-        workspace = self.workspace_manager.current_workspace or str(Path(path := ".").resolve())
+        workspace_path = self.workspace_manager.current_workspace or Path.cwd()
+        workspace = str(workspace_path)
         lang_clients = self.clients.setdefault(workspace, {}).setdefault(language, {})
         if role in lang_clients:
             return lang_clients[role]
@@ -148,7 +149,8 @@ class LSPManager(QObject):
     def restart_language_server(self, language: str) -> None:
         """Restart the language server for a specific language in the current workspace."""
 
-        workspace = self.workspace_manager.current_workspace or str(Path(".").resolve())
+        workspace_path = self.workspace_manager.current_workspace or Path.cwd()
+        workspace = str(workspace_path)
         self._drop_client(language, workspace, "primary")
         self._notify_restart(language)
         self._get_client(language)

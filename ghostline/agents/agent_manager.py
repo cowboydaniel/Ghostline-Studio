@@ -33,6 +33,7 @@ class AgentManager:
             RefactorAgent(memory, graph, shared_context=self.shared_context),
             VerificationAgent(graph, shared_context=self.shared_context),
         ]
+        self.workspace_active = False
 
     def register_agent(self, agent: BaseAgent) -> None:
         self.agents.append(agent)
@@ -70,13 +71,17 @@ class AgentManager:
             plan["conflicts"].extend(result.conflicts)
         return plan
 
+    def set_workspace_active(self, active: bool) -> None:
+        self.workspace_active = active
+
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False)
 
     def agent_status(self) -> list[str]:
         """Return brief status snapshots for the Multi-Agent Console UI."""
 
-        return [f"{agent.__class__.__name__}: ready" for agent in self.agents]
+        state = "ready" if self.workspace_active else "idle"
+        return [f"{agent.__class__.__name__}: {state}" for agent in self.agents]
 
 
 class _WorkspaceSharedContext:
