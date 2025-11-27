@@ -1,0 +1,23 @@
+theme: "Ghostline Dark"
+font:
+  editor_family: "JetBrains Mono"
+  editor_size: 11
+tabs:
+  use_spaces: true
+  tab_size: 4
+autosave:
+  enabled: false
+  interval_seconds: 60
+ai:
+  enabled: false
+  backend: "dummy"
+  endpoint: "http://localhost:11434"
+lsp:
+  servers:
+    python:
+      command: "pylsp"
+      args: []
+    typescript:
+      command: "typescript-language-server"
+      args:
+        - "--stdio"
