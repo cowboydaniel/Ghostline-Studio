@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QTextEdit,
+    QHBoxLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -28,20 +30,26 @@ class PipelinePanel(QDockWidget):
         self.pipeline_list = QListWidget(self)
         self.details = QTextEdit(self)
         self.details.setReadOnly(True)
+        self.details.setPlaceholderText("Select a pipeline to see details.")
         self.toggle_button = QPushButton("Enable/Disable")
         self.run_button = QPushButton("Run Pipeline")
-        self.import_button = QPushButton("Import YAML")
+        self.import_button = QPushButton("Import YAML…")
+        self.refresh_button = QPushButton("Refresh")
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
-        layout.addWidget(QLabel("Configured pipelines"))
+        layout.addWidget(QLabel("Configured Pipelines"))
         layout.addWidget(self.pipeline_list)
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(6)
+        actions_row.addWidget(self.run_button)
+        actions_row.addWidget(self.import_button)
+        layout.addLayout(actions_row)
         layout.addWidget(self.details)
         layout.addWidget(self.toggle_button)
-        layout.addWidget(self.run_button)
-        layout.addWidget(self.import_button)
+        layout.addWidget(self.refresh_button)
         self.setWidget(content)
         self.setMinimumWidth(260)
 
@@ -49,14 +57,22 @@ class PipelinePanel(QDockWidget):
         self.run_button.clicked.connect(self._run_selected)
         self.toggle_button.clicked.connect(self._toggle_selected)
         self.import_button.clicked.connect(self._import_yaml)
+        self.refresh_button.clicked.connect(self._refresh_details)
 
         self._populate()
 
     def _populate(self) -> None:
         self.pipeline_list.clear()
+        if not self.manager.pipelines:
+            empty = QListWidgetItem("No pipelines configured. Use Import YAML… to add one.")
+            empty.setFlags(Qt.NoItemFlags)
+            self.pipeline_list.addItem(empty)
+            self.details.clear()
+            return
+
         for pipeline in self.manager.pipelines:
             item = QListWidgetItem(pipeline.name)
-            item.setData(0x0100, pipeline)  # Qt.UserRole
+            item.setData(Qt.UserRole, pipeline)
             self.pipeline_list.addItem(item)
         if self.pipeline_list.count():
             self.pipeline_list.setCurrentRow(0)
@@ -66,7 +82,7 @@ class PipelinePanel(QDockWidget):
         if not item:
             self.details.clear()
             return
-        pipeline: PipelineDefinition | None = item.data(0x0100)
+        pipeline: PipelineDefinition | None = item.data(Qt.UserRole)
         if not pipeline:
             return
         trigger_text = ", ".join(pipeline.triggers)
@@ -79,14 +95,14 @@ class PipelinePanel(QDockWidget):
 
     def _run_selected(self) -> None:
         item = self.pipeline_list.currentItem()
-        pipeline: PipelineDefinition | None = item.data(0x0100) if item else None
+        pipeline: PipelineDefinition | None = item.data(Qt.UserRole) if item else None
         if pipeline:
             self.manager.run_pipeline(pipeline)
             self._refresh_details()
 
     def _toggle_selected(self) -> None:
         item = self.pipeline_list.currentItem()
-        pipeline: PipelineDefinition | None = item.data(0x0100) if item else None
+        pipeline: PipelineDefinition | None = item.data(Qt.UserRole) if item else None
         if pipeline:
             pipeline.enabled = not pipeline.enabled
             self._refresh_details()

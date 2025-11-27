@@ -9,12 +9,15 @@ from ghostline.build.build_manager import BuildManager
 
 class BuildPanel(QDockWidget):
     def __init__(self, build_manager: BuildManager, parent=None) -> None:
-        super().__init__("Build Panel", parent)
+        super().__init__("Build", parent)
         self.build_manager = build_manager
         self.running = QListWidget(self)
         self.queue = QListWidget(self)
         self.logs = QTextEdit(self)
         self.logs.setReadOnly(True)
+        self.logs.setPlaceholderText("Build output will appear here once a build is triggered.")
+        self.running.setPlaceholderText("No builds running.")
+        self.queue.setPlaceholderText("Build queue is empty.")
 
         content = QWidget(self)
         layout = QVBoxLayout(content)

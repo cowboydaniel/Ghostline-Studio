@@ -18,7 +18,7 @@ class RuntimePanel(QDockWidget):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
-        layout.addWidget(QLabel("Latest runtime observations"))
+        layout.addWidget(QLabel("Latest Runtime Observations"))
         layout.addWidget(self.events)
         layout.addWidget(self.refresh_button)
         self.setWidget(content)
@@ -31,7 +31,12 @@ class RuntimePanel(QDockWidget):
 
     def _refresh(self) -> None:
         self.events.clear()
-        for obs in self.inspector.recent():
+        observations = list(self.inspector.recent())
+        if not observations:
+            self.events.addItem("No runtime observations yet. Run a pipeline or debug session to populate this log.")
+            return
+
+        for obs in observations:
             summary = f"{obs.path}: calls={len(obs.calls)} error={obs.error or 'none'}"
             item = QListWidgetItem(summary)
             item.setData(0x0100, obs)

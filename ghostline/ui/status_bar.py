@@ -10,10 +10,13 @@ class StudioStatusBar(QStatusBar):
     def __init__(self, git: GitIntegration) -> None:
         super().__init__()
         self.git = git
-        self.path_label = QLabel("Ready")
-        self.ai_label = QLabel("")
+        self.state_label = QLabel("IDE: Ready")
+        self.state_label.setContentsMargins(0, 0, 8, 0)
+        self.path_label = QLabel("")
+        self.ai_label = QLabel("AI: Ready")
         self.prediction_label = QLabel("")
         self.git_label = QLabel("")
+        self.addPermanentWidget(self.state_label)
         self.addPermanentWidget(self.ai_label)
         self.addPermanentWidget(self.prediction_label)
         self.addPermanentWidget(self.git_label)
@@ -35,9 +38,9 @@ class StudioStatusBar(QStatusBar):
 
     def set_ai_suggestions_available(self, available: bool) -> None:
         if available:
-            self.ai_label.setText("AI suggestions ready")
+            self.ai_label.setText("AI: Ready — Suggestions Available")
         else:
-            self.ai_label.setText("")
+            self.ai_label.setText("AI: Ready")
 
     def show_predicted_actions(self, actions: list[str]) -> None:
         """Render predicted actions in the status bar."""
