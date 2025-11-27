@@ -34,6 +34,7 @@ class LSPManager(QObject):
         self._pending: dict[int, Callable[[dict], None]] = {}
         self._language_map = self._build_language_map()
         self._ensure_default_servers()
+        self._reported_failures: set[str] = set()
         self.self_healing = SelfHealingService(config, lambda: self.workspace_manager.current_workspace)
 
     # Client management
@@ -77,17 +78,50 @@ class LSPManager(QObject):
         servers_cfg = self.config.get("lsp", {}).get("servers", {})
         entry = servers_cfg.get(language) or {}
         if entry.get("command"):
+            if entry.get("enabled", True) is False:
+                return {}
             return {"primary": [entry]}
         role_map: dict[str, list[dict[str, Any]]] = {}
         for role in ("primary", "analyzers", "formatter"):
             value = entry.get(role)
             if not value:
                 continue
-            if isinstance(value, list):
-                role_map[role] = value
-            else:
-                role_map[role] = [value]
+            entries = value if isinstance(value, list) else [value]
+            enabled_entries = [cfg for cfg in entries if cfg.get("enabled", True) is not False]
+            if enabled_entries:
+                role_map[role] = enabled_entries
         return role_map
+
+    def _role_is_disabled(self, language: str, role: str) -> bool:
+        entry = self.config.get("lsp", {}).get("servers", {}).get(language) or {}
+        if entry.get("command") and role == "primary":
+            return entry.get("enabled", True) is False
+        role_value = entry.get(role)
+        if not role_value:
+            return False
+        if isinstance(role_value, list):
+            configs = [cfg for cfg in role_value if isinstance(cfg, dict)]
+            return bool(configs) and all(cfg.get("enabled", True) is False for cfg in configs)
+        if isinstance(role_value, dict):
+            return role_value.get("enabled", True) is False
+        return False
+
+    def _command_for_language(self, language: str) -> str | None:
+        entry = self.config.get("lsp", {}).get("servers", {}).get(language) or {}
+        if entry.get("command"):
+            return str(entry.get("command"))
+        for role in ("primary", "formatter", "analyzers"):
+            value = entry.get(role)
+            if isinstance(value, list):
+                for cfg in value:
+                    command = cfg.get("command") if isinstance(cfg, dict) else None
+                    if command:
+                        return str(command)
+            elif isinstance(value, dict):
+                command = value.get("command")
+                if command:
+                    return str(command)
+        return None
 
     def _get_client(self, language: str, role: str = "primary") -> LSPClient | None:
         workspace_path = self.workspace_manager.current_workspace or Path.cwd()
@@ -98,6 +132,9 @@ class LSPManager(QObject):
         role_defs = self._role_definitions(language)
         definitions = role_defs.get(role)
         if not definitions:
+            if self._role_is_disabled(language, role):
+                logger.info("%s LSP server for %s disabled via configuration", role, language)
+                return None
             logger.warning("No %s LSP server configured for %s", role, language)
             self.lsp_error.emit(f"No {role} LSP configured for {language}")
             return None
@@ -109,12 +146,14 @@ class LSPManager(QObject):
             message = f"LSP server for {language} not found. Install: {cfg.get('command')}"
             logger.error(message)
             self.lsp_error.emit(message)
+            self._emit_failure_diagnostic(language)
             return None
         self._register_client_hooks(language, workspace, role, client)
         client.notification_received.connect(self._handle_notification)
         client.response_received.connect(self._handle_response)
         client.start()
         lang_clients[role] = client
+        self._reported_failures.discard(language)
         self._initialize(client, workspace)
         return client
 
@@ -161,6 +200,7 @@ class LSPManager(QObject):
         if error_detail:
             logger.error("LSP failure for %s: %s", language, error_detail)
         self.lsp_error.emit(message)
+        self._emit_failure_diagnostic(language)
         if self.config.self_healing_enabled():
             self.self_healing.scan()
 
@@ -277,4 +317,14 @@ class LSPManager(QObject):
         if request_id in self._pending:
             callback = self._pending.pop(request_id)
             callback(message)
+
+    def _emit_failure_diagnostic(self, language: str) -> None:
+        if language in self._reported_failures:
+            return
+        command = self._command_for_language(language) or "the configured language server"
+        message = f"{language.capitalize()} language server failed to start. Check that {command} is installed and configured."
+        diagnostic = Diagnostic(file="(LSP)", line=0, col=0, severity="Warning", message=message)
+        for callback in self._diag_callbacks:
+            callback([diagnostic])
+        self._reported_failures.add(language)
 

@@ -33,7 +33,10 @@ class LSPClient(QObject):
         if not self.command:
             raise RuntimeError("No command configured for LSP client")
         program, *args = self.command
+        self._command = program
+        self._args = args
         self.process.setWorkingDirectory(self.workdir or "")
+        logger.info("Starting LSP client: %r %r", self._command, self._args)
         self.process.start(program, args)
 
     def stop(self) -> None:
@@ -100,5 +103,9 @@ class LSPClient(QObject):
             self.notification_received.emit(message)
 
     def _on_error(self, error) -> None:  # pragma: no cover - Qt error callback
+        if error == QProcess.ProcessError.FailedToStart:
+            logger.error(
+                "LSP failed to start. Check that the configured command exists and is executable."
+            )
         logger.error("LSP client process error: %s", error)
 
