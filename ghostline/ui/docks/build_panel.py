@@ -16,8 +16,8 @@ class BuildPanel(QDockWidget):
         self.logs = QTextEdit(self)
         self.logs.setReadOnly(True)
         self.logs.setPlaceholderText("Build output will appear here once a build is triggered.")
-        self.running.setPlaceholderText("No builds running.")
-        self.queue.setPlaceholderText("Build queue is empty.")
+        self._ensure_placeholder(self.running, "No builds running.")
+        self._ensure_placeholder(self.queue, "Build queue is empty.")
 
         content = QWidget(self)
         layout = QVBoxLayout(content)
@@ -34,6 +34,7 @@ class BuildPanel(QDockWidget):
         self.build_manager.queue_changed.connect(self._on_queue_changed)
 
     def _on_task_started(self, name: str) -> None:
+        self._remove_placeholders(self.running)
         self.running.addItem(name)
 
     def _on_task_finished(self, name: str, code: int) -> None:
@@ -41,6 +42,7 @@ class BuildPanel(QDockWidget):
         for item in items:
             row = self.running.row(item)
             self.running.takeItem(row)
+        self._ensure_placeholder(self.running, "No builds running.")
         self.logs.append(f"{name} finished with code {code}")
 
     def _on_output(self, name: str, line: str) -> None:
@@ -50,4 +52,23 @@ class BuildPanel(QDockWidget):
         self.queue.clear()
         for item in queue:
             self.queue.addItem(QListWidgetItem(item))
+        self._ensure_placeholder(self.queue, "Build queue is empty.")
+
+    @staticmethod
+    def _remove_placeholders(widget: QListWidget) -> None:
+        """Remove any placeholder-only items from the given list widget."""
+
+        placeholders = [widget.item(index) for index in range(widget.count()) if widget.item(index).flags() == Qt.NoItemFlags]
+        for placeholder in placeholders:
+            row = widget.row(placeholder)
+            widget.takeItem(row)
+
+    @staticmethod
+    def _ensure_placeholder(widget: QListWidget, text: str) -> None:
+        """Ensure a non-selectable placeholder item exists when the widget is empty."""
+
+        if widget.count() == 0:
+            placeholder = QListWidgetItem(text)
+            placeholder.setFlags(Qt.NoItemFlags)
+            widget.addItem(placeholder)
 
