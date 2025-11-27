@@ -113,7 +113,7 @@ class SetupWizardDialog(QDialog):
         layout.addWidget(prompt)
 
         self.backend_group = QButtonGroup(self)
-        self.backend_group.buttonClicked.connect(self._backend_changed)
+        self.backend_group.buttonToggled.connect(self._backend_changed)
 
         # OpenAI option
         openai_box = QGroupBox("OpenAI (Cloud)", widget)
@@ -237,12 +237,15 @@ class SetupWizardDialog(QDialog):
         self.selected_model = ""
         self._finish()
 
-    def _backend_changed(self) -> None:
+    def _backend_changed(self, button=None, checked: bool | None = None) -> None:
+        # Ignore toggle-off events when receiving the button/checked signature
+        if checked is False:
+            return
         if self._openai_radio.isChecked():
             self.selected_backend = "openai"
         elif self._ollama_radio.isChecked():
             self.selected_backend = "ollama"
-        else:
+        elif self._none_radio.isChecked():
             self.selected_backend = "none"
         self._update_next_enabled()
 
