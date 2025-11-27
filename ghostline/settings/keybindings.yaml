@@ -1,0 +1,6 @@
+file.open: "Ctrl+O"
+file.save: "Ctrl+S"
+file.save_all: "Ctrl+Shift+S"
+command_palette.show: "Ctrl+P"
+ai.suggest_inline: "Ctrl+Space"
+ai.chat_panel.toggle: "Ctrl+Alt+A"
