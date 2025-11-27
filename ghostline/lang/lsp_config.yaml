@@ -4,9 +4,6 @@ servers:
     primary:
       command: "pylsp"
       args: []
-    analyzers:
-      - command: "ruff-lsp"
-        args: []
     formatter:
       command: "black"
       args:
