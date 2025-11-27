@@ -14,7 +14,7 @@ class GraphNode:
     kind: str
     file: Path
     span: Tuple[int, int] | None = None
-    metadata: dict = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict, compare=False, hash=False)
 
 
 @dataclass(frozen=True)

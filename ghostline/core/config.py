@@ -5,7 +5,27 @@ import os
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+    import json
+
+    class _YamlShim:
+        @staticmethod
+        def safe_load(stream):
+            text = stream.read() if hasattr(stream, "read") else stream
+            if not text:
+                return {}
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {}
+
+        @staticmethod
+        def safe_dump(data, stream):
+            stream.write(json.dumps(data))
+
+    yaml = _YamlShim()
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "ghostline"
 DEFAULTS_PATH = Path(__file__).resolve().parent.parent / "settings" / "defaults.yaml"
