@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 import yaml
 from PySide6.QtCore import QObject, QProcess, Signal
@@ -24,7 +24,7 @@ class TaskManager(QObject):
     def __init__(self, workspace_provider: Callable[[], str | None]) -> None:
         super().__init__()
         self._workspace_provider = workspace_provider
-        self.process: QProcess | None = None
+        self.processes: dict[str, QProcess] = {}
         self.tasks: list[TaskDefinition] = []
 
     def load_workspace_tasks(self) -> None:
@@ -57,21 +57,25 @@ class TaskManager(QObject):
         self._start_process(label, self._interpolate(command, workspace, None), cwd or workspace)
 
     def stop(self) -> None:
-        if self.process and self.process.state() == QProcess.Running:
-            self.process.terminate()
-            self.state_changed.emit("stopped")
+        for label, process in list(self.processes.items()):
+            if process.state() == QProcess.Running:
+                process.terminate()
+                self.state_changed.emit(f"stopped:{label}")
 
-    def _read_stdout(self) -> None:
-        if self.process:
-            self.output.emit(str(self.process.readAllStandardOutput(), encoding="utf-8"))
+    def _read_stdout(self, label: str) -> None:
+        process = self.processes.get(label)
+        if process:
+            self.output.emit(f"[{label}] {str(process.readAllStandardOutput(), encoding='utf-8')}")
 
-    def _read_stderr(self) -> None:
-        if self.process:
-            self.output.emit(str(self.process.readAllStandardError(), encoding="utf-8"))
+    def _read_stderr(self, label: str) -> None:
+        process = self.processes.get(label)
+        if process:
+            self.output.emit(f"[{label}] {str(process.readAllStandardError(), encoding='utf-8')}")
 
-    def _on_finished(self) -> None:
-        self.state_changed.emit("finished")
-        self.output.emit("Task finished")
+    def _on_finished(self, label: str) -> None:
+        self.state_changed.emit(f"finished:{label}")
+        self.output.emit(f"Task finished: {label}")
+        self.processes.pop(label, None)
 
     def _interpolate(self, value: str, workspace: str, file_path: str | None) -> str:
         if not value:
@@ -92,18 +96,28 @@ class TaskManager(QObject):
         return value
 
     def _start_process(self, label: str, command: str, cwd: str) -> None:
-        if self.process and self.process.state() == QProcess.Running:
-            self.output.emit("Another task is already running")
+        if label in self.processes and self.processes[label].state() == QProcess.Running:
+            self.output.emit(f"Task '{label}' already running")
             return
-        self.process = QProcess(self)
-        self.process.readyReadStandardOutput.connect(self._read_stdout)
-        self.process.readyReadStandardError.connect(self._read_stderr)
-        self.process.finished.connect(self._on_finished)
-        self.process.errorOccurred.connect(lambda err: self.output.emit(f"Task error: {err}"))
+        process = QProcess(self)
+        process.readyReadStandardOutput.connect(lambda: self._read_stdout(label))
+        process.readyReadStandardError.connect(lambda: self._read_stderr(label))
+        process.finished.connect(lambda *_: self._on_finished(label))
+        process.errorOccurred.connect(lambda err: self.output.emit(f"Task error ({label}): {err}"))
 
         self.output.emit(f"Running task: {label}")
-        self.state_changed.emit("running")
+        self.state_changed.emit(f"running:{label}")
         program, *args = command.split()
-        self.process.setWorkingDirectory(cwd)
-        self.process.start(program, args)
+        process.setWorkingDirectory(cwd)
+        process.start(program, args)
+        self.processes[label] = process
+
+    def run_tasks_concurrently(self, task_names: Iterable[str]) -> None:
+        for name in task_names:
+            task = next((t for t in self.tasks if t.name == name), None)
+            if task:
+                workspace = self._workspace_provider() or ""
+                resolved_cmd = self._interpolate(task.command, workspace, None)
+                cwd = self._interpolate(task.cwd or workspace, workspace, None)
+                self._start_process(task.name, resolved_cmd, cwd)
 

@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Iterable
+
+from ghostline.semantic.query import SemanticQueryEngine
 
 
 class TestManager:
-    def __init__(self, task_manager, workspace_provider) -> None:
+    def __init__(self, task_manager, workspace_provider, semantic_query: SemanticQueryEngine | None = None) -> None:
         self.task_manager = task_manager
         self._workspace_provider = workspace_provider
+        self.semantic_query = semantic_query
 
     def _workspace(self) -> Path | None:
         path = self._workspace_provider()
@@ -30,6 +34,28 @@ class TestManager:
     def run_file(self, path: str) -> None:
         command = self._build_command(path)
         self._run_command(command)
+
+    def run_relevant(self, changed: str) -> None:
+        for test in self.relevant_tests([changed]):
+            self.run_file(test)
+
+    def relevant_tests(self, changes: Iterable[str]) -> list[str]:
+        candidates: set[str] = set()
+        workspace = self._workspace()
+        if not workspace:
+            return []
+        for change in changes:
+            path = Path(change)
+            if "test" in path.name:
+                candidates.add(str(path))
+            if self.semantic_query:
+                for node in self.semantic_query.find_usages(path.stem):
+                    if node.file.name.startswith("test"):
+                        candidates.add(str(node.file))
+        if not candidates:
+            for item in workspace.glob("tests/test_*.py"):
+                candidates.add(str(item))
+        return sorted(candidates)
 
     def run_coverage(self, target: str | None = None) -> None:
         workspace = self._workspace()

@@ -30,6 +30,13 @@ from ghostline.ai.ai_client import AIClient
 from ghostline.ai.ai_chat_panel import AIChatPanel
 from ghostline.ai.ai_commands import ai_code_actions, explain_selection, refactor_selection
 from ghostline.ai.analysis_service import AnalysisService
+from ghostline.ai.architecture_assistant import ArchitectureAssistant
+from ghostline.ai.doc_generator import DocGenerator
+from ghostline.ai.navigation_assistant import NavigationAssistant
+from ghostline.ai.workspace_memory import WorkspaceMemory
+from ghostline.semantic.index_manager import SemanticIndexManager
+from ghostline.semantic.query import SemanticQueryEngine
+from ghostline.build.build_manager import BuildManager
 from ghostline.editor.code_editor import CodeEditor
 from ghostline.formatter.formatter_manager import FormatterManager
 from ghostline.indexer.index_manager import IndexManager
@@ -42,6 +49,10 @@ from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.layout_manager import LayoutManager
 from ghostline.ui.tabs import EditorTabs
+from ghostline.ui.docks.architecture_panel import ArchitecturePanel
+from ghostline.ui.docks.build_panel import BuildPanel
+from ghostline.ui.docks.collab_panel import CollabPanel
+from ghostline.ui.docks.doc_panel import DocPanel
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.workspace.project_model import ProjectModel
 from ghostline.workspace.project_view import ProjectView
@@ -57,7 +68,8 @@ from ghostline.testing.test_manager import TestManager
 from ghostline.testing.test_panel import TestPanel
 from ghostline.testing.coverage_panel import CoveragePanel
 from ghostline.collab.session_manager import SessionManager
-from ghostline.collab.presence_panel import PresencePanel
+from ghostline.collab.crdt_engine import CRDTEngine
+from ghostline.collab.transport import WebSocketTransport
 
 logger = logging.getLogger(__name__)
 
@@ -78,12 +90,23 @@ class MainWindow(QMainWindow):
         self.ai_client = AIClient(config)
         self.symbols = SymbolSearcher(self.lsp_manager)
         self.index_manager = IndexManager(lambda: self.workspace_manager.current_workspace)
+        self.semantic_index = SemanticIndexManager(lambda: self.workspace_manager.current_workspace)
+        self.semantic_query = SemanticQueryEngine(self.semantic_index.graph)
+        self.workspace_memory = WorkspaceMemory(self.config.workspace_memory_path)
+        self.architecture_assistant = ArchitectureAssistant(self.ai_client, self.semantic_query)
+        self.navigation_assistant = NavigationAssistant(self.ai_client, self.semantic_query)
+        self.doc_generator = DocGenerator(self.ai_client, self.semantic_query)
+        self.build_manager = BuildManager(lambda: self.workspace_manager.current_workspace)
         self.analysis_service = AnalysisService(self.ai_client)
         self.formatter = FormatterManager(self.lsp_manager)
         self.debugger = DebuggerManager()
         self.task_manager = TaskManager(lambda: self.workspace_manager.current_workspace)
-        self.test_manager = TestManager(self.task_manager, lambda: self.workspace_manager.current_workspace)
+        self.test_manager = TestManager(
+            self.task_manager, lambda: self.workspace_manager.current_workspace, semantic_query=self.semantic_query
+        )
         self.session_manager = SessionManager()
+        self.crdt_engine = CRDTEngine()
+        self.collab_transport = WebSocketTransport()
         self.plugin_loader = PluginLoader(self, self.command_registry, self.menuBar(), self)
         self.layout_manager = LayoutManager(self)
         self.git_service = GitService(self.workspace_manager.current_workspace)
@@ -102,6 +125,7 @@ class MainWindow(QMainWindow):
 
         self.command_palette = CommandPalette(self)
         self.command_palette.set_registry(self.command_registry)
+        self.command_palette.set_navigation_assistant(self.navigation_assistant)
         self._create_actions()
         self._create_menus()
         self._create_terminal_dock()
@@ -114,6 +138,9 @@ class MainWindow(QMainWindow):
         self._create_git_dock()
         self._create_coverage_dock()
         self._create_collaboration_dock()
+        self._create_architecture_dock()
+        self._create_build_dock()
+        self._create_doc_dock()
 
         self.lsp_manager.subscribe_diagnostics(self._handle_diagnostics)
         self.lsp_manager.lsp_error.connect(lambda msg: self.status.show_message(msg))
@@ -262,6 +289,24 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self.test_dock = dock
 
+    def _create_architecture_dock(self) -> None:
+        dock = ArchitecturePanel(self.architecture_assistant, self)
+        dock.setObjectName("architectureDock")
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.arch_dock = dock
+
+    def _create_build_dock(self) -> None:
+        dock = BuildPanel(self.build_manager, self)
+        dock.setObjectName("buildDock")
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.build_dock = dock
+
+    def _create_doc_dock(self) -> None:
+        dock = DocPanel(self.doc_generator, self)
+        dock.setObjectName("docDock")
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.doc_dock = dock
+
     def _format_current_document(self) -> None:
         editor = self.get_current_editor()
         if not editor:
@@ -284,9 +329,8 @@ class MainWindow(QMainWindow):
         self.coverage_dock = dock
 
     def _create_collaboration_dock(self) -> None:
-        dock = QDockWidget("Collaboration", self)
+        dock = CollabPanel(self.crdt_engine, self.collab_transport, self)
         dock.setObjectName("collabDock")
-        dock.setWidget(PresencePanel(self.session_manager, self))
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self.collab_dock = dock
 
@@ -301,6 +345,9 @@ class MainWindow(QMainWindow):
         self.status.update_git(self.workspace_manager.current_workspace)
         logger.info("Opened file: %s", path)
         self.plugin_loader.emit_event("file.opened", path=path)
+        self.semantic_index.reindex([path])
+        if hasattr(self, "doc_dock"):
+            self.doc_dock.set_current_file(Path(path))
 
     def open_folder(self, folder: str) -> None:
         self.workspace_manager.open_workspace(folder)
