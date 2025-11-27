@@ -1,7 +1,16 @@
 """Dockable panel that lists tasks and shows output."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHBoxLayout, QListWidget, QPushButton, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QPushButton,
+    QStackedLayout,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class TaskPanel(QWidget):
@@ -12,9 +21,17 @@ class TaskPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
+        self.empty_label = QLabel("No tasks loaded yet.", self)
+        self.empty_label.setWordWrap(True)
+
         self.task_list = QListWidget(self)
-        self.task_list.setPlaceholderText("No tasks loaded yet.")
-        layout.addWidget(self.task_list)
+
+        list_container = QStackedLayout()
+        list_container.setContentsMargins(0, 0, 0, 0)
+        list_container.addWidget(self.empty_label)
+        list_container.addWidget(self.task_list)
+        layout.addLayout(list_container)
+        self.list_container = list_container
 
         controls = QHBoxLayout()
         controls.setSpacing(6)
@@ -38,8 +55,13 @@ class TaskPanel(QWidget):
 
     def _populate(self, tasks) -> None:
         self.task_list.clear()
+        if not tasks:
+            self._show_empty_state(True)
+            return
+
         for task in tasks:
             self.task_list.addItem(task.name)
+        self._show_empty_state(False)
 
     def _append_output(self, text: str) -> None:
         self.output.append(text)
@@ -53,4 +75,8 @@ class TaskPanel(QWidget):
         if not item:
             return
         self.task_manager.run_task(item.text())
+
+    def _show_empty_state(self, show_empty: bool) -> None:
+        target = self.empty_label if show_empty else self.task_list
+        self.list_container.setCurrentWidget(target)
 
