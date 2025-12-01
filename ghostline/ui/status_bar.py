@@ -38,7 +38,9 @@ class StudioStatusBar(QStatusBar):
 
     def set_ai_suggestions_available(self, available: bool) -> None:
         if available:
-            self.ai_label.setText("AI: Ready — Suggestions Available")
+            # Explicitly mention "AI suggestions" so downstream checks can
+            # detect when assistant recommendations are ready.
+            self.ai_label.setText("AI: Ready — AI suggestions available")
         else:
             self.ai_label.setText("AI: Ready")
 

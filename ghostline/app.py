@@ -67,6 +67,8 @@ class GhostlineApplication:
                     self.main_window.open_folder(str(last_workspace))
 
         self.main_window.show()
+        if first_run_needed:
+            self.main_window.show_setup_wizard()
 
     def run(self) -> int:
         try:
