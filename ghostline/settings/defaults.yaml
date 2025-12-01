@@ -16,7 +16,6 @@ ai:
   openai_endpoint: "https://api.openai.com"
   api_key: ""
   temperature: 0.2
-  request_timeout: 30
   background_analysis: true
   endpoint: "http://localhost:11434"
   default_ollama_model: "codellama:7b-code"
