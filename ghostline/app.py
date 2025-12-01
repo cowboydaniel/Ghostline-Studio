@@ -7,7 +7,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import configure_logging, get_logger
@@ -15,6 +15,7 @@ from ghostline.core.theme import ThemeManager
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.ui.main_window import MainWindow
 from ghostline.ui.splash_screen import GhostlineSplash
+from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
 
 
 class GhostlineApplication:
@@ -45,12 +46,26 @@ class GhostlineApplication:
         self.qt_app.processEvents()
 
     def _on_splash_finished(self) -> None:
-        if self.args.path:
-            self._open_initial_path(self.args.path)
-        else:
-            last_workspace = self.workspace_manager.last_recent_workspace()
-            if last_workspace:
-                self.main_window.open_folder(str(last_workspace))
+        initial_first_run = not bool(self.config.get("first_run_completed", False))
+
+        if initial_first_run:
+            wizard = SetupWizardDialog(self.config, self.main_window)
+            result = wizard.exec()
+            if result != QDialog.Accepted and not self.config.get("first_run_completed", False):
+                self.logger.info("Setup wizard was cancelled; exiting before showing main window.")
+                self.qt_app.quit()
+                return
+
+        self.main_window.apply_initial_window_state(force_maximize=initial_first_run)
+
+        if self.config.get("first_run_completed", False):
+            if self.args.path:
+                self._open_initial_path(self.args.path)
+            else:
+                last_workspace = self.workspace_manager.last_recent_workspace()
+                if last_workspace:
+                    self.main_window.open_folder(str(last_workspace))
+
         self.main_window.show()
 
     def run(self) -> int:
