@@ -15,7 +15,7 @@ from ghostline.ai.ai_client import AIResponse
 from ghostline.ai.analysis_service import AnalysisService
 from ghostline.build.build_manager import BuildManager
 from ghostline.core.cache import CacheManager, FileSignatureCache
-from ghostline.core.events import Command, CommandRegistry
+from ghostline.core.events import CommandDescriptor, CommandRegistry
 from ghostline.core.self_healing import SelfHealingService
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.vcs.git_integration import GitIntegration
@@ -101,9 +101,9 @@ def test_self_healing_reports_missing_tools(tmp_path: Path) -> None:
 def test_command_registry_filters_commands() -> None:
     registry = CommandRegistry()
 
-    registry.register_command(Command("format", "Format file", "edit", lambda: None))
-    registry.register_command(Command("format", "Format file", "edit", lambda: None))
-    registry.register_command(Command("test", "Run tests", "tasks", lambda: None))
+    registry.register_command(CommandDescriptor("format", "Format file", "edit", lambda: None))
+    registry.register_command(CommandDescriptor("format", "Format file", "edit", lambda: None))
+    registry.register_command(CommandDescriptor("test", "Run tests", "tasks", lambda: None))
 
     all_cmds = registry.list_commands()
     assert len(all_cmds) == 2

@@ -4,13 +4,17 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QGroupBox,
+    QHBoxLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
+    QPushButton,
     QVBoxLayout,
 )
 
-from ghostline.core.events import Command, CommandRegistry
+from ghostline.core.events import CommandDescriptor, CommandRegistry
 from ghostline.ai.navigation_assistant import NavigationAssistant, PredictiveContext
 
 
@@ -25,6 +29,7 @@ class CommandPalette(QDialog):
         self.autoflow_mode = "passive"
         self.file_provider = None
         self.open_file_callback = None
+        self.pending_commands: list[CommandDescriptor] = []
 
         self.input = QLineEdit(self)
         self.input.setPlaceholderText("Type a command...")
@@ -34,9 +39,27 @@ class CommandPalette(QDialog):
         self.list_widget = QListWidget(self)
         self.list_widget.itemActivated.connect(self._execute_item)
 
+        self.plan_list = QListWidget(self)
+        self.plan_group = QGroupBox("Command Plan", self)
+        self.plan_group.setVisible(False)
+        plan_layout = QVBoxLayout(self.plan_group)
+        plan_layout.addWidget(self.plan_list)
+
+        plan_buttons = QHBoxLayout()
+        self.approve_btn = QPushButton("Approve All", self.plan_group)
+        self.step_btn = QPushButton("Run Next", self.plan_group)
+        self.cancel_btn = QPushButton("Cancel", self.plan_group)
+        self.approve_btn.clicked.connect(self._approve_plan)
+        self.step_btn.clicked.connect(self._step_plan)
+        self.cancel_btn.clicked.connect(self._cancel_plan)
+        for btn in (self.approve_btn, self.step_btn, self.cancel_btn):
+            plan_buttons.addWidget(btn)
+        plan_layout.addLayout(plan_buttons)
+
         layout = QVBoxLayout(self)
         layout.addWidget(self.input)
         layout.addWidget(self.list_widget)
+        layout.addWidget(self.plan_group)
 
     def set_registry(self, registry: CommandRegistry) -> None:
         self.registry = registry
@@ -69,25 +92,31 @@ class CommandPalette(QDialog):
         self.list_widget.clear()
         commands = self.registry.list_commands(self.input.text()) if self.registry else []
         for command in commands:
-            item = QListWidgetItem(f"{command.text} ({command.category})")
+            label = f"{command.label} ({command.category})"
+            item = QListWidgetItem(label)
             item.setData(Qt.UserRole, command)
             self.list_widget.addItem(item)
         if self.file_provider and self.input.text().strip():
             for path in self.file_provider(self.input.text().strip()):
                 display = f"Open {path.name}"
-                cmd = Command(id=f"file:{path}", text=display, category="File", callback=lambda p=path: self._open_file(p))
-                item = QListWidgetItem(f"{cmd.text} ({cmd.category})")
+                cmd = CommandDescriptor(
+                    id=f"file:{path}",
+                    description=display,
+                    category="File",
+                    callback=lambda p=path: self._open_file(p),
+                )
+                item = QListWidgetItem(f"{cmd.label} ({cmd.category})")
                 item.setData(Qt.UserRole, cmd)
                 self.list_widget.addItem(item)
         if self.navigation_assistant and self.input.text().strip():
             query = self.input.text().strip()
-            nav_command = Command(
+            nav_command = CommandDescriptor(
                 id=f"navigate:{query}",
-                text=f"Semantic navigate: {query}",
+                description=f"Semantic navigate: {query}",
                 callback=lambda q=query: self._run_navigation(q),
                 category="navigation",
             )
-            nav_item = QListWidgetItem(nav_command.text)
+            nav_item = QListWidgetItem(nav_command.label)
             nav_item.setData(Qt.UserRole, nav_command)
             self.list_widget.addItem(nav_item)
         if self.navigation_assistant:
@@ -98,13 +127,13 @@ class CommandPalette(QDialog):
                 else self.navigation_assistant.predict_actions(context)
             )
             for predicted in suggestions:
-                cmd = Command(
+                cmd = CommandDescriptor(
                     id=f"prediction:{predicted.label}",
-                    text=predicted.label,
+                    description=predicted.label,
                     callback=lambda action=predicted.action: self._execute_prediction(action),
                     category="autoflow" if self.autoflow_mode == "active" else "prediction",
                 )
-                item = QListWidgetItem(f"{cmd.text} ({cmd.category})")
+                item = QListWidgetItem(f"{cmd.label} ({cmd.category})")
                 item.setData(Qt.UserRole, cmd)
                 self.list_widget.addItem(item)
         if self.list_widget.count():
@@ -122,9 +151,9 @@ class CommandPalette(QDialog):
             self._execute_item(item)
 
     def _execute_item(self, item: QListWidgetItem) -> None:
-        command: Command | None = item.data(Qt.UserRole)
+        command: CommandDescriptor | None = item.data(Qt.UserRole)
         if command:
-            command.callback()
+            self._apply_command(command)
         self.close()
 
     def _open_file(self, path):
@@ -146,3 +175,52 @@ class CommandPalette(QDialog):
     def _execute_prediction(self, action: str) -> None:
         self.list_widget.clear()
         self.list_widget.addItem(f"Predicted action executed: {action}")
+
+    # Command plan -----------------------------------------------------
+    def set_command_plan(self, commands: list[CommandDescriptor]) -> None:
+        self.pending_commands = commands
+        self.plan_list.clear()
+        for descriptor in commands:
+            details = ", ".join(sorted(descriptor.side_effects)) if descriptor.side_effects else "No side-effects"
+            label = f"{descriptor.label} — {details}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, descriptor)
+            self.plan_list.addItem(item)
+        self.plan_group.setVisible(bool(commands))
+
+    def _approve_plan(self) -> None:
+        if not self.pending_commands:
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "Apply AI Plan",
+                "Run all proposed commands? (Undo is used when available.)",
+            )
+            != QMessageBox.Yes
+        ):
+            return
+        for descriptor in list(self.pending_commands):
+            self._apply_command(descriptor)
+        self._cancel_plan()
+
+    def _step_plan(self) -> None:
+        if not self.pending_commands:
+            return
+        descriptor = self.pending_commands.pop(0)
+        if QMessageBox.question(self, "Run command", f"Run {descriptor.label}?") != QMessageBox.Yes:
+            self.pending_commands.insert(0, descriptor)
+            return
+        self._apply_command(descriptor)
+        self.set_command_plan(self.pending_commands)
+
+    def _cancel_plan(self) -> None:
+        self.pending_commands = []
+        self.plan_list.clear()
+        self.plan_group.setVisible(False)
+
+    def _apply_command(self, descriptor: CommandDescriptor) -> None:
+        if self.registry and self.registry.get(descriptor.id):
+            self.registry.execute(descriptor)
+        else:
+            descriptor.callback(**descriptor.arguments)

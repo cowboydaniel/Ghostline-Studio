@@ -27,13 +27,14 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.core.config import ConfigManager
-from ghostline.core.events import Command, CommandRegistry
+from ghostline.core.events import CommandDescriptor, CommandRegistry
 from ghostline.core.theme import ThemeManager
 from ghostline.lang.diagnostics import DiagnosticsModel
 from ghostline.lang.lsp_manager import LSPManager
 from ghostline.agents.agent_manager import AgentManager
 from ghostline.ai.ai_client import AIClient
 from ghostline.ai.ai_chat_panel import AIChatPanel
+from ghostline.ai.command_adapter import AICommandAdapter
 from ghostline.ai.context_engine import ContextEngine
 from ghostline.ai.ai_commands import ai_code_actions, explain_selection, refactor_selection
 from ghostline.ai.analysis_service import AnalysisService
@@ -120,6 +121,7 @@ class MainWindow(QMainWindow):
         self.context_engine = ContextEngine(
             self.workspace_indexer,
             self.semantic_index,
+            self.symbols,
             self.workspace_memory,
             max_snippet_chars=self.config.get("ai", {}).get("max_context_chars", 800),
             max_results=self.config.get("ai", {}).get("context_results", 5),
@@ -194,6 +196,7 @@ class MainWindow(QMainWindow):
         self.command_palette.set_autoflow_mode("passive")
         self.command_palette.set_file_provider(self._search_workspace_files)
         self.command_palette.set_open_file_handler(self.open_file)
+        self.ai_command_adapter = AICommandAdapter(self.command_registry, self.command_palette)
         self._create_actions()
         self._create_menus()
         self._create_menu_search()
@@ -651,6 +654,8 @@ class MainWindow(QMainWindow):
         panel = AIChatPanel(self.ai_client, self.context_engine, self)
         panel.set_active_document_provider(self._active_document_payload)
         panel.set_open_documents_provider(self._open_document_payloads)
+        panel.set_command_adapter(self.ai_command_adapter)
+        panel.set_insert_handler(lambda code: self._with_editor(lambda e: e.insertPlainText(code)))
         dock.setWidget(panel)
         dock.setMinimumWidth(260)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
@@ -945,22 +950,22 @@ class MainWindow(QMainWindow):
     # Command registration
     def _register_core_commands(self) -> None:
         registry = self.command_registry
-        registry.register_command(Command("file.open", "Open File", "File", self._prompt_open_file))
-        registry.register_command(Command("file.save_all", "Save All", "File", self.save_all))
-        registry.register_command(Command("view.toggle_project", "Toggle Project", "View", self._toggle_project))
-        registry.register_command(Command("view.toggle_terminal", "Toggle Terminal", "View", self._toggle_terminal))
-        registry.register_command(Command("ai.explain_selection", "Explain Selection", "AI", lambda: self._run_ai_command(explain_selection)))
-        registry.register_command(Command("ai.refactor_selection", "Refactor Selection", "AI", lambda: self._run_ai_command(refactor_selection)))
-        registry.register_command(Command("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode))
-        registry.register_command(Command("ai.settings", "AI Settings", "AI", self._open_ai_settings))
-        registry.register_command(Command("ai.setup", "Re-run Setup Wizard", "AI", self.show_setup_wizard))
-        registry.register_command(Command("search.global", "Global Search", "Navigate", self._open_global_search))
-        registry.register_command(Command("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker))
-        registry.register_command(Command("navigate.file", "Go to File", "Navigate", self._open_file_picker))
-        registry.register_command(Command("workflow.run", "Run Pipelines", "Automation", self._run_all_pipelines))
-        registry.register_command(Command("tasks.run", "Run Task", "Tasks", self._run_task_command))
-        registry.register_command(Command("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
-        registry.register_command(Command("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
+        registry.register_command(CommandDescriptor("file.open", "Open File", "File", self._prompt_open_file))
+        registry.register_command(CommandDescriptor("file.save_all", "Save All", "File", self.save_all))
+        registry.register_command(CommandDescriptor("view.toggle_project", "Toggle Project", "View", self._toggle_project))
+        registry.register_command(CommandDescriptor("view.toggle_terminal", "Toggle Terminal", "View", self._toggle_terminal))
+        registry.register_command(CommandDescriptor("ai.explain_selection", "Explain Selection", "AI", lambda: self._run_ai_command(explain_selection)))
+        registry.register_command(CommandDescriptor("ai.refactor_selection", "Refactor Selection", "AI", lambda: self._run_ai_command(refactor_selection)))
+        registry.register_command(CommandDescriptor("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode))
+        registry.register_command(CommandDescriptor("ai.settings", "AI Settings", "AI", self._open_ai_settings))
+        registry.register_command(CommandDescriptor("ai.setup", "Re-run Setup Wizard", "AI", self.show_setup_wizard))
+        registry.register_command(CommandDescriptor("search.global", "Global Search", "Navigate", self._open_global_search))
+        registry.register_command(CommandDescriptor("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker))
+        registry.register_command(CommandDescriptor("navigate.file", "Go to File", "Navigate", self._open_file_picker))
+        registry.register_command(CommandDescriptor("workflow.run", "Run Pipelines", "Automation", self._run_all_pipelines))
+        registry.register_command(CommandDescriptor("tasks.run", "Run Task", "Tasks", self._run_task_command))
+        registry.register_command(CommandDescriptor("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
+        registry.register_command(CommandDescriptor("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
 
     def _toggle_project(self) -> None:
         visible = not self.project_dock.isVisible()

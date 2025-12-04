@@ -8,6 +8,7 @@ from typing import Iterable, Sequence
 from ghostline.ai.workspace_memory import WorkspaceMemory
 from ghostline.indexer.workspace_indexer import IndexedFile, WorkspaceIndexer
 from ghostline.semantic.index_manager import SemanticIndexManager
+from ghostline.search.symbol_search import SymbolSearcher
 
 
 @dataclass
@@ -27,6 +28,7 @@ class ContextEngine:
         self,
         indexer: WorkspaceIndexer,
         semantic_index: SemanticIndexManager | None = None,
+        symbol_searcher: SymbolSearcher | None = None,
         memory: WorkspaceMemory | None = None,
         *,
         max_snippet_chars: int = 800,
@@ -34,6 +36,7 @@ class ContextEngine:
     ) -> None:
         self.indexer = indexer
         self.semantic_index = semantic_index
+        self.symbol_searcher = symbol_searcher
         self.memory = memory
         self.max_snippet_chars = max_snippet_chars
         self.max_results = max_results
@@ -106,6 +109,7 @@ class ContextEngine:
 
         chunks.extend(self._mentions(prompt))
         chunks.extend(self._semantic_recent())
+        chunks.extend(self._symbol_matches(prompt))
         chunks.extend(self._keyword_search(prompt))
 
         combined = self._format_chunks(chunks)
@@ -135,6 +139,27 @@ class ContextEngine:
     def _keyword_search(self, prompt: str) -> list[ContextChunk]:
         matches = self.indexer.search(prompt, limit=self.max_results)
         return [self._chunk_from_indexed(match, "Keyword match") for match in matches]
+
+    def _symbol_matches(self, prompt: str) -> list[ContextChunk]:
+        tokens = [token.strip(".,()") for token in prompt.split() if len(token) > 3]
+        chunks: list[ContextChunk] = []
+        seen_paths: set[Path] = set()
+
+        for token in tokens:
+            for indexed in self.indexer.symbols_for(token, limit=2):
+                if indexed.path in seen_paths:
+                    continue
+                seen_paths.add(indexed.path)
+                chunks.append(self._chunk_from_indexed(indexed, f"Symbol mention: {token}"))
+
+        if self.semantic_index:
+            for node in self.semantic_index.graph.nodes():
+                if any(token.lower() in node.name.lower() for token in tokens):
+                    indexed = self.indexer.get(node.file)
+                    if indexed and indexed.path not in seen_paths:
+                        seen_paths.add(indexed.path)
+                        chunks.append(self._chunk_from_indexed(indexed, f"Semantic graph: {node.name}"))
+        return chunks[: self.max_results]
 
     def _chunk_from_indexed(self, indexed: IndexedFile, reason: str) -> ContextChunk:
         return ContextChunk(

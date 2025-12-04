@@ -1,10 +1,12 @@
 """Rich chat panel that exposes workspace-aware context controls."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import (
+    QApplication,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -19,6 +21,51 @@ from PySide6.QtWidgets import (
 
 from ghostline.ai.ai_client import AIClient
 from ghostline.ai.context_engine import ContextChunk, ContextEngine
+
+
+class _MessageCard(QWidget):
+    """Render a chat message with code block controls and context info."""
+
+    def __init__(
+        self,
+        role: str,
+        text: str,
+        context: list[ContextChunk] | None = None,
+        insert_handler=None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        title = QLabel(f"<b>{role}</b>", self)
+        layout.addWidget(title)
+
+        preamble = QLabel("\n".join([chunk.title for chunk in context or []]), self)
+        preamble.setWordWrap(True)
+        if context:
+            layout.addWidget(preamble)
+
+        code_blocks = re.findall(r"```(?:[\w#+-]+)?\n(.*?)```", text, flags=re.DOTALL)
+        rendered_code = False
+        for block in code_blocks:
+            rendered_code = True
+            code_edit = QTextEdit(block.strip(), self)
+            code_edit.setReadOnly(True)
+            btn_row = QHBoxLayout()
+            copy_btn = QPushButton("Copy", self)
+            copy_btn.clicked.connect(lambda _=None, b=block: QApplication.clipboard().setText(b))
+            btn_row.addWidget(copy_btn)
+            if insert_handler:
+                insert_btn = QPushButton("Insert at cursor", self)
+                insert_btn.clicked.connect(lambda _=None, b=block: insert_handler(b))
+                btn_row.addWidget(insert_btn)
+            layout.addWidget(code_edit)
+            layout.addLayout(btn_row)
+
+        if not rendered_code:
+            body = QTextEdit(text, self)
+            body.setReadOnly(True)
+            layout.addWidget(body)
 
 
 class _AIRequestWorker(QObject):
@@ -51,12 +98,14 @@ class AIChatPanel(QWidget):
         self.workspace_active = False
         self.active_document_provider = None
         self.open_documents_provider = None
+        self.command_adapter = None
+        self.insert_handler = None
+        self._last_chunks: list[ContextChunk] = []
 
         self.status_label = QLabel("AI: Idle (no workspace)", self)
         self.status_label.setAlignment(Qt.AlignLeft)
 
-        self.transcript = QTextEdit(self)
-        self.transcript.setReadOnly(True)
+        self.transcript_list = QListWidget(self)
 
         self.instructions = QTextEdit(self)
         self.instructions.setPlaceholderText("Optional: add custom instructions, tone, or constraints")
@@ -81,12 +130,18 @@ class AIChatPanel(QWidget):
 
         self.pin_button = QPushButton("Pin active", self)
         self.pin_button.clicked.connect(self._pin_active_document)
+        self.unpin_button = QPushButton("Unpin all", self)
+        self.unpin_button.clicked.connect(self._clear_pins)
+        self.active_flag = QPushButton("Mark Active Document", self)
+        self.active_flag.setCheckable(True)
 
         input_row = QHBoxLayout()
         input_row.addWidget(self.input)
         input_row.addWidget(self.send_button)
         input_row.addWidget(self.context_button)
         input_row.addWidget(self.pin_button)
+        input_row.addWidget(self.unpin_button)
+        input_row.addWidget(self.active_flag)
 
         context_box = QGroupBox("Context sources", self)
         context_layout = QVBoxLayout(context_box)
@@ -108,7 +163,7 @@ class AIChatPanel(QWidget):
         layout.setSpacing(6)
         layout.addWidget(self.status_label)
         layout.addWidget(instructions_box)
-        layout.addWidget(self.transcript)
+        layout.addWidget(self.transcript_list)
         layout.addLayout(input_row)
         layout.addWidget(context_box)
 
@@ -118,8 +173,18 @@ class AIChatPanel(QWidget):
     def set_open_documents_provider(self, provider) -> None:
         self.open_documents_provider = provider
 
-    def _append(self, role: str, text: str) -> None:
-        self.transcript.append(f"<b>{role}:</b> {text}")
+    def set_insert_handler(self, handler) -> None:
+        self.insert_handler = handler
+
+    def set_command_adapter(self, adapter) -> None:
+        self.command_adapter = adapter
+
+    def _append(self, role: str, text: str, context: list[ContextChunk] | None = None) -> None:
+        card = _MessageCard(role, text, context, insert_handler=self.insert_handler, parent=self)
+        item = QListWidgetItem(self.transcript_list)
+        item.setSizeHint(card.sizeHint())
+        self.transcript_list.addItem(item)
+        self.transcript_list.setItemWidget(item, card)
 
     def _set_busy(self, busy: bool) -> None:
         enabled = not busy and self.workspace_active
@@ -127,11 +192,15 @@ class AIChatPanel(QWidget):
         self.send_button.setEnabled(enabled)
         self.context_button.setEnabled(enabled)
         self.pin_button.setEnabled(enabled)
+        self.unpin_button.setEnabled(enabled)
+        self.active_flag.setEnabled(enabled)
         status = "AI: Working..." if busy else ("AI: Ready" if self.workspace_active else "AI: Idle (no workspace)")
         self.status_label.setText(status)
 
     def _handle_response(self, thread: QThread, worker: _AIRequestWorker, prompt: str, text: str) -> None:
-        self._append("AI", text)
+        self._append("AI", text, context=self._last_chunks)
+        if self.command_adapter:
+            self.command_adapter.handle_response(text)
         self._cleanup_thread(thread, worker)
         self._set_busy(False)
         self.input.clear()
@@ -149,7 +218,7 @@ class AIChatPanel(QWidget):
         if self._active_thread is thread:
             self._active_thread = None
 
-    def _gather_context(self, prompt: str) -> str | None:
+    def _gather_context(self, prompt: str) -> tuple[str | None, list[ContextChunk]]:
         instructions = self.instructions.toPlainText().strip()
         if self.context_engine and self.workspace_active:
             active = self.active_document_provider() if self.active_document_provider else None
@@ -161,15 +230,15 @@ class AIChatPanel(QWidget):
                 open_documents=open_docs,
             )
             self._show_context_sources(chunks, context)
-            return context
+            return context, chunks
         self._show_context_sources([], instructions)
-        return instructions or None
+        return instructions or None, []
 
     def _start_request(self, prompt: str, context: str | None) -> None:
         if self._active_thread:
             return
 
-        self._append("You", prompt)
+        self._append("You", prompt, context=self._last_chunks)
         self._set_busy(True)
 
         thread = QThread(self)
@@ -185,12 +254,14 @@ class AIChatPanel(QWidget):
         prompt = self.input.text().strip()
         if not prompt:
             return
-        context = self._gather_context(prompt)
+        context, chunks = self._gather_context(prompt)
+        self._last_chunks = chunks
         self._start_request(prompt, context)
 
     def _refresh_context_view(self) -> None:
         prompt = self.input.text().strip()
-        context = self._gather_context(prompt) if prompt else None
+        context, chunks = self._gather_context(prompt) if prompt else (None, [])
+        self._last_chunks = chunks
         if context is not None:
             self.context_preview.setPlainText(context)
 
@@ -204,6 +275,13 @@ class AIChatPanel(QWidget):
         path_obj = Path(path) if path else None
         title = f"Pinned: {path_obj.name}" if path_obj else "Pinned document"
         self.context_engine.pin_context(ContextChunk(title, text, path_obj, "Pinned manually"))
+        self._refresh_context_view()
+
+    def _clear_pins(self) -> None:
+        if not self.context_engine:
+            return
+        for pinned in list(self.context_engine.pinned()):
+            self.context_engine.unpin(pinned.title)
         self._refresh_context_view()
 
     def _show_context_sources(self, chunks: list[ContextChunk], context: str | None) -> None:

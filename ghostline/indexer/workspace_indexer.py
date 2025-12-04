@@ -43,6 +43,7 @@ class WorkspaceIndexer:
         self._files: dict[Path, IndexedFile] = {}
         self._memory_overrides: dict[Path, str] = {}
         self._recent: list[Path] = []
+        self._symbol_index: dict[str, set[Path]] = {}
         self._generation = 0
 
     @property
@@ -55,6 +56,7 @@ class WorkspaceIndexer:
         self._files.clear()
         self._memory_overrides.clear()
         self._recent.clear()
+        self._symbol_index.clear()
         self._generation += 1
         if path:
             self._schedule_index(Path(path))
@@ -101,6 +103,7 @@ class WorkspaceIndexer:
         self._generation += 1
         self._recent.append(path)
         self._recent = self._recent[-20:]
+        self._index_symbols(path, content)
 
     def update_memory_snapshot(self, path: Path | str, content: str) -> None:
         """Store an in-memory version of a file (e.g., unsaved editor buffer)."""
@@ -111,6 +114,7 @@ class WorkspaceIndexer:
         if resolved not in self._recent:
             self._recent.append(resolved)
             self._recent = self._recent[-20:]
+        self._index_symbols(resolved, content)
 
     def get(self, path: Path | str) -> IndexedFile | None:
         resolved = Path(path)
@@ -140,6 +144,32 @@ class WorkspaceIndexer:
                 scored.append((score, file))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [file for _, file in scored[:limit]]
+
+    def symbols_for(self, symbol: str, limit: int = 5) -> list[IndexedFile]:
+        """Return files that define or import a given symbol."""
+
+        paths = list(self._symbol_index.get(symbol.lower(), set()))[:limit]
+        results: list[IndexedFile] = []
+        for path in paths:
+            indexed = self.get(path)
+            if indexed:
+                results.append(indexed)
+        return results
+
+    # Internal ---------------------------------------------------------
+    def _index_symbols(self, path: Path, content: str) -> None:
+        tokens = []
+        for line in content.splitlines():
+            line_stripped = line.strip()
+            if line_stripped.startswith("def ") or line_stripped.startswith("class "):
+                name = line_stripped.split(" ", 1)[1].split("(", 1)[0].split(":", 1)[0]
+                tokens.append(name)
+            elif line_stripped.startswith("import ") or line_stripped.startswith("from "):
+                parts = line_stripped.replace("from", "").replace("import", "").replace(",", " ").split()
+                tokens.extend(parts)
+        for token in tokens:
+            key = token.lower()
+            self._symbol_index.setdefault(key, set()).add(path)
 
     def recent_files(self) -> Sequence[Path]:
         return tuple(self._recent)
