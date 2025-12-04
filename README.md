@@ -19,6 +19,17 @@ Ghostline Studio is structured as a platform: nearly every subsystem is modular,
 - Document sync with the LSP system
 - Editor events exposed for plugins and agents
 
+### Workspace & Navigation
+- Workspace-aware project explorer dock backed by a filesystem model
+- Diagnostics dock driven by LSP publishDiagnostics events
+- Command palette with fuzzy search across commands, files, and symbols
+
+### Architecture Map
+- **Ghostline Spatial Map** dock (View → 3D Architecture Map)
+- Qt3D-powered scene when available with orbit/zoom controls and clickable nodes
+- Graceful placeholder when Qt3D is unavailable
+- Opens files/functions when nodes are selected in the graph
+
 ### Workspace System
 - `WorkspaceManager` for project-level handling
 - Filesystem-backed tree model (`WorkspaceTree`, `WorkspaceNode`)
@@ -126,6 +137,8 @@ python -m ghostline.main [path]
 
 `path` may be a file or directory to open on startup.
 
+> Default LSP settings expect `pylsp` on your `PATH`. Configure alternate language servers in `ghostline/settings/defaults.yaml` or your user settings file.
+
 ---
 
 ## Configuration
@@ -146,6 +159,8 @@ Configurable areas include:
 - LSP options
 - Terminal preferences
 - Plugin settings
+
+AI features default to a dummy backend that echoes prompts so the AI chat dock is immediately usable. To point Ghostline at your own service, update `~/.config/ghostline/settings.yaml` (or the Settings dialog) with your endpoint, model, and `ai.timeout_seconds` for slower local models such as Ollama. Start local Ollama instances with `ollama serve` before launching Ghostline if you select the Ollama backend.
 
 ---
 
