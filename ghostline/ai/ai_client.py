@@ -88,18 +88,20 @@ class OpenAICompatibleBackend(HTTPBackend):
         content = prompt if not context else f"[context]\n{context}\n\n{prompt}"
         stream = self.client.responses.create(
             model=self.model or "gpt-4o-mini",
-            input=[{"role": "user", "content": [{"type": "text", "text": content}]}],
+            input=[{"role": "user", "content": [{"type": "input_text", "text": content}]}],
             temperature=self.temperature,
             stream=True,
         )
 
         for event in stream:
             if getattr(event, "type", "") == "response.output_text.delta":
-                delta = getattr(event, "delta", "")
+                output_text = getattr(event, "output_text", None)
+                delta = getattr(output_text, "delta", None) if output_text else None
                 if delta:
                     yield delta
             elif getattr(event, "type", "") == "response.output_text.done":
-                text = getattr(event, "text", "")
+                output_text = getattr(event, "output_text", None)
+                text = getattr(output_text, "text", None) if output_text else None
                 if text:
                     yield text
 
