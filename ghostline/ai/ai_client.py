@@ -12,6 +12,7 @@ from urllib.error import URLError
 
 from openai import OpenAI
 
+from ghostline.ai.model_registry import ModelDescriptor
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import get_logger
 from ghostline.ai.prompt_builder import PromptBuilder
@@ -38,11 +39,13 @@ class HTTPBackend:
     def __init__(self, config: ConfigManager) -> None:
         self.config = config
         ai_cfg = config.get("ai", {}) if config else {}
+        providers = ai_cfg.get("providers", {}) if ai_cfg else {}
         self.endpoint = ai_cfg.get("endpoint", "http://localhost:11434")
         self.model = ai_cfg.get("model", "")
         self.api_key = ai_cfg.get("api_key")
         self.temperature = ai_cfg.get("temperature", 0.2)
         self.timeout = ai_cfg.get("timeout_seconds", 30)
+        self._providers = providers
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -58,6 +61,12 @@ class HTTPBackend:
 
 
 class OllamaBackend(HTTPBackend):
+    def __init__(self, config: ConfigManager) -> None:
+        super().__init__(config)
+        ollama_cfg = self._providers.get("ollama", {}) if hasattr(self, "_providers") else {}
+        self.endpoint = ollama_cfg.get("host", self.endpoint)
+        self.model = self.model or ollama_cfg.get("default_model", "")
+
     def send(self, prompt: str, context: str | None = None) -> AIResponse:
         body = {"model": self.model or "codellama", "prompt": prompt, "stream": False}
         response = self._post(f"{self.endpoint}/api/generate", body)
@@ -71,7 +80,12 @@ class OpenAICompatibleBackend(HTTPBackend):
     def __init__(self, config: ConfigManager) -> None:
         super().__init__(config)
         ai_cfg = config.get("ai", {}) if config else {}
-        self.endpoint = ai_cfg.get("openai_endpoint", "https://api.openai.com").rstrip("/")
+        openai_cfg = self._providers.get("openai", {}) if hasattr(self, "_providers") else {}
+        self.endpoint = openai_cfg.get("base_url") or ai_cfg.get("openai_endpoint", "https://api.openai.com")
+        self.endpoint = self.endpoint.rstrip("/")
+        self.api_key = openai_cfg.get("api_key") or self.api_key
+        if openai_cfg.get("enabled_models") and not self.model:
+            self.model = openai_cfg.get("enabled_models", ["gpt-4.1"])[0]
         base_url = self.endpoint
         if not base_url.endswith("/v1"):
             base_url = f"{base_url}/v1"
@@ -136,21 +150,28 @@ class AIClient:
         self.logger = get_logger(__name__)
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
         self.disabled = self.backend_type in {"none", "disabled"}
+        self._backends: dict[str, object] = {}
         self.backend = self._create_backend()
         self.secondary_backend_type = self.config.get("ai", {}).get("secondary_backend")
         self.secondary_backend = self._create_backend(self.secondary_backend_type) if self.secondary_backend_type else None
         self._ollama_started = False
+        self.active_model: ModelDescriptor | None = None
 
     def _create_backend(self, backend_type: str | None = None):
         backend = backend_type or self.backend_type
+        if backend in self._backends:
+            return self._backends[backend]
         if backend == "ollama":
-            return OllamaBackend(self.config)
-        if backend == "openai":
-            return OpenAICompatibleBackend(self.config)
-        return DummyBackend(self.config)
+            instance = OllamaBackend(self.config)
+        elif backend == "openai":
+            instance = OpenAICompatibleBackend(self.config)
+        else:
+            instance = DummyBackend(self.config)
+        self._backends[backend] = instance
+        return instance
 
-    def _maybe_start_ollama(self) -> bool:
-        if self.backend_type != "ollama" or self._ollama_started:
+    def _maybe_start_ollama(self, backend_type: str) -> bool:
+        if backend_type != "ollama" or self._ollama_started:
             return False
 
         self._ollama_started = True
@@ -176,29 +197,43 @@ class AIClient:
             self.logger.error("Failed to auto-start Ollama: %s", exc)
             return False
 
-    def _retry_after_start(self, prompt: str, context: str | None = None) -> AIResponse | None:
-        if not self._maybe_start_ollama():
+    def _retry_after_start(
+        self, backend_type: str, prompt: str, context: str | None = None
+    ) -> AIResponse | None:
+        if not self._maybe_start_ollama(backend_type):
             return None
 
         try:
-            return self.backend.send(prompt, context)
+            backend = self._create_backend(backend_type)
+            return backend.send(prompt, context)
         except Exception as exc:  # noqa: BLE001
             self.logger.error("AI retry after Ollama start failed: %s", exc)
             return None
 
-    def send(self, prompt: str, context: str | None = None) -> AIResponse:
+    def _backend_for_model(self, model: ModelDescriptor | None):
+        backend_type = self.backend_type
+        if model:
+            backend_type = model.provider
+        backend = self._create_backend(backend_type)
+        if model and hasattr(backend, "model"):
+            backend.model = model.id  # type: ignore[attr-defined]
+        return backend, backend_type
+
+    def send(self, prompt: str, context: str | None = None, model: ModelDescriptor | None = None) -> AIResponse:
         if self.disabled:
             return AIResponse(text="AI backend disabled due to previous errors.")
 
+        backend, backend_type = self._backend_for_model(model)
+        self.active_model = model or self.active_model
         try:
-            return self.backend.send(prompt, context)
+            return backend.send(prompt, context)
         except TimeoutError:
-            retry = self._retry_after_start(prompt, context)
+            retry = self._retry_after_start(backend_type, prompt, context)
             if retry:
                 return retry
 
-            timeout = getattr(self.backend, "timeout", None) or getattr(self.backend, "timeout_seconds", None)
-            endpoint = getattr(self.backend, "endpoint", "the configured AI endpoint")
+            timeout = getattr(backend, "timeout", None) or getattr(backend, "timeout_seconds", None)
+            endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
             timeout_hint = f" after {timeout} seconds" if timeout else ""
             message = (
                 f"AI backend request to {endpoint} timed out"
@@ -208,11 +243,11 @@ class AIClient:
             self.logger.error(message)
             return AIResponse(text=message)
         except URLError as exc:
-            retry = self._retry_after_start(prompt, context)
+            retry = self._retry_after_start(backend_type, prompt, context)
             if retry:
                 return retry
 
-            endpoint = getattr(self.backend, "endpoint", "the configured AI endpoint")
+            endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
             message = (
                 f"AI backend unreachable at {endpoint}."
                 " Start your Ollama server (`ollama serve`) or update the AI endpoint in settings."
@@ -224,11 +259,13 @@ class AIClient:
             self.disabled = True
             return AIResponse(text="AI backend unavailable. Check logs for details.")
 
-    def combined_send(self, prompt: str, builder: PromptBuilder, mode: str = "sequential") -> AIResponse:
+    def combined_send(
+        self, prompt: str, builder: PromptBuilder, mode: str = "sequential", model: ModelDescriptor | None = None
+    ) -> AIResponse:
         """Merge local+remote model context for richer reasoning."""
 
         built_prompt = builder.build(prompt, mode)
-        primary = self.send(built_prompt)
+        primary = self.send(built_prompt, model=model)
         builder.update_last_response(primary.text)
         if not self.secondary_backend:
             return primary
@@ -242,15 +279,17 @@ class AIClient:
             self.logger.exception("Secondary backend failure: %s", exc)
             return primary
 
-    def stream(self, prompt: str, context: str | None = None):
+    def stream(self, prompt: str, context: str | None = None, model: ModelDescriptor | None = None):
         if self.disabled:
             yield "AI backend disabled due to previous errors."
             return
+        backend, backend_type = self._backend_for_model(model)
+        self.active_model = model or self.active_model
         try:
-            if hasattr(self.backend, "stream"):
-                yield from self.backend.stream(prompt, context)
+            if hasattr(backend, "stream"):
+                yield from backend.stream(prompt, context)
                 return
-            yield self.send(prompt, context).text
+            yield self.send(prompt, context, model=model).text
         except Exception as exc:  # noqa: BLE001
             self.logger.exception("AI streaming failure: %s", exc)
             self.disabled = True

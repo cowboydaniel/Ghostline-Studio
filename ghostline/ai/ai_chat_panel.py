@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from ghostline.ai.ai_client import AIClient
 from ghostline.ai.context_engine import ContextChunk, ContextEngine
+from ghostline.ai.model_registry import ModelDescriptor, ModelRegistry
 
 
 @dataclass
@@ -116,14 +117,16 @@ class _ModelRow(QFrame):
 
     def __init__(
         self,
-        name: str,
+        model: ModelDescriptor,
         badge: str | None = None,
         description: str | None = None,
         parent: QWidget | None = None,
         on_select=None,
+        disabled: bool = False,
+        hint: str | None = None,
     ) -> None:
         super().__init__(parent)
-        self.name = name
+        self.model = model
         self.on_select = on_select
         self.setObjectName("modelRow")
         self.setStyleSheet(
@@ -143,41 +146,64 @@ class _ModelRow(QFrame):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
-        title = QLabel(name, self)
+        title = QLabel(model.label, self)
         title.setStyleSheet("font-weight: 600;")
         header.addWidget(title)
-        if badge:
-            badge_label = QLabel(badge, self)
-            badge_label.setStyleSheet(
-                "padding: 2px 6px; border-radius: 8px; background: palette(midlight); font-size: 11px;"
+        provider_badge = QLabel(model.provider.capitalize(), self)
+        provider_badge.setStyleSheet(
+            "padding: 2px 6px; border-radius: 8px; background: palette(midlight); font-size: 11px;"
+        )
+        header.addWidget(provider_badge)
+        if model.kind:
+            kind_badge = QLabel(model.kind.title(), self)
+            kind_badge.setStyleSheet(
+                "padding: 2px 6px; border-radius: 8px; background: palette(mid); font-size: 11px;"
             )
-            header.addWidget(badge_label)
+            header.addWidget(kind_badge)
         header.addStretch()
         layout.addLayout(header)
 
-        if description:
-            desc_label = QLabel(description, self)
+        body = description or model.description
+        if body:
+            desc_label = QLabel(body, self)
             desc_label.setStyleSheet("color: palette(dark); font-size: 11px;")
             desc_label.setWordWrap(True)
             layout.addWidget(desc_label)
 
+        if badge:
+            title.setText(f"{model.label} ({badge})")
+        if disabled:
+            self.setEnabled(False)
+            if hint:
+                self.setToolTip(hint)
+        else:
+            self.setToolTip(hint or "")
+
     def mousePressEvent(self, event):  # noqa: D401, N802
         """Emit selection when clicked."""
         super().mousePressEvent(event)
-        if self.on_select:
-            self.on_select(self.name)
+        if self.on_select and self.isEnabled():
+            self.on_select(self.model)
 
 
 class ModelSelectorPanel(QDialog):
     """Floating model selector sheet displayed above the dock."""
 
-    model_selected = Signal(str)
+    model_selected = Signal(object)
 
-    def __init__(self, current_model: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        models: list[ModelDescriptor],
+        current_model: ModelDescriptor | None,
+        has_openai_key: bool,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         self.setModal(True)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.models = models
+        self.has_openai_key = has_openai_key
 
         self.setStyleSheet(
             """
@@ -244,8 +270,33 @@ class ModelSelectorPanel(QDialog):
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(10)
 
-        self._add_section(scroll_layout, "Recommended", current_model)
-        self._add_section(scroll_layout, "See more", current_model, secondary=True)
+        openai_models = [model for model in self.models if model.provider == "openai"]
+        ollama_models = [model for model in self.models if model.provider == "ollama"]
+
+        if openai_models:
+            self._add_section(
+                scroll_layout,
+                "Recommended OpenAI models",
+                openai_models,
+                current_model,
+                disable_openai=not self.has_openai_key,
+            )
+        else:
+            hint = QLabel("Enable OpenAI models in AI Settings", scroll_content)
+            hint.setStyleSheet("color: palette(dark);")
+            scroll_layout.addWidget(hint)
+
+        if ollama_models:
+            self._add_section(
+                scroll_layout,
+                "Local Ollama models",
+                ollama_models,
+                current_model,
+            )
+        else:
+            placeholder = QLabel("No local Ollama models found", scroll_content)
+            placeholder.setStyleSheet("color: palette(dark);")
+            scroll_layout.addWidget(placeholder)
         scroll_layout.addStretch()
         scroll.setWidget(scroll_content)
         container_layout.addWidget(scroll, 1)
@@ -260,26 +311,25 @@ class ModelSelectorPanel(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(container)
 
-    def _add_section(self, parent_layout: QVBoxLayout, title: str, current_model: str, secondary: bool = False) -> None:
+    def _add_section(
+        self,
+        parent_layout: QVBoxLayout,
+        title: str,
+        models: list[ModelDescriptor],
+        current_model: ModelDescriptor | None,
+        disable_openai: bool = False,
+    ) -> None:
         label = QLabel(title, self)
         label.setStyleSheet("font-weight: 700;")
         parent_layout.addWidget(label)
 
-        models = [
-            ("SWE-1", "Pro", "Fast code generation"),
-            ("SWE-Lite", "Free", "Lightweight assistance"),
-            ("SWE-Plus", "0.5x", "Balanced for chat and code"),
-            ("SWE-New", "New", "Latest experimental model"),
-        ]
-        if secondary:
-            models = [
-                ("SWE-XL", "Pro", "Large reasoning context"),
-                ("SWE-Chat", "Free", "Conversational focus"),
-                ("SWE-Design", "New", "UI/UX guidance"),
-            ]
-        for name, badge, desc in models:
-            row = _ModelRow(name, badge, desc, self, on_select=self.model_selected.emit)
-            if name == current_model:
+        for model in models:
+            hint = None
+            disabled = disable_openai and model.provider == "openai"
+            if disabled:
+                hint = "Set OpenAI API key in AI Settings to use this model"
+            row = _ModelRow(model, None, model.description, self, on_select=self.model_selected.emit, disabled=disabled, hint=hint)
+            if current_model and model.id == current_model.id and model.provider == current_model.provider:
                 row.setStyleSheet(
                     row.styleSheet()
                     + "\n#modelRow { border: 1px solid palette(mid); background: palette(alternate-base); }"
@@ -499,17 +549,20 @@ class _AIRequestWorker(QObject):
     failed = Signal(str)
     partial = Signal(str)
 
-    def __init__(self, client: AIClient, prompt: str, context: str | None) -> None:
+    def __init__(
+        self, client: AIClient, prompt: str, context: str | None, model: ModelDescriptor | None
+    ) -> None:
         super().__init__()
         self.client = client
         self.prompt = prompt
         self.context = context
+        self.model = model
 
     @Slot()
     def run(self) -> None:
         try:
             text = ""
-            for chunk in self.client.stream(self.prompt, context=self.context):
+            for chunk in self.client.stream(self.prompt, context=self.context, model=self.model):
                 text += chunk
                 self.partial.emit(chunk)
             self.finished.emit(self.prompt, text)
@@ -538,7 +591,11 @@ class AIChatPanel(QWidget):
         self._current_messages: list[ChatMessage] = []
         self._current_chat_started_at: datetime = datetime.now()
         self.chat_history: list[ChatSession] = []
-        self.current_model = "SWE-1"
+        self.model_registry = ModelRegistry(self.client.config)
+        self.available_models: list[ModelDescriptor] = []
+        self._has_openai_key = bool(self.model_registry._openai_settings().get("api_key"))
+        self.current_model_descriptor: ModelDescriptor | None = None
+        self._refresh_models(initial=True)
         self.current_mode = "Code"
 
         self.setObjectName("aiChatPanel")
@@ -783,9 +840,12 @@ class AIChatPanel(QWidget):
         self.mode_chip.clicked.connect(self._toggle_mode_menu)
         chips_layout.addWidget(self.mode_chip, 0, Qt.AlignLeft)
 
-        self.model_chip = _ChipButton(self.current_model, self.style().standardIcon(QStyle.SP_ComputerIcon), chips_row)
+        model_label = self.current_model_descriptor.label if self.current_model_descriptor else "Select model"
+        self.model_chip = _ChipButton(model_label, self.style().standardIcon(QStyle.SP_ComputerIcon), chips_row)
         self.model_chip.clicked.connect(self._open_model_selector)
         chips_layout.addWidget(self.model_chip, 0, Qt.AlignLeft)
+
+        self._refresh_model_chip()
 
         chips_layout.addStretch()
 
@@ -907,20 +967,80 @@ class AIChatPanel(QWidget):
         if self.mode_popover:
             self.mode_popover.hide()
 
+    def _refresh_models(self, initial: bool = False) -> None:
+        self.available_models = []
+        try:
+            self.available_models.extend(self.model_registry.enabled_openai_models())
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.available_models.extend(self.model_registry.ollama_models())
+        except Exception:  # noqa: BLE001
+            pass
+
+        fallback: ModelDescriptor | None = None
+        if not self.available_models:
+            openai_candidates = self.model_registry.openai_models()
+            fallback = openai_candidates[0] if openai_candidates else None
+
+        chosen = self._choose_default_model(initial, fallback)
+        if chosen:
+            self.current_model_descriptor = chosen
+        self._has_openai_key = bool(self.model_registry._openai_settings().get("api_key"))
+        if hasattr(self, "model_chip"):
+            self._refresh_model_chip()
+
+    def _choose_default_model(
+        self, initial: bool = False, fallback: ModelDescriptor | None = None
+    ) -> ModelDescriptor | None:
+        last_used = self.model_registry.last_used_model()
+        if last_used:
+            for model in self.available_models:
+                if model.id == last_used.id and model.provider == last_used.provider:
+                    return model
+            if not initial:
+                return last_used
+        if self.available_models:
+            return self.available_models[0]
+        return fallback
+
+    def _refresh_model_chip(self) -> None:
+        label = self.current_model_descriptor.label if self.current_model_descriptor else "Select model"
+        tooltip_parts = []
+        if self.current_model_descriptor:
+            tooltip_parts.append(self.current_model_descriptor.provider.capitalize())
+            if not self._has_openai_key and self.current_model_descriptor.provider == "openai":
+                tooltip_parts.append("Set OpenAI API key in AI Settings to use cloud models")
+        tooltip = " | ".join(tooltip_parts) or "Choose a model"
+        self.model_chip.setText(label)
+        self.model_chip.setToolTip(tooltip)
+
     def _open_model_selector(self) -> None:
         if self.model_selector_panel and self.model_selector_panel.isVisible():
             self.model_selector_panel.hide()
             return
-        self.model_selector_panel = ModelSelectorPanel(self.current_model, self)
+        self._refresh_models()
+        self.model_selector_panel = ModelSelectorPanel(
+            self.available_models,
+            self.current_model_descriptor,
+            self._has_openai_key,
+            self,
+        )
         self.model_selector_panel.model_selected.connect(self._select_model)
         size_hint = self.model_selector_panel.sizeHint()
         anchor = self.input_bar.mapToGlobal(QPoint(self.input_bar.width() - size_hint.width(), 0))
         y = anchor.y() - size_hint.height() - 12
         self.model_selector_panel.show_at(QPoint(max(anchor.x(), 10), max(y, 10)))
 
-    def _select_model(self, model: str) -> None:
-        self.current_model = model
-        self.model_chip.setText(model)
+    def _select_model(self, model: ModelDescriptor) -> None:
+        self.current_model_descriptor = model
+        self.model_registry.set_last_used_model(model)
+        self._refresh_model_chip()
+        self.client.active_model = model
+        try:
+            self.client.config.save()
+        except Exception:  # noqa: BLE001
+            pass
         if self.model_selector_panel:
             self.model_selector_panel.hide()
 
@@ -1168,7 +1288,7 @@ class AIChatPanel(QWidget):
         self._set_busy(True)
 
         thread = QThread(self)
-        worker = _AIRequestWorker(self.client, prompt, context)
+        worker = _AIRequestWorker(self.client, prompt, context, self.current_model_descriptor)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_worker_finished, Qt.QueuedConnection)
