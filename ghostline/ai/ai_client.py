@@ -94,16 +94,38 @@ class OpenAICompatibleBackend(HTTPBackend):
         )
 
         for event in stream:
-            if getattr(event, "type", "") == "response.output_text.delta":
-                output_text = getattr(event, "output_text", None)
-                delta = getattr(output_text, "delta", None) if output_text else None
-                if delta:
-                    yield delta
-            elif getattr(event, "type", "") == "response.output_text.done":
-                output_text = getattr(event, "output_text", None)
-                text = getattr(output_text, "text", None) if output_text else None
-                if text:
-                    yield text
+            payload = self._extract_text_payload(event)
+            if payload:
+                yield payload
+
+    @staticmethod
+    def _extract_text_payload(event: object) -> str | None:
+        """Normalize any textual payload from a Responses API streaming event."""
+
+        def _extract(obj: object | None) -> str | None:
+            if obj is None:
+                return None
+            if isinstance(obj, str):
+                return obj
+            if isinstance(obj, dict):
+                for key in ("output_text", "delta", "data", "text"):
+                    value = obj.get(key)
+                    if value:
+                        nested = _extract(value)
+                        if nested:
+                            return nested
+                return None
+
+            for key in ("output_text", "delta", "data", "text"):
+                value = getattr(obj, key, None)
+                if value:
+                    nested = _extract(value)
+                    if nested:
+                        return nested
+
+            return None
+
+        return _extract(event)
 
 
 class AIClient:
