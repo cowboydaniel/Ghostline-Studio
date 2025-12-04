@@ -844,7 +844,7 @@ class MainWindow(QMainWindow):
         dock.setObjectName("debuggerDock")
         panel = DebuggerPanel(self.debugger, self)
         dock.setWidget(panel)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.debugger_panel = panel
         self.debugger_dock = dock
@@ -873,7 +873,7 @@ class MainWindow(QMainWindow):
         dock = ArchitectureDock(self)
         dock.setObjectName("architectureDock")
         dock.open_file_requested.connect(self._open_graph_location)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.architecture_dock = dock
         self._refresh_architecture_graph()
@@ -888,7 +888,7 @@ class MainWindow(QMainWindow):
     def _create_doc_dock(self) -> None:
         dock = DocPanel(self.doc_generator, self)
         dock.setObjectName("docDock")
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.doc_dock = dock
 
@@ -905,7 +905,7 @@ class MainWindow(QMainWindow):
         panel = GitPanel(self.git_service, self)
         dock.setWidget(panel)
         dock.setMinimumWidth(240)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.git_panel = panel
         self.git_dock = dock
@@ -914,35 +914,35 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("Coverage", self)
         dock.setObjectName("coverageDock")
         dock.setWidget(CoveragePanel(self))
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.coverage_dock = dock
 
     def _create_collaboration_dock(self) -> None:
         dock = CollabPanel(self.crdt_engine, self.collab_transport, self)
         dock.setObjectName("collabDock")
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.collab_dock = dock
 
     def _create_agent_console_dock(self) -> None:
         dock = AgentConsole(self.agent_manager, self)
         dock.setObjectName("agentConsoleDock")
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.agent_console_dock = dock
 
     def _create_pipeline_dock(self) -> None:
         dock = PipelinePanel(self.pipeline_manager, self)
         dock.setObjectName("pipelineDock")
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.pipeline_dock = dock
 
     def _create_runtime_dock(self) -> None:
         dock = RuntimePanel(self.runtime_inspector, self)
         dock.setObjectName("runtimeDock")
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.runtime_dock = dock
 
