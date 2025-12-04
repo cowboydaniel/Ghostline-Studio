@@ -101,12 +101,18 @@ QToolButton:pressed {
 
 QToolBar QToolButton {
     background: transparent;
-    padding: 6px;
-    border-radius: 4px;
+    border: none;
+    padding: 4px;
+    margin: 0 6px;
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 6px;
 }
 
-QToolBar QToolButton:hover {
-    background: #23242b;
+QToolBar QToolButton:hover,
+QToolBar QToolButton:pressed,
+QToolBar QToolButton:checked {
+    background: rgba(79, 140, 255, 0.16);
     border: 1px solid #4f8cff;
 }
 
