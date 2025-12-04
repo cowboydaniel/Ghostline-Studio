@@ -294,6 +294,7 @@ class AIChatPanel(QWidget):
 
         self.placeholder = QWidget(self)
         placeholder_layout = QVBoxLayout(self.placeholder)
+        placeholder_layout.setSpacing(8)
         placeholder_layout.setAlignment(Qt.AlignCenter)
         logo = QLabel("👻", self.placeholder)
         logo.setStyleSheet("font-size: 42px;")
@@ -301,13 +302,9 @@ class AIChatPanel(QWidget):
         title.setStyleSheet("font-size: 20px; font-weight: 600;")
         subtitle = QLabel("Your AI teammate is ready to collaborate.", self.placeholder)
         subtitle.setStyleSheet("color: palette(mid);")
-        placeholder_hint = QLabel("// Chat bubbles will appear here soon", self.placeholder)
-        placeholder_hint.setStyleSheet("color: palette(mid);")
         placeholder_layout.addWidget(logo, 0, Qt.AlignHCenter)
         placeholder_layout.addWidget(title, 0, Qt.AlignHCenter)
         placeholder_layout.addWidget(subtitle, 0, Qt.AlignHCenter)
-        placeholder_layout.addSpacing(12)
-        placeholder_layout.addWidget(placeholder_hint, 0, Qt.AlignHCenter)
 
         self.transcript_list = QListWidget(self)
         self.transcript_list.setObjectName("chatTranscript")
