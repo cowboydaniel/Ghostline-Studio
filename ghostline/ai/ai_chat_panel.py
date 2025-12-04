@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import re
 from pathlib import Path
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize, QPoint
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QPushButton,
+    QScrollArea,
     QStackedLayout,
     QStyle,
     QTextEdit,
@@ -49,6 +50,385 @@ class ChatSession:
     title: str
     messages: list[ChatMessage]
     created_at: datetime
+
+
+class _FloatingPopover(QFrame):
+    """Reusable floating popover with rounded corners and shadow."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet(
+            """
+            QFrame#floatingPopover {
+                background: palette(base);
+                border-radius: 12px;
+                padding: 8px 10px;
+            }
+            QPushButton {
+                border: none;
+                padding: 8px 10px;
+                border-radius: 8px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background: palette(alternate-base);
+            }
+            """
+        )
+        self.setObjectName("floatingPopover")
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 6)
+        shadow.setColor(self.palette().color(self.backgroundRole()).darker(140))
+        self.setGraphicsEffect(shadow)
+
+
+class _ChipButton(QToolButton):
+    """Stylized pill chip with icon and hover state."""
+
+    def __init__(self, text: str, icon: QIcon | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setText(text)
+        if icon:
+            self.setIcon(icon)
+        self.setCheckable(False)
+        self.setAutoRaise(True)
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.setStyleSheet(
+            """
+            QToolButton {
+                background: rgba(255, 255, 255, 80);
+                border: 1px solid palette(midlight);
+                border-radius: 12px;
+                padding: 6px 12px;
+            }
+            QToolButton:hover {
+                background: rgba(255, 255, 255, 140);
+            }
+            """
+        )
+
+
+class _ModelRow(QFrame):
+    """Clickable row representing a model option."""
+
+    def __init__(
+        self,
+        name: str,
+        badge: str | None = None,
+        description: str | None = None,
+        parent: QWidget | None = None,
+        on_select=None,
+    ) -> None:
+        super().__init__(parent)
+        self.name = name
+        self.on_select = on_select
+        self.setObjectName("modelRow")
+        self.setStyleSheet(
+            """
+            QFrame#modelRow {
+                border-radius: 10px;
+            }
+            QFrame#modelRow:hover {
+                background: palette(alternate-base);
+            }
+            """
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel(name, self)
+        title.setStyleSheet("font-weight: 600;")
+        header.addWidget(title)
+        if badge:
+            badge_label = QLabel(badge, self)
+            badge_label.setStyleSheet(
+                "padding: 2px 6px; border-radius: 8px; background: palette(midlight); font-size: 11px;"
+            )
+            header.addWidget(badge_label)
+        header.addStretch()
+        layout.addLayout(header)
+
+        if description:
+            desc_label = QLabel(description, self)
+            desc_label.setStyleSheet("color: palette(dark); font-size: 11px;")
+            desc_label.setWordWrap(True)
+            layout.addWidget(desc_label)
+
+    def mousePressEvent(self, event):  # noqa: D401, N802
+        """Emit selection when clicked."""
+        super().mousePressEvent(event)
+        if self.on_select:
+            self.on_select(self.name)
+
+
+class ModelSelectorPanel(QDialog):
+    """Floating model selector sheet displayed above the dock."""
+
+    model_selected = Signal(str)
+
+    def __init__(self, current_model: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.setModal(True)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        self.setStyleSheet(
+            """
+            QDialog#modelSelectorPanel {
+                background: transparent;
+            }
+            QFrame#modelSelectorContainer {
+                background: palette(base);
+                border-radius: 14px;
+            }
+            QLineEdit#modelSearch {
+                border: 1px solid palette(mid);
+                border-radius: 10px;
+                padding: 6px 10px 6px 30px;
+            }
+            QPushButton#groupByButton {
+                border: 1px solid palette(midlight);
+                border-radius: 10px;
+                padding: 6px 10px;
+            }
+            QPushButton#groupByButton:hover {
+                background: palette(alternate-base);
+            }
+            """
+        )
+        self.setObjectName("modelSelectorPanel")
+
+        container = QFrame(self)
+        container.setObjectName("modelSelectorContainer")
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(14, 14, 14, 14)
+        container_layout.setSpacing(12)
+
+        close_row = QHBoxLayout()
+        close_row.setContentsMargins(0, 0, 0, 0)
+        close_row.addStretch()
+        close_btn = QToolButton(container)
+        close_btn.setAutoRaise(True)
+        close_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogCloseButton))
+        close_btn.clicked.connect(self.close)
+        close_row.addWidget(close_btn)
+        container_layout.addLayout(close_row)
+
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        search_icon = QLabel(container)
+        search_icon.setText("🔍")
+        search_icon.setStyleSheet("padding-left: 6px;")
+        self.search_input = QLineEdit(container)
+        self.search_input.setObjectName("modelSearch")
+        self.search_input.setPlaceholderText("Search models")
+        group_by = QPushButton("Group By", container)
+        group_by.setObjectName("groupByButton")
+        search_row.addWidget(search_icon)
+        search_row.addWidget(self.search_input, 1)
+        search_row.addWidget(group_by)
+        container_layout.addLayout(search_row)
+
+        scroll = QScrollArea(container)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(10)
+
+        self._add_section(scroll_layout, "Recommended", current_model)
+        self._add_section(scroll_layout, "See more", current_model, secondary=True)
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        container_layout.addWidget(scroll, 1)
+
+        shadow = QGraphicsDropShadowEffect(container)
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 8)
+        shadow.setColor(self.palette().color(self.backgroundRole()).darker(140))
+        container.setGraphicsEffect(shadow)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(container)
+
+    def _add_section(self, parent_layout: QVBoxLayout, title: str, current_model: str, secondary: bool = False) -> None:
+        label = QLabel(title, self)
+        label.setStyleSheet("font-weight: 700;")
+        parent_layout.addWidget(label)
+
+        models = [
+            ("SWE-1", "Pro", "Fast code generation"),
+            ("SWE-Lite", "Free", "Lightweight assistance"),
+            ("SWE-Plus", "0.5x", "Balanced for chat and code"),
+            ("SWE-New", "New", "Latest experimental model"),
+        ]
+        if secondary:
+            models = [
+                ("SWE-XL", "Pro", "Large reasoning context"),
+                ("SWE-Chat", "Free", "Conversational focus"),
+                ("SWE-Design", "New", "UI/UX guidance"),
+            ]
+        for name, badge, desc in models:
+            row = _ModelRow(name, badge, desc, self, on_select=self.model_selected.emit)
+            if name == current_model:
+                row.setStyleSheet(
+                    row.styleSheet()
+                    + "\n#modelRow { border: 1px solid palette(mid); background: palette(alternate-base); }"
+                )
+            parent_layout.addWidget(row)
+        parent_layout.addSpacing(6)
+
+    def show_at(self, point: QPoint) -> None:
+        self.adjustSize()
+        self.move(point)
+        self.show()
+
+
+class AgentsDropdownPanel(QFrame):
+    """Wide dropdown for browsing previous conversations."""
+
+    def __init__(self, parent: QWidget | None = None, load_handler=None) -> None:
+        super().__init__(parent)
+        self.load_handler = load_handler
+        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setObjectName("agentsDropdown")
+        self.setStyleSheet(
+            """
+            QFrame#agentsDropdownContainer {
+                background: palette(base);
+                border-radius: 12px;
+            }
+            QLineEdit#agentsSearch {
+                border: 1px solid palette(mid);
+                border-radius: 10px;
+                padding: 8px 10px;
+            }
+            QFrame#agentsRow {
+                border-radius: 10px;
+            }
+            QFrame#agentsRow:hover {
+                background: palette(alternate-base);
+            }
+            QLabel#conversationTitle {
+                font-weight: 600;
+            }
+            QLabel#conversationMeta {
+                color: palette(dark);
+                font-size: 11px;
+            }
+            """
+        )
+
+        container = QFrame(self)
+        container.setObjectName("agentsDropdownContainer")
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(12, 12, 12, 12)
+        container_layout.setSpacing(10)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        self.search_input = QLineEdit(container)
+        self.search_input.setObjectName("agentsSearch")
+        self.search_input.setPlaceholderText("Search")
+        top_row.addWidget(self.search_input, 1)
+        all_label = QLabel("All Conversations", container)
+        all_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        all_label.setStyleSheet("color: palette(dark); font-weight: 600;")
+        top_row.addWidget(all_label, 0, Qt.AlignRight)
+        container_layout.addLayout(top_row)
+
+        scroll = QScrollArea(container)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        self.list_layout = QVBoxLayout(scroll_content)
+        self.list_layout.setContentsMargins(0, 0, 0, 0)
+        self.list_layout.setSpacing(8)
+        scroll.setWidget(scroll_content)
+        container_layout.addWidget(scroll, 1)
+
+        shadow = QGraphicsDropShadowEffect(container)
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 6)
+        shadow.setColor(self.palette().color(self.backgroundRole()).darker(130))
+        container.setGraphicsEffect(shadow)
+
+        wrapper_layout = QVBoxLayout(self)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.addWidget(container)
+
+        self.search_input.textChanged.connect(self._filter)
+        self._sessions: list[ChatSession] = []
+
+    def _filter(self, term: str) -> None:
+        self.populate(self._sessions, term)
+
+    def populate(self, sessions: list[ChatSession], term: str = "") -> None:
+        self._sessions = sessions
+        for i in reversed(range(self.list_layout.count())):
+            item = self.list_layout.takeAt(i)
+            if item.widget():
+                item.widget().deleteLater()
+        lowered = term.lower()
+        for session in sessions:
+            if lowered and lowered not in session.title.lower():
+                continue
+            row = self._build_row(session)
+            self.list_layout.addWidget(row)
+        self.list_layout.addStretch()
+
+    def _build_row(self, session: ChatSession) -> QWidget:
+        row = QFrame(self)
+        row.setObjectName("agentsRow")
+        layout = QVBoxLayout(row)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+
+        title = QLabel(session.title, row)
+        title.setObjectName("conversationTitle")
+        meta_text = self._format_timestamp(session.created_at)
+        if session.messages:
+            last_context = session.messages[-1].context
+            if last_context:
+                suffix = last_context[0].title
+                if last_context[0].path:
+                    suffix += f" — {last_context[0].path}"
+                meta_text += f"  •  {suffix}"
+        meta = QLabel(meta_text, row)
+        meta.setObjectName("conversationMeta")
+        layout.addWidget(title)
+        layout.addWidget(meta)
+
+        def _activate(_: object) -> None:
+            if self.load_handler:
+                self.load_handler(session)
+            self.hide()
+
+        row.mousePressEvent = _activate  # type: ignore[assignment]
+        return row
+
+    @staticmethod
+    def _format_timestamp(dt: datetime) -> str:
+        delta = datetime.now() - dt
+        if delta.days >= 1:
+            return f"{delta.days}d ago"
+        hours = delta.seconds // 3600
+        if hours:
+            return f"{hours}h ago"
+        minutes = (delta.seconds % 3600) // 60
+        if minutes:
+            return f"{minutes}m ago"
+        return "now"
 
 
 class _MessageCard(QWidget):
@@ -158,6 +538,8 @@ class AIChatPanel(QWidget):
         self._current_messages: list[ChatMessage] = []
         self._current_chat_started_at: datetime = datetime.now()
         self.chat_history: list[ChatSession] = []
+        self.current_model = "SWE-1"
+        self.current_mode = "Code"
 
         self.setObjectName("aiChatPanel")
         self.setStyleSheet(
@@ -183,27 +565,18 @@ class AIChatPanel(QWidget):
         def _style_toolbar_button(button: QToolButton) -> None:
             button.setAutoRaise(True)
             button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-            button.setFixedSize(32, 32)
+            button.setFixedSize(30, 30)
             button.setIconSize(QSize(18, 18))
 
-        self.mode_button = QToolButton(self)
-        _style_toolbar_button(self.mode_button)
-        self.mode_button.setText("Agents")
-        self.mode_button.setIcon(
-            QIcon.fromTheme(
-                "system-users",
-                self.style().standardIcon(QStyle.SP_FileDialogListView),
-            )
-        )
-        self.mode_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.mode_button.setToolTip("Select agent or mode")
-        mode_menu = QMenu(self.mode_button)
-        mode_menu.addAction("General")
-        mode_menu.addAction("Code")
-        mode_menu.addSeparator()
-        self.instructions_action = mode_menu.addAction("Instructions…")
+        self.instructions_action = QAction("Instructions…", self)
         self.instructions_action.triggered.connect(self._open_instructions_dialog)
-        self.mode_button.setMenu(mode_menu)
+
+        self.agents_button = QPushButton("Agents", self)
+        self.agents_button.setFlat(True)
+        self.agents_button.setStyleSheet(
+            "padding: 6px 10px; border: none; font-weight: 600; text-align: left;"
+        )
+        self.agents_button.clicked.connect(self._toggle_agents_dropdown)
 
         self.new_chat_button = QToolButton(self)
         _style_toolbar_button(self.new_chat_button)
@@ -299,8 +672,8 @@ class AIChatPanel(QWidget):
         top_bar.setFrameShape(QFrame.NoFrame)
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(10, 6, 10, 8)
-        top_layout.setSpacing(14)
-        top_layout.addWidget(self.mode_button)
+        top_layout.setSpacing(12)
+        top_layout.addWidget(self.agents_button)
         top_layout.addStretch()
         top_layout.addWidget(self.new_chat_button)
         top_layout.addWidget(self.history_button)
@@ -346,9 +719,18 @@ class AIChatPanel(QWidget):
             """
             #chatInputBar {
                 border: 1px solid palette(mid);
-                border-radius: 28px;
+                border-radius: 24px;
                 background: palette(base);
-                padding: 4px;
+                padding: 2px;
+            }
+            QToolButton#inlineButton {
+                border: none;
+                background: transparent;
+                border-radius: 14px;
+                padding: 6px;
+            }
+            QToolButton#inlineButton:hover {
+                background: palette(alternate-base);
             }
             """
         )
@@ -358,21 +740,30 @@ class AIChatPanel(QWidget):
         shadow.setColor(self.palette().color(self.backgroundRole()).darker(130))
         self.input_bar.setGraphicsEffect(shadow)
         input_layout = QHBoxLayout(self.input_bar)
-        input_layout.setContentsMargins(18, 10, 18, 10)
-        input_layout.setSpacing(12)
+        input_layout.setContentsMargins(12, 10, 12, 10)
+        input_layout.setSpacing(10)
+
+        self.plus_button = QToolButton(self.input_bar)
+        self.plus_button.setObjectName("inlineButton")
+        self.plus_button.setText("+")
+        self.plus_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.plus_button.clicked.connect(self._toggle_plus_menu)
 
         self.mic_button = QToolButton(self.input_bar)
+        self.mic_button.setObjectName("inlineButton")
         self.mic_button.setIcon(self.style().standardIcon(QStyle.SP_MediaVolume))
         self.mic_button.setToolTip("Start voice input")
         self.mic_button.setCheckable(True)
 
         self.send_button = QToolButton(self.input_bar)
+        self.send_button.setObjectName("inlineButton")
         self.send_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowForward))
         self.send_button.setToolTip("Send")
         self.send_button.clicked.connect(self._send)
 
-        input_layout.addWidget(self.mic_button)
+        input_layout.addWidget(self.plus_button)
         input_layout.addWidget(self.input, 1)
+        input_layout.addWidget(self.mic_button)
         input_layout.addWidget(self.send_button)
 
         chips_row = QWidget(self)
@@ -382,22 +773,20 @@ class AIChatPanel(QWidget):
             #chatChipRow {
                 padding-left: 6px;
             }
-            QLabel#chatChip {
-                background: palette(alternate-base);
-                border: 1px solid palette(midlight);
-                border-radius: 10px;
-                padding: 4px 10px;
-                font-size: 11px;
-            }
             """
         )
         chips_layout = QHBoxLayout(chips_row)
         chips_layout.setContentsMargins(4, 0, 4, 4)
-        chips_layout.setSpacing(6)
+        chips_layout.setSpacing(8)
 
-        code_chip = QLabel("Code", chips_row)
-        code_chip.setObjectName("chatChip")
-        chips_layout.addWidget(code_chip, 0, Qt.AlignLeft)
+        self.mode_chip = _ChipButton(self.current_mode, self.style().standardIcon(QStyle.SP_FileDialogDetailedView), chips_row)
+        self.mode_chip.clicked.connect(self._toggle_mode_menu)
+        chips_layout.addWidget(self.mode_chip, 0, Qt.AlignLeft)
+
+        self.model_chip = _ChipButton(self.current_model, self.style().standardIcon(QStyle.SP_ComputerIcon), chips_row)
+        self.model_chip.clicked.connect(self._open_model_selector)
+        chips_layout.addWidget(self.model_chip, 0, Qt.AlignLeft)
+
         chips_layout.addStretch()
 
         input_container = QFrame(self)
@@ -414,6 +803,11 @@ class AIChatPanel(QWidget):
         layout.addWidget(top_bar)
         layout.addWidget(transcript_container, 1)
         layout.addWidget(input_container)
+
+        self.plus_menu: _FloatingPopover | None = None
+        self.mode_popover: _FloatingPopover | None = None
+        self.model_selector_panel: ModelSelectorPanel | None = None
+        self.agents_panel: AgentsDropdownPanel | None = None
 
     def set_active_document_provider(self, provider) -> None:
         self.active_document_provider = provider
@@ -452,6 +846,97 @@ class AIChatPanel(QWidget):
             self.chat_history[0] = session
         else:
             self.chat_history.insert(0, session)
+
+    def _toggle_plus_menu(self) -> None:
+        if self.plus_menu and self.plus_menu.isVisible():
+            self.plus_menu.hide()
+            return
+        if self.plus_menu:
+            self.plus_menu.deleteLater()
+        self.plus_menu = _FloatingPopover(self)
+        layout = QVBoxLayout(self.plus_menu)
+        for label in ["Mentions", "Trigger Workflow", "Upload Image"]:
+            btn = QPushButton(label, self.plus_menu)
+            btn.clicked.connect(self.plus_menu.hide)
+            layout.addWidget(btn)
+
+        anchor = self.plus_button.mapToGlobal(QPoint(self.plus_button.width() // 2, 0))
+        self.plus_menu.adjustSize()
+        x = anchor.x() - self.plus_menu.width() // 2
+        y = anchor.y() - self.plus_menu.height() - 8
+        self.plus_menu.move(x, y)
+        self.plus_menu.show()
+
+    def _toggle_mode_menu(self) -> None:
+        if self.mode_popover and self.mode_popover.isVisible():
+            self.mode_popover.hide()
+            return
+        if self.mode_popover:
+            self.mode_popover.deleteLater()
+        self.mode_popover = _FloatingPopover(self)
+        layout = QVBoxLayout(self.mode_popover)
+        layout.setContentsMargins(6, 6, 6, 6)
+        modes = [
+            ("Code", "Generate code with workspace context"),
+            ("Chat", "General purpose conversation"),
+        ]
+        for mode, desc in modes:
+            option = QFrame(self.mode_popover)
+            option_layout = QVBoxLayout(option)
+            option_layout.setContentsMargins(8, 6, 8, 6)
+            title = QLabel(mode, option)
+            title.setStyleSheet("font-weight: 600;")
+            subtitle = QLabel(desc, option)
+            subtitle.setWordWrap(True)
+            subtitle.setStyleSheet("color: palette(dark); font-size: 11px;")
+            option_layout.addWidget(title)
+            option_layout.addWidget(subtitle)
+            option.mousePressEvent = lambda _event, m=mode: self._set_mode(m)  # type: ignore[assignment]
+            layout.addWidget(option)
+
+        anchor = self.mode_chip.mapToGlobal(QPoint(self.mode_chip.width() // 2, 0))
+        self.mode_popover.adjustSize()
+        x = anchor.x() - self.mode_popover.width() // 2
+        y = anchor.y() - self.mode_popover.height() - 8
+        self.mode_popover.move(x, y)
+        self.mode_popover.show()
+
+    def _set_mode(self, mode: str) -> None:
+        self.current_mode = mode
+        self.mode_chip.setText(mode)
+        if self.mode_popover:
+            self.mode_popover.hide()
+
+    def _open_model_selector(self) -> None:
+        if self.model_selector_panel and self.model_selector_panel.isVisible():
+            self.model_selector_panel.hide()
+            return
+        self.model_selector_panel = ModelSelectorPanel(self.current_model, self)
+        self.model_selector_panel.model_selected.connect(self._select_model)
+        size_hint = self.model_selector_panel.sizeHint()
+        anchor = self.input_bar.mapToGlobal(QPoint(self.input_bar.width() - size_hint.width(), 0))
+        y = anchor.y() - size_hint.height() - 12
+        self.model_selector_panel.show_at(QPoint(max(anchor.x(), 10), max(y, 10)))
+
+    def _select_model(self, model: str) -> None:
+        self.current_model = model
+        self.model_chip.setText(model)
+        if self.model_selector_panel:
+            self.model_selector_panel.hide()
+
+    def _toggle_agents_dropdown(self) -> None:
+        if self.agents_panel and self.agents_panel.isVisible():
+            self.agents_panel.hide()
+            return
+        self._ensure_current_snapshot()
+        if not self.agents_panel:
+            self.agents_panel = AgentsDropdownPanel(self, load_handler=self._restore_session)
+        self.agents_panel.populate(self.chat_history)
+        self.agents_panel.search_input.clear()
+        self.agents_panel.resize(self.width() - 32, int(self.height() * 0.45))
+        pos = self.agents_button.mapToGlobal(QPoint(0, self.agents_button.height()))
+        self.agents_panel.move(pos.x(), pos.y() + 6)
+        self.agents_panel.show()
 
     def _store_current_chat(self) -> None:
         if not self._current_messages:
