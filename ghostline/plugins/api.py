@@ -5,7 +5,7 @@ from typing import Callable, Protocol
 
 from PySide6.QtWidgets import QDockWidget
 
-from ghostline.core.events import Command
+from ghostline.core.events import CommandDescriptor
 
 
 class MenuCallback(Protocol):
@@ -24,7 +24,7 @@ class PluginContext:
         self._event_bus = event_bus
 
     def register_command(self, identifier: str, label: str, callback: Callable) -> None:
-        command = Command(identifier, label, "Plugins", callback)
+        command = CommandDescriptor(identifier, label, "Plugins", callback)
         self._command_registry.register_command(command)
 
     def register_menu(self, path: str, callback: MenuCallback) -> None:
