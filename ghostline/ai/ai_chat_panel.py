@@ -35,6 +35,7 @@ class _MessageCard(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.insert_handler = insert_handler
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         title = QLabel(f"<b>{role}</b>", self)
@@ -45,6 +46,21 @@ class _MessageCard(QWidget):
         if context:
             layout.addWidget(preamble)
 
+        self._content_layout = QVBoxLayout()
+        layout.addLayout(self._content_layout)
+        self.set_text(text)
+
+    def _clear_content(self) -> None:
+        while self._content_layout.count():
+            item = self._content_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            elif item.layout():
+                item.layout().deleteLater()
+
+    def set_text(self, text: str) -> None:
+        self._clear_content()
         code_blocks = re.findall(r"```(?:[\w#+-]+)?\n(.*?)```", text, flags=re.DOTALL)
         rendered_code = False
         for block in code_blocks:
@@ -55,17 +71,17 @@ class _MessageCard(QWidget):
             copy_btn = QPushButton("Copy", self)
             copy_btn.clicked.connect(lambda _=None, b=block: QApplication.clipboard().setText(b))
             btn_row.addWidget(copy_btn)
-            if insert_handler:
+            if self.insert_handler:
                 insert_btn = QPushButton("Insert at cursor", self)
-                insert_btn.clicked.connect(lambda _=None, b=block: insert_handler(b))
+                insert_btn.clicked.connect(lambda _=None, b=block: self.insert_handler(b))
                 btn_row.addWidget(insert_btn)
-            layout.addWidget(code_edit)
-            layout.addLayout(btn_row)
+            self._content_layout.addWidget(code_edit)
+            self._content_layout.addLayout(btn_row)
 
         if not rendered_code:
             body = QTextEdit(text, self)
             body.setReadOnly(True)
-            layout.addWidget(body)
+            self._content_layout.addWidget(body)
 
 
 class _AIRequestWorker(QObject):
@@ -73,6 +89,7 @@ class _AIRequestWorker(QObject):
 
     finished = Signal(str, str)
     failed = Signal(str)
+    partial = Signal(str)
 
     def __init__(self, client: AIClient, prompt: str, context: str | None) -> None:
         super().__init__()
@@ -83,8 +100,11 @@ class _AIRequestWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            response = self.client.send(self.prompt, context=self.context)
-            self.finished.emit(self.prompt, response.text)
+            text = ""
+            for chunk in self.client.stream(self.prompt, context=self.context):
+                text += chunk
+                self.partial.emit(chunk)
+            self.finished.emit(self.prompt, text)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
 
@@ -96,6 +116,8 @@ class AIChatPanel(QWidget):
         self.context_engine = context_engine
         self._active_thread: QThread | None = None
         self._active_worker: _AIRequestWorker | None = None
+        self._active_response_card: _MessageCard | None = None
+        self._active_response_text: str = ""
         self.workspace_active = False
         self.active_document_provider = None
         self.open_documents_provider = None
@@ -180,12 +202,15 @@ class AIChatPanel(QWidget):
     def set_command_adapter(self, adapter) -> None:
         self.command_adapter = adapter
 
-    def _append(self, role: str, text: str, context: list[ContextChunk] | None = None) -> None:
+    def _append(
+        self, role: str, text: str, context: list[ContextChunk] | None = None
+    ) -> _MessageCard:
         card = _MessageCard(role, text, context, insert_handler=self.insert_handler, parent=self)
         item = QListWidgetItem(self.transcript_list)
         item.setSizeHint(card.sizeHint())
         self.transcript_list.addItem(item)
         self.transcript_list.setItemWidget(item, card)
+        return card
 
     def _set_busy(self, busy: bool) -> None:
         enabled = not busy and self.workspace_active
@@ -202,20 +227,32 @@ class AIChatPanel(QWidget):
     def _on_worker_finished(self, prompt: str, text: str) -> None:
         if not self._active_thread or not self._active_worker:
             return
-        self._append("AI", text, context=self._last_chunks)
+        if self._active_response_card:
+            self._active_response_card.set_text(text)
+        else:
+            self._append("AI", text, context=self._last_chunks)
+        self._active_response_text = text
         if self.command_adapter:
             self.command_adapter.handle_response(text)
         self._cleanup_thread(self._active_thread, self._active_worker)
         self._set_busy(False)
         self.input.clear()
+        self._active_response_card = None
+        self._active_response_text = ""
 
     @Slot(str)
     def _on_worker_failed(self, error: str) -> None:
         if not self._active_thread or not self._active_worker:
             return
-        self._append("AI", f"Error: {error}")
+        message = f"Error: {error}"
+        if self._active_response_card:
+            self._active_response_card.set_text(message)
+        else:
+            self._append("AI", message)
+        self._active_response_text = ""
         self._cleanup_thread(self._active_thread, self._active_worker)
         self._set_busy(False)
+        self._active_response_card = None
 
     def _cleanup_thread(self, thread: QThread, worker: _AIRequestWorker) -> None:
         worker.deleteLater()
@@ -256,9 +293,12 @@ class AIChatPanel(QWidget):
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_worker_finished, Qt.QueuedConnection)
         worker.failed.connect(self._on_worker_failed, Qt.QueuedConnection)
+        worker.partial.connect(self._on_worker_partial, Qt.QueuedConnection)
         thread.start()
         self._active_thread = thread
         self._active_worker = worker
+        self._active_response_card = self._append("AI", "", context=self._last_chunks)
+        self._active_response_text = ""
 
     def _send(self) -> None:
         prompt = self.input.text().strip()
@@ -313,4 +353,11 @@ class AIChatPanel(QWidget):
         label = "AI: Ready" if active else "AI: Idle (no workspace)"
         self.status_label.setText(label)
         self._set_busy(False)
+
+    @Slot(str)
+    def _on_worker_partial(self, delta: str) -> None:
+        if not self._active_response_card:
+            return
+        self._active_response_text += delta
+        self._active_response_card.set_text(self._active_response_text)
 
