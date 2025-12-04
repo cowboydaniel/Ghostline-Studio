@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex
-from PySide6.QtGui import QAction, QDesktopServices, QStyle
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QStackedLayout,
     QLineEdit,
     QMessageBox,
+    QStyle,
 )
 
 from ghostline.core.config import ConfigManager
