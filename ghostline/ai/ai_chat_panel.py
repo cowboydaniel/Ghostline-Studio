@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -149,21 +150,12 @@ class AIChatPanel(QWidget):
                 border: none;
                 background: transparent;
             }
-            QLabel#chatShortcutHint {
-                color: palette(mid);
-                font-size: 11px;
-            }
             QLabel#pinnedBadge {
                 padding: 2px 6px;
                 border-radius: 8px;
                 background: palette(highlight);
                 color: palette(bright-text);
                 font-weight: 600;
-            }
-            #chatInputBar {
-                border: 1px solid palette(mid);
-                border-radius: 18px;
-                background: palette(base);
             }
             """
         )
@@ -327,23 +319,26 @@ class AIChatPanel(QWidget):
         self.input_bar.setStyleSheet(
             """
             #chatInputBar {
-                border: 1px solid palette(mid);
-                border-radius: 18px;
+                border: none;
+                border-radius: 24px;
                 background: palette(base);
+                padding: 6px;
             }
             """
         )
+        shadow = QGraphicsDropShadowEffect(self.input_bar)
+        shadow.setBlurRadius(22)
+        shadow.setOffset(0, 6)
+        shadow.setColor(self.palette().color(self.backgroundRole()).darker(115))
+        self.input_bar.setGraphicsEffect(shadow)
         input_layout = QHBoxLayout(self.input_bar)
-        input_layout.setContentsMargins(12, 6, 12, 6)
-        input_layout.setSpacing(8)
+        input_layout.setContentsMargins(16, 10, 16, 10)
+        input_layout.setSpacing(12)
 
         self.mic_button = QToolButton(self.input_bar)
         self.mic_button.setIcon(self.style().standardIcon(QStyle.SP_MediaVolume))
         self.mic_button.setToolTip("Start voice input")
         self.mic_button.setCheckable(True)
-
-        self.shortcut_hint = QLabel("Enter to send", self.input_bar)
-        self.shortcut_hint.setObjectName("chatShortcutHint")
 
         self.send_button = QToolButton(self.input_bar)
         self.send_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowForward))
@@ -352,11 +347,10 @@ class AIChatPanel(QWidget):
 
         input_layout.addWidget(self.mic_button)
         input_layout.addWidget(self.input, 1)
-        input_layout.addWidget(self.shortcut_hint)
         input_layout.addWidget(self.send_button)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(10, 10, 10, 24)
         layout.setSpacing(8)
         layout.addWidget(top_bar)
         layout.addWidget(transcript_container, 1)
