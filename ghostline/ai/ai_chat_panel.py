@@ -5,9 +5,9 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
-    QAction,
     QDialog,
     QDialogButtonBox,
     QFrame,
