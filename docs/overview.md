@@ -34,9 +34,10 @@ The included AI features use a dummy backend that echoes prompts. Configure your
 preferred backend and endpoint via the Settings dialog or by editing
 `~/.config/ghostline/settings.yaml` to point to your service. The AI chat dock
 and commands will send prompts through the configured backend. For local
-Ollama setups, start the server with `ollama serve` before launching Ghostline;
-use the `ai.timeout_seconds` setting to accommodate slower hardware or cold
-model loads.
+Ollama setups, Ghostline will attempt to auto-start the server with
+`ollama serve` when needed (controlled by `ai.auto_start_ollama`). You can
+still start it manually before launch, and use the `ai.timeout_seconds` setting
+to accommodate slower hardware or cold model loads.
 
 ## 3D Architecture Map
 

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import time
 from dataclasses import dataclass
 from typing import Generator
 from urllib import request
@@ -96,6 +99,7 @@ class AIClient:
         self.backend = self._create_backend()
         self.secondary_backend_type = self.config.get("ai", {}).get("secondary_backend")
         self.secondary_backend = self._create_backend(self.secondary_backend_type) if self.secondary_backend_type else None
+        self._ollama_started = False
 
     def _create_backend(self, backend_type: str | None = None):
         backend = backend_type or self.backend_type
@@ -105,6 +109,43 @@ class AIClient:
             return OpenAICompatibleBackend(self.config)
         return DummyBackend(self.config)
 
+    def _maybe_start_ollama(self) -> bool:
+        if self.backend_type != "ollama" or self._ollama_started:
+            return False
+
+        self._ollama_started = True
+        if not self.config.get("ai", {}).get("auto_start_ollama", True):
+            return False
+
+        if not shutil.which("ollama"):
+            self.logger.warning("Ollama executable not found; skipping auto-start.")
+            return False
+
+        try:
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            time.sleep(1)
+            self.logger.info("Attempted to start Ollama server with `ollama serve`.")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("Failed to auto-start Ollama: %s", exc)
+            return False
+
+    def _retry_after_start(self, prompt: str, context: str | None = None) -> AIResponse | None:
+        if not self._maybe_start_ollama():
+            return None
+
+        try:
+            return self.backend.send(prompt, context)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("AI retry after Ollama start failed: %s", exc)
+            return None
+
     def send(self, prompt: str, context: str | None = None) -> AIResponse:
         if self.disabled:
             return AIResponse(text="AI backend disabled due to previous errors.")
@@ -112,6 +153,10 @@ class AIClient:
         try:
             return self.backend.send(prompt, context)
         except TimeoutError:
+            retry = self._retry_after_start(prompt, context)
+            if retry:
+                return retry
+
             timeout = getattr(self.backend, "timeout", None) or getattr(self.backend, "timeout_seconds", None)
             endpoint = getattr(self.backend, "endpoint", "the configured AI endpoint")
             timeout_hint = f" after {timeout} seconds" if timeout else ""
@@ -123,6 +168,10 @@ class AIClient:
             self.logger.error(message)
             return AIResponse(text=message)
         except URLError as exc:
+            retry = self._retry_after_start(prompt, context)
+            if retry:
+                return retry
+
             endpoint = getattr(self.backend, "endpoint", "the configured AI endpoint")
             message = (
                 f"AI backend unreachable at {endpoint}."
