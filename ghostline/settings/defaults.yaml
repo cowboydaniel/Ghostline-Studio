@@ -22,6 +22,8 @@ ai:
   timeout_seconds: 30
   auto_start_ollama: true
   secondary_backend: null
+  max_context_chars: 1200
+  context_results: 5
 window:
   maximized: true
   geometry: null

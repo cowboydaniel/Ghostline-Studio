@@ -1,11 +1,16 @@
-"""Simple chat-like panel for AI responses."""
+"""Rich chat panel that exposes workspace-aware context controls."""
 from __future__ import annotations
+
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import (
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -13,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.ai.ai_client import AIClient
+from ghostline.ai.context_engine import ContextChunk, ContextEngine
 
 
 class _AIRequestWorker(QObject):
@@ -37,51 +43,90 @@ class _AIRequestWorker(QObject):
 
 
 class AIChatPanel(QWidget):
-    def __init__(self, client: AIClient, parent=None) -> None:
+    def __init__(self, client: AIClient, context_engine: ContextEngine | None = None, parent=None) -> None:
         super().__init__(parent)
         self.client = client
+        self.context_engine = context_engine
         self._active_thread: QThread | None = None
+        self.workspace_active = False
+        self.active_document_provider = None
+        self.open_documents_provider = None
 
         self.status_label = QLabel("AI: Idle (no workspace)", self)
         self.status_label.setAlignment(Qt.AlignLeft)
+
         self.transcript = QTextEdit(self)
         self.transcript.setReadOnly(True)
+
+        self.instructions = QTextEdit(self)
+        self.instructions.setPlaceholderText("Optional: add custom instructions, tone, or constraints")
+        self.instructions.setMaximumHeight(80)
+
+        self.context_preview = QTextEdit(self)
+        self.context_preview.setReadOnly(True)
+        self.context_preview.setPlaceholderText("Context that will be sent with your prompt")
+
+        self.context_list = QListWidget(self)
+        self.pinned_list = QListWidget(self)
 
         self.input = QLineEdit(self)
         self.input.setPlaceholderText("Ask Ghostline AI...")
         self.input.returnPressed.connect(self._send)
 
-        self.send_button = QPushButton("Send", self)
+        self.send_button = QPushButton("Ask", self)
         self.send_button.clicked.connect(self._send)
 
-        self.context_button = QPushButton("Send with context", self)
-        self.context_button.clicked.connect(self._send_with_context)
+        self.context_button = QPushButton("Preview Context", self)
+        self.context_button.clicked.connect(self._refresh_context_view)
+
+        self.pin_button = QPushButton("Pin active", self)
+        self.pin_button.clicked.connect(self._pin_active_document)
 
         input_row = QHBoxLayout()
         input_row.addWidget(self.input)
         input_row.addWidget(self.send_button)
         input_row.addWidget(self.context_button)
+        input_row.addWidget(self.pin_button)
+
+        context_box = QGroupBox("Context sources", self)
+        context_layout = QVBoxLayout(context_box)
+        context_layout.setContentsMargins(6, 6, 6, 6)
+        context_layout.addWidget(QLabel("Pinned", context_box))
+        context_layout.addWidget(self.pinned_list)
+        context_layout.addWidget(QLabel("Planned context", context_box))
+        context_layout.addWidget(self.context_list)
+        context_layout.addWidget(QLabel("Preview", context_box))
+        context_layout.addWidget(self.context_preview)
+
+        instructions_box = QGroupBox("Instructions", self)
+        instructions_layout = QVBoxLayout(instructions_box)
+        instructions_layout.setContentsMargins(6, 6, 6, 6)
+        instructions_layout.addWidget(self.instructions)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
         layout.addWidget(self.status_label)
+        layout.addWidget(instructions_box)
         layout.addWidget(self.transcript)
         layout.addLayout(input_row)
+        layout.addWidget(context_box)
 
-        self.context_provider = None
-        self.workspace_active = False
+    def set_active_document_provider(self, provider) -> None:
+        self.active_document_provider = provider
 
-    def set_context_provider(self, provider) -> None:
-        self.context_provider = provider
+    def set_open_documents_provider(self, provider) -> None:
+        self.open_documents_provider = provider
 
     def _append(self, role: str, text: str) -> None:
         self.transcript.append(f"<b>{role}:</b> {text}")
 
     def _set_busy(self, busy: bool) -> None:
-        self.input.setEnabled(not busy and self.workspace_active)
-        self.send_button.setEnabled(not busy and self.workspace_active)
-        self.context_button.setEnabled(not busy and self.workspace_active)
+        enabled = not busy and self.workspace_active
+        self.input.setEnabled(enabled)
+        self.send_button.setEnabled(enabled)
+        self.context_button.setEnabled(enabled)
+        self.pin_button.setEnabled(enabled)
         status = "AI: Working..." if busy else ("AI: Ready" if self.workspace_active else "AI: Idle (no workspace)")
         self.status_label.setText(status)
 
@@ -104,6 +149,22 @@ class AIChatPanel(QWidget):
         if self._active_thread is thread:
             self._active_thread = None
 
+    def _gather_context(self, prompt: str) -> str | None:
+        instructions = self.instructions.toPlainText().strip()
+        if self.context_engine and self.workspace_active:
+            active = self.active_document_provider() if self.active_document_provider else None
+            open_docs = self.open_documents_provider() if self.open_documents_provider else None
+            context, chunks = self.context_engine.build_context(
+                prompt,
+                instructions=instructions,
+                active_document=active,
+                open_documents=open_docs,
+            )
+            self._show_context_sources(chunks, context)
+            return context
+        self._show_context_sources([], instructions)
+        return instructions or None
+
     def _start_request(self, prompt: str, context: str | None) -> None:
         if self._active_thread:
             return
@@ -124,20 +185,44 @@ class AIChatPanel(QWidget):
         prompt = self.input.text().strip()
         if not prompt:
             return
-        self._start_request(prompt, None)
-
-    def _send_with_context(self) -> None:
-        prompt = self.input.text().strip()
-        context = self.context_provider() if self.context_provider else None
-        if not prompt:
-            return
+        context = self._gather_context(prompt)
         self._start_request(prompt, context)
+
+    def _refresh_context_view(self) -> None:
+        prompt = self.input.text().strip()
+        context = self._gather_context(prompt) if prompt else None
+        if context is not None:
+            self.context_preview.setPlainText(context)
+
+    def _pin_active_document(self) -> None:
+        if not self.context_engine or not self.active_document_provider:
+            return
+        active = self.active_document_provider()
+        if not active:
+            return
+        path, text = active
+        path_obj = Path(path) if path else None
+        title = f"Pinned: {path_obj.name}" if path_obj else "Pinned document"
+        self.context_engine.pin_context(ContextChunk(title, text, path_obj, "Pinned manually"))
+        self._refresh_context_view()
+
+    def _show_context_sources(self, chunks: list[ContextChunk], context: str | None) -> None:
+        self.context_list.clear()
+        for chunk in chunks:
+            label = chunk.title
+            if chunk.reason:
+                label += f" — {chunk.reason}"
+            QListWidgetItem(label, self.context_list)
+        self.pinned_list.clear()
+        if self.context_engine:
+            for pinned in self.context_engine.pinned():
+                QListWidgetItem(pinned.title, self.pinned_list)
+        if context is not None:
+            self.context_preview.setPlainText(context)
 
     def set_workspace_active(self, active: bool) -> None:
         self.workspace_active = active
         label = "AI: Ready" if active else "AI: Idle (no workspace)"
         self.status_label.setText(label)
-        self.input.setEnabled(active)
-        self.send_button.setEnabled(active)
-        self.context_button.setEnabled(active)
+        self._set_busy(False)
 
