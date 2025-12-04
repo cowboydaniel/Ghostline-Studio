@@ -126,6 +126,7 @@ class AIChatPanel(QWidget):
         self._active_response_card: _MessageCard | None = None
         self._active_response_text: str = ""
         self.workspace_active = False
+        self._busy: bool = False
         self.active_document_provider = None
         self.open_documents_provider = None
         self.command_adapter = None
@@ -171,8 +172,11 @@ class AIChatPanel(QWidget):
         self.instructions.setPlaceholderText("Optional: add custom instructions, tone, or constraints")
         self.instructions.hide()
 
-        self.status_label = QLabel("AI: Idle (no workspace)", self)
-        self.status_label.setAlignment(Qt.AlignLeft)
+        self.status_indicator = QLabel(self)
+        self.status_indicator.setObjectName("statusIndicator")
+        self.status_indicator.setFixedSize(12, 12)
+        self.status_indicator.setToolTip("AI assistant status")
+        self._refresh_status_indicator()
 
         self.mode_button = QToolButton(self)
         self.mode_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
@@ -232,9 +236,9 @@ class AIChatPanel(QWidget):
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(6, 6, 6, 6)
         top_layout.setSpacing(4)
-        top_layout.addWidget(self.status_label)
         top_layout.addStretch()
         top_layout.addWidget(self.pinned_badge)
+        top_layout.addWidget(self.status_indicator, 0, Qt.AlignVCenter)
         top_layout.addWidget(self.mode_button)
         top_layout.addWidget(self.new_chat_button)
         top_layout.addWidget(self.history_button)
@@ -374,8 +378,8 @@ class AIChatPanel(QWidget):
             self.active_flag_action,
         ):
             action.setEnabled(enabled)
-        status = "AI: Working..." if busy else ("AI: Ready" if self.workspace_active else "AI: Idle (no workspace)")
-        self.status_label.setText(status)
+        self._busy = busy
+        self._refresh_status_indicator()
 
     @Slot(str, str)
     def _on_worker_finished(self, prompt: str, text: str) -> None:
@@ -558,9 +562,17 @@ class AIChatPanel(QWidget):
 
     def set_workspace_active(self, active: bool) -> None:
         self.workspace_active = active
-        label = "AI: Ready" if active else "AI: Idle (no workspace)"
-        self.status_label.setText(label)
         self._set_busy(False)
+
+    def _refresh_status_indicator(self) -> None:
+        ready = self.workspace_active and not self._busy
+        color = "#34c759" if ready else "#9e9e9e"
+        radius = self.status_indicator.height() // 2
+        self.status_indicator.setStyleSheet(
+            f"#statusIndicator {{ background-color: {color}; border-radius: {radius}px; }}"
+        )
+        tooltip = "AI Ready" if ready else ("AI Busy" if self.workspace_active else "AI Offline")
+        self.status_indicator.setToolTip(tooltip)
 
     def _update_pinned_badge(self, count: int) -> None:
         self.pinned_badge.setText(str(count))
