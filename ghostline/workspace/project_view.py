@@ -18,13 +18,31 @@ class ProjectView(QTreeView):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setHeaderHidden(True)
+        self.setRootIsDecorated(True)
         self.setEditTriggers(QTreeView.NoEditTriggers)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        self.setIndentation(18)
+        self.setStyleSheet(
+            """
+            QTreeView {
+                font-size: 12px;
+                show-decoration-selected: 1;
+            }
+            QTreeView::item {
+                padding: 2px 4px;
+            }
+            QTreeView::item:selected {
+                background: palette(midlight);
+            }
+            """
+        )
 
     def set_model(self, model: ProjectModel) -> None:
         self.setModel(model)
         self._model = model
+        for column in range(1, model.columnCount()):
+            self.setColumnHidden(column, True)
 
     def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
         index = self.indexAt(event.pos())
