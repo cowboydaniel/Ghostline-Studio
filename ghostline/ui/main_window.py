@@ -1062,7 +1062,7 @@ class MainWindow(QMainWindow):
 
     def register_dock(self, identifier: str, widget: QDockWidget) -> None:
         widget.setObjectName(identifier)
-        self.addDockWidget(Qt.RightDockWidgetArea, widget)
+        self.addDockWidget(Qt.LeftDockWidgetArea, widget)
         self._register_dock_action(widget)
 
     def execute_command(self, command_id: str, **kwargs) -> None:
