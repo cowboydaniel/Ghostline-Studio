@@ -72,7 +72,10 @@ class OpenAICompatibleBackend(HTTPBackend):
         super().__init__(config)
         ai_cfg = config.get("ai", {}) if config else {}
         self.endpoint = ai_cfg.get("openai_endpoint", "https://api.openai.com").rstrip("/")
-        client_config: dict[str, str] = {"base_url": self.endpoint}
+        base_url = self.endpoint
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        client_config: dict[str, str] = {"base_url": base_url}
         if self.api_key:
             client_config["api_key"] = self.api_key
         self.client = OpenAI(**client_config)
