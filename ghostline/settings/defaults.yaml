@@ -10,8 +10,8 @@ autosave:
   enabled: false
   interval_seconds: 60
 ai:
-  enabled: false
-  backend: "none"
+  enabled: true
+  backend: "dummy"
   model: "gpt-4o-mini"
   openai_endpoint: "https://api.openai.com"
   api_key: ""

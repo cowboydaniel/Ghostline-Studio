@@ -600,11 +600,13 @@ class MainWindow(QMainWindow):
     def _create_terminal_dock(self) -> None:
         dock = QDockWidget("Terminal", self)
         dock.setObjectName("terminalDock")
-        dock.setWidget(TerminalWidget(self.workspace_manager))
+        terminal = TerminalWidget(self.workspace_manager)
+        dock.setWidget(terminal)
         dock.setMinimumHeight(140)
         dock.setAllowedAreas(Qt.BottomDockWidgetArea)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self._register_dock_action(dock)
+        self.terminal = terminal
         self.terminal_dock = dock
 
     def _create_project_dock(self) -> None:
@@ -820,6 +822,8 @@ class MainWindow(QMainWindow):
         if index:
             self.project_view.setRootIndex(index)
         self._update_workspace_state()
+        if hasattr(self, "terminal"):
+            self.terminal.set_workspace(workspace_path)
         self.plugin_loader.emit_event("workspace.opened", path=folder)
         self.task_manager.load_workspace_tasks()
         self.semantic_index.reindex()
@@ -880,6 +884,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "project_model"):
             self.project_model.set_workspace_root(None)
         self._update_workspace_state()
+        if hasattr(self, "terminal"):
+            self.terminal.set_workspace(None)
         self._update_central_stack()
 
     def open_file_at(self, path: str, line: int) -> None:
