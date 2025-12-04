@@ -126,21 +126,31 @@ class AISettingsDialog(QDialog):
         base_url = f"{endpoint}/v1" if not endpoint.endswith("/v1") else endpoint
         self.openai_status.setText("Fetching models...")
         self.test_openai_btn.setEnabled(False)
+        self.openai_model.setEnabled(False)
 
         def worker() -> None:
+            timeout_seconds = 8
+
+            def finish(ok: bool, message: str, models: list[str] | None = None) -> None:
+                if models is not None:
+                    QTimer.singleShot(0, lambda: self._update_openai_models(models))
+                QTimer.singleShot(0, lambda: self._update_openai_status(ok, message))
+
             try:
                 try:
-                    from openai import OpenAI
+                    import httpx
+                    from openai import APITimeoutError, OpenAI
                 except ImportError:
-                    QTimer.singleShot(
-                        0,
-                        lambda: self._update_openai_status(
-                            False, "OpenAI client not installed. Install with 'pip install openai'."
-                        ),
+                    finish(
+                        False, "OpenAI client not installed. Install with 'pip install openai'."
                     )
                     return
 
-                client = OpenAI(api_key=api_key, base_url=base_url)
+                client = OpenAI(
+                    api_key=api_key,
+                    base_url=base_url,
+                    http_client=httpx.Client(timeout=timeout_seconds),
+                )
                 response = client.models.list()
                 models = []
                 for model in response.data:
@@ -154,10 +164,11 @@ class AISettingsDialog(QDialog):
                 models = sorted(models, reverse=False)
                 if not models:
                     raise RuntimeError("No models returned")
-                QTimer.singleShot(0, lambda: self._update_openai_models(models))
-                QTimer.singleShot(0, lambda: self._update_openai_status(True, "Connection successful"))
+                finish(True, "Connection successful", models)
+            except (APITimeoutError, httpx.TimeoutException):
+                finish(False, f"Request timed out after {timeout_seconds}s")
             except Exception as exc:  # noqa: BLE001
-                QTimer.singleShot(0, lambda: self._update_openai_status(False, str(exc)))
+                finish(False, str(exc))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -175,6 +186,7 @@ class AISettingsDialog(QDialog):
         self.openai_status.setText(message)
         self.openai_status.setStyleSheet(f"color: {'green' if ok else 'tomato'}")
         self.test_openai_btn.setEnabled(True)
+        self.openai_model.setEnabled(True)
 
     # Ollama helpers
     def _check_ollama(self) -> None:
