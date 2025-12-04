@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from ghostline.ai.ai_client import AIClient
@@ -157,12 +158,6 @@ class AIChatPanel(QWidget):
         self.instructions.setPlaceholderText("Optional: add custom instructions, tone, or constraints")
         self.instructions.hide()
 
-        self.status_indicator = QLabel(self)
-        self.status_indicator.setObjectName("statusIndicator")
-        self.status_indicator.setFixedSize(12, 12)
-        self.status_indicator.setToolTip("AI assistant status")
-        self._refresh_status_indicator()
-
         def _style_toolbar_button(button: QToolButton) -> None:
             button.setAutoRaise(True)
             button.setToolButtonStyle(Qt.ToolButtonIconOnly)
@@ -250,6 +245,25 @@ class AIChatPanel(QWidget):
         )
         self.overflow_button.setToolTip("More actions")
         overflow_menu = QMenu(self.overflow_button)
+        self.status_indicator = QLabel(self)
+        self.status_indicator.setObjectName("statusIndicator")
+        self.status_indicator.setFixedSize(12, 12)
+        self.status_indicator.setToolTip("AI assistant status")
+        self.status_label = QLabel("AI Offline", self)
+        self.status_label.setObjectName("statusLabel")
+        self.status_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+
+        status_widget = QWidget(self)
+        status_layout = QHBoxLayout(status_widget)
+        status_layout.setContentsMargins(10, 6, 10, 6)
+        status_layout.setSpacing(8)
+        status_layout.addWidget(self.status_indicator, 0, Qt.AlignVCenter)
+        status_layout.addWidget(self.status_label, 1, Qt.AlignLeft)
+        status_action = QWidgetAction(self)
+        status_action.setDefaultWidget(status_widget)
+
+        overflow_menu.addAction(status_action)
+        overflow_menu.addSeparator()
         overflow_menu.addAction(self.instructions_action)
         overflow_menu.addSeparator()
         overflow_menu.addAction(self.context_action)
@@ -265,12 +279,13 @@ class AIChatPanel(QWidget):
         top_layout.setContentsMargins(10, 6, 10, 8)
         top_layout.setSpacing(14)
         top_layout.addWidget(self.mode_button)
-        top_layout.addWidget(self.status_indicator, 0, Qt.AlignVCenter)
         top_layout.addStretch()
         top_layout.addWidget(self.new_chat_button)
         top_layout.addWidget(self.history_button)
         top_layout.addWidget(self.tools_button)
         top_layout.addWidget(self.overflow_button)
+
+        self._refresh_status_indicator()
 
         self.placeholder = QWidget(self)
         placeholder_layout = QVBoxLayout(self.placeholder)
@@ -602,6 +617,7 @@ class AIChatPanel(QWidget):
         )
         tooltip = "AI Ready" if ready else ("AI Busy" if self.workspace_active else "AI Offline")
         self.status_indicator.setToolTip(tooltip)
+        self.status_label.setText(tooltip)
 
     def _update_pinned_badge(self, count: int) -> None:
         tooltip_suffix = f" ({count} pinned)" if count else ""
