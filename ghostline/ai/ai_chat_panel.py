@@ -7,8 +7,10 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
+    QAction,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -17,6 +19,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QPushButton,
+    QStyle,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -144,6 +147,28 @@ class AIChatPanel(QWidget):
         instructions_action.triggered.connect(self._open_instructions_dialog)
         self.advanced_button.setMenu(advanced_menu)
 
+        self.tools_button = QToolButton(self)
+        self.tools_button.setText("Tools")
+        self.tools_button.setPopupMode(QToolButton.InstantPopup)
+        tools_menu = QMenu(self.tools_button)
+        self.context_action = QAction("Preview Context", self)
+        self.context_action.triggered.connect(self._refresh_context_view)
+        self.pin_action = QAction("Pin active", self)
+        self.pin_action.triggered.connect(self._pin_active_document)
+        self.unpin_action = QAction("Unpin all", self)
+        self.unpin_action.triggered.connect(self._clear_pins)
+        self.active_flag_action = QAction("Mark Active Document", self)
+        self.active_flag_action.setCheckable(True)
+        tools_menu.addActions(
+            [
+                self.context_action,
+                self.pin_action,
+                self.unpin_action,
+                self.active_flag_action,
+            ]
+        )
+        self.tools_button.setMenu(tools_menu)
+
         self.transcript_list = QListWidget(self)
 
         self.context_preview = QTextEdit(self)
@@ -154,29 +179,45 @@ class AIChatPanel(QWidget):
         self.pinned_list = QListWidget(self)
 
         self.input = QLineEdit(self)
-        self.input.setPlaceholderText("Ask Ghostline AI...")
+        self.input.setPlaceholderText("Ask anything")
         self.input.returnPressed.connect(self._send)
 
-        self.send_button = QPushButton("Ask", self)
+        self.input_bar = QFrame(self)
+        self.input_bar.setObjectName("chatInputBar")
+        self.input_bar.setStyleSheet(
+            """
+            #chatInputBar {
+                border: 1px solid palette(mid);
+                border-radius: 18px;
+                background: palette(base);
+            }
+            QLabel#chatShortcutHint {
+                color: palette(mid);
+                font-size: 11px;
+            }
+            """
+        )
+        input_layout = QHBoxLayout(self.input_bar)
+        input_layout.setContentsMargins(12, 6, 12, 6)
+        input_layout.setSpacing(8)
+
+        self.mic_button = QToolButton(self.input_bar)
+        self.mic_button.setIcon(self.style().standardIcon(QStyle.SP_MediaVolume))
+        self.mic_button.setToolTip("Start voice input")
+        self.mic_button.setCheckable(True)
+
+        self.shortcut_hint = QLabel("Enter to send", self.input_bar)
+        self.shortcut_hint.setObjectName("chatShortcutHint")
+
+        self.send_button = QToolButton(self.input_bar)
+        self.send_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowForward))
+        self.send_button.setToolTip("Send")
         self.send_button.clicked.connect(self._send)
 
-        self.context_button = QPushButton("Preview Context", self)
-        self.context_button.clicked.connect(self._refresh_context_view)
-
-        self.pin_button = QPushButton("Pin active", self)
-        self.pin_button.clicked.connect(self._pin_active_document)
-        self.unpin_button = QPushButton("Unpin all", self)
-        self.unpin_button.clicked.connect(self._clear_pins)
-        self.active_flag = QPushButton("Mark Active Document", self)
-        self.active_flag.setCheckable(True)
-
-        input_row = QHBoxLayout()
-        input_row.addWidget(self.input)
-        input_row.addWidget(self.send_button)
-        input_row.addWidget(self.context_button)
-        input_row.addWidget(self.pin_button)
-        input_row.addWidget(self.unpin_button)
-        input_row.addWidget(self.active_flag)
+        input_layout.addWidget(self.mic_button)
+        input_layout.addWidget(self.input, 1)
+        input_layout.addWidget(self.shortcut_hint)
+        input_layout.addWidget(self.send_button)
 
         context_box = QGroupBox("Context sources", self)
         context_layout = QVBoxLayout(context_box)
@@ -191,6 +232,7 @@ class AIChatPanel(QWidget):
         top_bar = QHBoxLayout()
         top_bar.addWidget(self.status_label)
         top_bar.addStretch()
+        top_bar.addWidget(self.tools_button)
         top_bar.addWidget(self.advanced_button)
 
         layout = QVBoxLayout(self)
@@ -198,8 +240,9 @@ class AIChatPanel(QWidget):
         layout.setSpacing(6)
         layout.addLayout(top_bar)
         layout.addWidget(self.transcript_list)
-        layout.addLayout(input_row)
         layout.addWidget(context_box)
+        layout.addStretch()
+        layout.addWidget(self.input_bar)
 
     def set_active_document_provider(self, provider) -> None:
         self.active_document_provider = provider
@@ -227,10 +270,15 @@ class AIChatPanel(QWidget):
         enabled = not busy and self.workspace_active
         self.input.setEnabled(enabled)
         self.send_button.setEnabled(enabled)
-        self.context_button.setEnabled(enabled)
-        self.pin_button.setEnabled(enabled)
-        self.unpin_button.setEnabled(enabled)
-        self.active_flag.setEnabled(enabled)
+        self.mic_button.setEnabled(enabled)
+        self.tools_button.setEnabled(enabled)
+        for action in (
+            self.context_action,
+            self.pin_action,
+            self.unpin_action,
+            self.active_flag_action,
+        ):
+            action.setEnabled(enabled)
         status = "AI: Working..." if busy else ("AI: Ready" if self.workspace_active else "AI: Idle (no workspace)")
         self.status_label.setText(status)
 
