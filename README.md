@@ -67,6 +67,8 @@ Ghostline Studio includes a multi-agent AI architecture designed for code reason
 - Embeddings, search, chunking, and memory stores
 - Pluggable AI backends
 - Chat interface integrated with the editor
+- Workspace indexer and context engine that stitch together open buffers, recent semantic updates, and pinned snippets for AI prompts
+- AI chat dock shows the context that will be used for a response, supports pinning active documents, and allows custom instructions per workspace session
 
 ### Plugin Architecture
 - Plugin registry and dynamic loader (`ghostline/plugins`)
@@ -161,6 +163,14 @@ Configurable areas include:
 - Plugin settings
 
 AI features default to a dummy backend that echoes prompts so the AI chat dock is immediately usable. To point Ghostline at your own service, update `~/.config/ghostline/settings.yaml` (or the Settings dialog) with your endpoint, model, and `ai.timeout_seconds` for slower local models such as Ollama. Start local Ollama instances with `ollama serve` before launching Ghostline if you select the Ollama backend.
+
+Context retrieval settings live under the `ai` key:
+
+```yaml
+ai:
+  max_context_chars: 1200  # Controls how much text each snippet contributes
+  context_results: 5       # How many indexed files to pull into each prompt
+```
 
 ---
 

@@ -34,6 +34,7 @@ from ghostline.lang.lsp_manager import LSPManager
 from ghostline.agents.agent_manager import AgentManager
 from ghostline.ai.ai_client import AIClient
 from ghostline.ai.ai_chat_panel import AIChatPanel
+from ghostline.ai.context_engine import ContextEngine
 from ghostline.ai.ai_commands import ai_code_actions, explain_selection, refactor_selection
 from ghostline.ai.analysis_service import AnalysisService
 from ghostline.ai.architecture_assistant import ArchitectureAssistant
@@ -47,6 +48,7 @@ from ghostline.editor.code_editor import CodeEditor
 from ghostline.formatter.formatter_manager import FormatterManager
 from ghostline.runtime.inspector import RuntimeInspector
 from ghostline.indexer.index_manager import IndexManager
+from ghostline.indexer.workspace_indexer import WorkspaceIndexer
 from ghostline.search.global_search import GlobalSearchDialog
 from ghostline.search.symbol_search import SymbolSearcher
 from ghostline.plugins.loader import PluginLoader
@@ -109,11 +111,19 @@ class MainWindow(QMainWindow):
         self.lsp_manager = LSPManager(config, workspace_manager)
         self.command_registry = CommandRegistry()
         self.ai_client = AIClient(config)
+        self.workspace_indexer = WorkspaceIndexer(lambda: self.workspace_manager.current_workspace)
         self.symbols = SymbolSearcher(self.lsp_manager)
         self.index_manager = IndexManager(lambda: self.workspace_manager.current_workspace)
         self.semantic_index = SemanticIndexManager(lambda: self.workspace_manager.current_workspace)
         self.semantic_query = SemanticQueryEngine(self.semantic_index.graph)
         self.workspace_memory = WorkspaceMemory(self.config.workspace_memory_path)
+        self.context_engine = ContextEngine(
+            self.workspace_indexer,
+            self.semantic_index,
+            self.workspace_memory,
+            max_snippet_chars=self.config.get("ai", {}).get("max_context_chars", 800),
+            max_results=self.config.get("ai", {}).get("context_results", 5),
+        )
         self.agent_manager = AgentManager(self.workspace_memory, self.semantic_index.graph)
         self.semantic_index.register_observer(self._on_semantic_graph_changed)
         pipeline_config = Path(__file__).resolve().parent.parent / "workflows" / "pipeline.yaml"
@@ -638,8 +648,9 @@ class MainWindow(QMainWindow):
     def _create_ai_dock(self) -> None:
         dock = QDockWidget("Ghostline AI", self)
         dock.setObjectName("aiDock")
-        panel = AIChatPanel(self.ai_client, self)
-        panel.set_context_provider(lambda: self.get_current_editor().toPlainText() if self.get_current_editor() else "")
+        panel = AIChatPanel(self.ai_client, self.context_engine, self)
+        panel.set_active_document_provider(self._active_document_payload)
+        panel.set_open_documents_provider(self._open_document_payloads)
         dock.setWidget(panel)
         dock.setMinimumWidth(260)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
@@ -799,9 +810,12 @@ class MainWindow(QMainWindow):
             files = [p for p in files if p != path]
             files.insert(0, path)
             self._recent_files_by_workspace[workspace_str] = files[:5]
+        if editor:
+            editor.textChanged.connect(lambda _=None, e=editor: self._sync_editor_to_index(e))
         self.status.update_git(str(workspace) if workspace else None)
         logger.info("Opened file: %s", path)
         self.plugin_loader.emit_event("file.opened", path=path)
+        self.workspace_indexer.rebuild([path])
         self.semantic_index.reindex([path])
         if hasattr(self, "doc_dock"):
             self.doc_dock.set_current_file(Path(path))
@@ -815,6 +829,8 @@ class MainWindow(QMainWindow):
     def open_folder(self, folder: str) -> None:
         self.workspace_manager.open_workspace(folder)
         workspace_path = self.workspace_manager.current_workspace
+        if hasattr(self, "context_engine"):
+            self.context_engine.on_workspace_changed(workspace_path)
         workspace_str = str(workspace_path) if workspace_path else None
         self.status.update_git(workspace_str)
         self.status.show_message(f"Opened workspace: {folder}")
@@ -852,6 +868,23 @@ class MainWindow(QMainWindow):
     def get_current_editor(self) -> CodeEditor | None:
         return self.editor_tabs.current_editor()
 
+    def _active_document_payload(self) -> tuple[str | Path | None, str] | None:
+        editor = self.get_current_editor()
+        if not editor:
+            return None
+        path: str | Path | None = editor.path if editor.path else "untitled"
+        return (path, editor.toPlainText())
+
+    def _open_document_payloads(self) -> list[tuple[str | Path | None, str]]:
+        payloads: list[tuple[str | Path | None, str]] = []
+        for editor in self.editor_tabs.iter_editors():
+            payloads.append((editor.path if editor.path else "untitled", editor.toPlainText()))
+        return payloads
+
+    def _sync_editor_to_index(self, editor: CodeEditor) -> None:
+        if hasattr(self, "workspace_indexer") and editor.path:
+            self.workspace_indexer.update_memory_snapshot(editor.path, editor.toPlainText())
+
     def _with_editor(self, func) -> None:
         editor = self.get_current_editor()
         if editor:
@@ -886,6 +919,8 @@ class MainWindow(QMainWindow):
         self._update_workspace_state()
         if hasattr(self, "terminal"):
             self.terminal.set_workspace(None)
+        if hasattr(self, "context_engine"):
+            self.context_engine.on_workspace_changed(None)
         self._update_central_stack()
 
     def open_file_at(self, path: str, line: int) -> None:
