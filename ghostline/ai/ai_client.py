@@ -1,11 +1,11 @@
 """AI client stubs."""
 from __future__ import annotations
 
-import logging
+import json
 from dataclasses import dataclass
 from typing import Generator
 from urllib import request
-import json
+from urllib.error import URLError
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import get_logger
@@ -37,6 +37,7 @@ class HTTPBackend:
         self.model = ai_cfg.get("model", "")
         self.api_key = ai_cfg.get("api_key")
         self.temperature = ai_cfg.get("temperature", 0.2)
+        self.timeout = ai_cfg.get("timeout_seconds", 30)
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -47,7 +48,7 @@ class HTTPBackend:
     def _post(self, url: str, payload: dict) -> dict:
         data = json.dumps(payload).encode("utf-8")
         req = request.Request(url, data=data, headers=self._headers())
-        with request.urlopen(req, timeout=10) as resp:  # type: ignore[arg-type]
+        with request.urlopen(req, timeout=self.timeout) as resp:  # type: ignore[arg-type]
             return json.loads(resp.read().decode("utf-8"))
 
 
@@ -110,6 +111,25 @@ class AIClient:
 
         try:
             return self.backend.send(prompt, context)
+        except TimeoutError:
+            timeout = getattr(self.backend, "timeout", None) or getattr(self.backend, "timeout_seconds", None)
+            endpoint = getattr(self.backend, "endpoint", "the configured AI endpoint")
+            timeout_hint = f" after {timeout} seconds" if timeout else ""
+            message = (
+                f"AI backend request to {endpoint} timed out"
+                f"{timeout_hint}. Ensure your Ollama server is running (try `ollama serve`)"
+                " and increase `ai.timeout_seconds` in settings if responses are slow."
+            )
+            self.logger.error(message)
+            return AIResponse(text=message)
+        except URLError as exc:
+            endpoint = getattr(self.backend, "endpoint", "the configured AI endpoint")
+            message = (
+                f"AI backend unreachable at {endpoint}."
+                " Start your Ollama server (`ollama serve`) or update the AI endpoint in settings."
+            )
+            self.logger.error("AI backend connection failed: %s", exc)
+            return AIResponse(text=message)
         except Exception as exc:  # noqa: BLE001
             self.logger.exception("AI backend failure: %s", exc)
             self.disabled = True
