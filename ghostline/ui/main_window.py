@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl
+from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QModelIndex
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -340,7 +340,7 @@ class MainWindow(QMainWindow):
             self.project_stack.setCurrentWidget(target)
             if not has_workspace:
                 self.project_model.set_workspace_root(None)
-                self.project_view.setRootIndex(self.project_model.index(str(Path(""))))
+                self.project_view.setRootIndex(QModelIndex())
 
         ai_widget = getattr(self, "ai_dock", None)
         if ai_widget:
@@ -403,7 +403,7 @@ class MainWindow(QMainWindow):
         self.action_toggle_autoflow = QAction("Toggle Autoflow Mode", self)
         self.action_toggle_autoflow.triggered.connect(self._toggle_autoflow_mode)
 
-        self.action_toggle_project = QAction("Project Explorer", self)
+        self.action_toggle_project = QAction("Explorer", self)
         self.action_toggle_project.triggered.connect(self._toggle_project)
 
         self.action_toggle_terminal = QAction("Terminal", self)
@@ -623,16 +623,13 @@ class MainWindow(QMainWindow):
         self.terminal_dock = dock
 
     def _create_project_dock(self) -> None:
-        dock = QDockWidget("Project", self)
+        dock = QDockWidget("Explorer", self)
         dock.setObjectName("projectDock")
         dock.setMinimumWidth(280)
         dock.setMaximumWidth(520)
         self.project_model = ProjectModel(self)
         self.project_view = ProjectView(self)
         self.project_view.setTextElideMode(Qt.ElideRight)
-        self.project_view.setStyleSheet("QTreeView { font-size: 12px; }")
-        self.project_view.setIndentation(18)
-        self.project_view.setColumnWidth(0, 280)
         self.project_view.set_model(self.project_model)
         self.project_placeholder = QLabel("No workspace open. Use File → Open Folder…", self)
         self.project_placeholder.setAlignment(Qt.AlignCenter)
@@ -841,7 +838,9 @@ class MainWindow(QMainWindow):
         self.status.show_message(f"Opened workspace: {folder}")
         index = self.project_model.set_workspace_root(workspace_str)
         if index:
-            self.project_view.setRootIndex(index)
+            self.project_view.setRootIndex(QModelIndex())
+            self.project_view.expand(index)
+            self.project_view.setCurrentIndex(index)
         self._update_workspace_state()
         if hasattr(self, "terminal"):
             self.terminal.set_workspace(workspace_path)
