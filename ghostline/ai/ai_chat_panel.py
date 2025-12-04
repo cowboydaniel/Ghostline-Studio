@@ -150,13 +150,6 @@ class AIChatPanel(QWidget):
                 border: none;
                 background: transparent;
             }
-            QLabel#pinnedBadge {
-                padding: 2px 6px;
-                border-radius: 8px;
-                background: palette(highlight);
-                color: palette(bright-text);
-                font-weight: 600;
-            }
             """
         )
 
@@ -217,10 +210,6 @@ class AIChatPanel(QWidget):
         self.history_button.setToolTip("Chat history")
         self.history_button.clicked.connect(self._show_history_placeholder)
 
-        self.pinned_badge = QLabel("0", self)
-        self.pinned_badge.setObjectName("pinnedBadge")
-        self.pinned_badge.setVisible(False)
-
         self.tools_button = QToolButton(self)
         _style_toolbar_button(self.tools_button)
         self.tools_button.setIcon(
@@ -273,12 +262,11 @@ class AIChatPanel(QWidget):
         top_bar.setObjectName("chatTopBar")
         top_bar.setFrameShape(QFrame.NoFrame)
         top_layout = QHBoxLayout(top_bar)
-        top_layout.setContentsMargins(6, 6, 6, 6)
+        top_layout.setContentsMargins(6, 2, 6, 6)
         top_layout.setSpacing(10)
-        top_layout.addStretch()
-        top_layout.addWidget(self.pinned_badge)
-        top_layout.addWidget(self.status_indicator, 0, Qt.AlignVCenter)
         top_layout.addWidget(self.mode_button)
+        top_layout.addWidget(self.status_indicator, 0, Qt.AlignVCenter)
+        top_layout.addStretch()
         top_layout.addWidget(self.new_chat_button)
         top_layout.addWidget(self.history_button)
         top_layout.addWidget(self.tools_button)
@@ -616,8 +604,8 @@ class AIChatPanel(QWidget):
         self.status_indicator.setToolTip(tooltip)
 
     def _update_pinned_badge(self, count: int) -> None:
-        self.pinned_badge.setText(str(count))
-        self.pinned_badge.setVisible(count > 0)
+        tooltip_suffix = f" ({count} pinned)" if count else ""
+        self.tools_button.setToolTip(f"Context and tools{tooltip_suffix}")
 
     @Slot(str)
     def _on_worker_partial(self, delta: str) -> None:
