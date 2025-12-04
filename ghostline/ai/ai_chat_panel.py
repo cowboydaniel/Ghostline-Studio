@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -178,28 +178,50 @@ class AIChatPanel(QWidget):
         self.status_indicator.setToolTip("AI assistant status")
         self._refresh_status_indicator()
 
+        def _style_toolbar_button(button: QToolButton) -> None:
+            button.setAutoRaise(True)
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setFixedSize(32, 32)
+            button.setIconSize(QSize(18, 18))
+
         self.mode_button = QToolButton(self)
-        self.mode_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.mode_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+        _style_toolbar_button(self.mode_button)
+        self.mode_button.setText("Agents")
+        self.mode_button.setIcon(
+            QIcon.fromTheme(
+                "system-users",
+                self.style().standardIcon(QStyle.SP_FileDialogListView),
+            )
+        )
         self.mode_button.setPopupMode(QToolButton.MenuButtonPopup)
         self.mode_button.setToolTip("Select agent or mode")
         mode_menu = QMenu(self.mode_button)
         mode_menu.addAction("General")
         mode_menu.addAction("Code")
         mode_menu.addSeparator()
-        instructions_action = mode_menu.addAction("Instructions…")
-        instructions_action.triggered.connect(self._open_instructions_dialog)
+        self.instructions_action = mode_menu.addAction("Instructions…")
+        self.instructions_action.triggered.connect(self._open_instructions_dialog)
         self.mode_button.setMenu(mode_menu)
 
         self.new_chat_button = QToolButton(self)
-        self.new_chat_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.new_chat_button.setIcon(self.style().standardIcon(QStyle.SP_FileIcon))
+        _style_toolbar_button(self.new_chat_button)
+        self.new_chat_button.setIcon(
+            QIcon.fromTheme(
+                "list-add",
+                self.style().standardIcon(QStyle.SP_FileDialogNewFolder),
+            )
+        )
         self.new_chat_button.setToolTip("Start a new chat")
         self.new_chat_button.clicked.connect(self._reset_chat)
 
         self.history_button = QToolButton(self)
-        self.history_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.history_button.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
+        _style_toolbar_button(self.history_button)
+        self.history_button.setIcon(
+            QIcon.fromTheme(
+                "document-open-recent",
+                self.style().standardIcon(QStyle.SP_FileDialogInfoView),
+            )
+        )
         self.history_button.setToolTip("Chat history")
         self.history_button.clicked.connect(self._show_history_placeholder)
 
@@ -208,8 +230,13 @@ class AIChatPanel(QWidget):
         self.pinned_badge.setVisible(False)
 
         self.tools_button = QToolButton(self)
-        self.tools_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.tools_button.setIcon(self.style().standardIcon(QStyle.SP_ToolBarHorizontalExtensionButton))
+        _style_toolbar_button(self.tools_button)
+        self.tools_button.setIcon(
+            QIcon.fromTheme(
+                "preferences-system",
+                self.style().standardIcon(QStyle.SP_FileDialogDetailedView),
+            )
+        )
         self.tools_button.setPopupMode(QToolButton.InstantPopup)
         self.tools_button.setToolTip("Context and tools")
         tools_menu = QMenu(self.tools_button)
@@ -231,11 +258,31 @@ class AIChatPanel(QWidget):
         )
         self.tools_button.setMenu(tools_menu)
 
+        self.overflow_button = QToolButton(self)
+        _style_toolbar_button(self.overflow_button)
+        self.overflow_button.setPopupMode(QToolButton.InstantPopup)
+        self.overflow_button.setIcon(
+            QIcon.fromTheme(
+                "open-menu-symbolic",
+                self.style().standardIcon(QStyle.SP_ToolBarHorizontalExtensionButton),
+            )
+        )
+        self.overflow_button.setToolTip("More actions")
+        overflow_menu = QMenu(self.overflow_button)
+        overflow_menu.addAction(self.instructions_action)
+        overflow_menu.addSeparator()
+        overflow_menu.addAction(self.context_action)
+        overflow_menu.addAction(self.pin_action)
+        overflow_menu.addAction(self.unpin_action)
+        overflow_menu.addAction(self.active_flag_action)
+        self.overflow_button.setMenu(overflow_menu)
+
         top_bar = QFrame(self)
         top_bar.setObjectName("chatTopBar")
+        top_bar.setFrameShape(QFrame.NoFrame)
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(6, 6, 6, 6)
-        top_layout.setSpacing(4)
+        top_layout.setSpacing(10)
         top_layout.addStretch()
         top_layout.addWidget(self.pinned_badge)
         top_layout.addWidget(self.status_indicator, 0, Qt.AlignVCenter)
@@ -243,6 +290,7 @@ class AIChatPanel(QWidget):
         top_layout.addWidget(self.new_chat_button)
         top_layout.addWidget(self.history_button)
         top_layout.addWidget(self.tools_button)
+        top_layout.addWidget(self.overflow_button)
 
         self.placeholder = QWidget(self)
         placeholder_layout = QVBoxLayout(self.placeholder)
@@ -369,9 +417,11 @@ class AIChatPanel(QWidget):
             self.new_chat_button,
             self.history_button,
             self.tools_button,
+            self.overflow_button,
         ):
             button.setEnabled(enabled)
         for action in (
+            self.instructions_action,
             self.context_action,
             self.pin_action,
             self.unpin_action,
