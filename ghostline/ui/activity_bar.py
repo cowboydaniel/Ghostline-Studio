@@ -11,49 +11,59 @@ from PySide6.QtWidgets import QButtonGroup, QStyle, QToolButton, QVBoxLayout, QW
 class ActivityBar(QWidget):
     """Thin vertical bar with icon-only buttons for primary tools."""
 
-    toolActivated = Signal(str)
+    explorerRequested = Signal()
+    searchRequested = Signal()
+    gitRequested = Signal()
+    debugRequested = Signal()
+    testsRequested = Signal()
+    tasksRequested = Signal()
+    architectureRequested = Signal()
+    settingsRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ActivityBar")
-        self.setFixedWidth(52)
+        self.setFixedWidth(48)
 
         self._buttons: Dict[str, QToolButton] = {}
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 6, 0, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 8, 0, 8)
+        layout.setSpacing(6)
 
         top_container = QWidget(self)
         top_layout = QVBoxLayout(top_container)
         top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(4)
+        top_layout.setSpacing(6)
 
         bottom_container = QWidget(self)
         bottom_layout = QVBoxLayout(bottom_container)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(4)
+        bottom_layout.setSpacing(6)
 
         style = self.style()
-        icons: list[tuple[str, QStyle.StandardPixmap, str, bool]] = [
-            ("explorer", QStyle.SP_DirIcon, "Explorer", True),
-            ("search", QStyle.SP_FileDialogContentsView, "Search", True),
-            ("scm", QStyle.SP_BrowserReload, "Source Control", True),
-            ("run", QStyle.SP_MediaPlay, "Run / Debug", True),
-            ("map3d", QStyle.SP_DirLinkIcon, "3D Architecture Map", True),
-            ("terminal", QStyle.SP_ComputerIcon, "Terminal", True),
+        buttons = [
+            ("explorer", QStyle.SP_DirIcon, "Explorer", self.explorerRequested),
+            ("search", QStyle.SP_FileDialogContentsView, "Search", self.searchRequested),
+            ("git", QStyle.SP_BrowserReload, "Source Control", self.gitRequested),
+            ("debug", QStyle.SP_MediaPlay, "Run / Debug", self.debugRequested),
+            ("tests", QStyle.SP_DriveHDIcon, "Tests", self.testsRequested),
+            ("tasks", QStyle.SP_FileDialogDetailedView, "Tasks", self.tasksRequested),
+            ("architecture", QStyle.SP_DirLinkIcon, "3D Architecture", self.architectureRequested),
         ]
 
-        for tool_id, icon_id, tooltip, enabled in icons:
-            button = self._create_button(style, icon_id, tooltip, tool_id, enabled)
+        for tool_id, icon_id, tooltip, signal in buttons:
+            button = self._create_button(style, icon_id, tooltip, tool_id, signal)
             top_layout.addWidget(button)
 
         layout.addWidget(top_container)
         layout.addStretch(1)
 
-        settings_button = self._create_button(style, QStyle.SP_FileDialogDetailedView, "Settings", "settings", True)
+        settings_button = self._create_button(
+            style, QStyle.SP_FileDialogInfoView, "Settings", "settings", self.settingsRequested
+        )
         bottom_layout.addWidget(settings_button)
         layout.addWidget(bottom_container)
 
@@ -63,7 +73,7 @@ class ActivityBar(QWidget):
         icon_id: QStyle.StandardPixmap,
         tooltip: str,
         tool_id: str,
-        enabled: bool,
+        emitter: Signal,
     ) -> QToolButton:
         button = QToolButton(self)
         button.setIcon(style.standardIcon(icon_id))
@@ -72,8 +82,7 @@ class ActivityBar(QWidget):
         button.setAutoExclusive(True)
         button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         button.setAutoRaise(True)
-        button.setEnabled(enabled)
-        button.clicked.connect(lambda: self.toolActivated.emit(tool_id))
+        button.clicked.connect(emitter)
 
         self._group.addButton(button)
         self._buttons[tool_id] = button
