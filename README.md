@@ -128,6 +128,7 @@ tests/                    – test suite
 ### Requirements
 - Python 3.10+
 - PySide6
+- Optional: `openai` Python client for the OpenAI backend
 - Optional: an LSP server (`pylsp`, `pyright`, etc.)
 - Optional: an AI backend (local or remote)
 
