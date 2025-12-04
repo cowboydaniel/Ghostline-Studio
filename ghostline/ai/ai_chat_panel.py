@@ -95,6 +95,7 @@ class AIChatPanel(QWidget):
         self.client = client
         self.context_engine = context_engine
         self._active_thread: QThread | None = None
+        self._active_worker: _AIRequestWorker | None = None
         self.workspace_active = False
         self.active_document_provider = None
         self.open_documents_provider = None
@@ -197,17 +198,23 @@ class AIChatPanel(QWidget):
         status = "AI: Working..." if busy else ("AI: Ready" if self.workspace_active else "AI: Idle (no workspace)")
         self.status_label.setText(status)
 
-    def _handle_response(self, thread: QThread, worker: _AIRequestWorker, prompt: str, text: str) -> None:
+    @Slot(str, str)
+    def _on_worker_finished(self, prompt: str, text: str) -> None:
+        if not self._active_thread or not self._active_worker:
+            return
         self._append("AI", text, context=self._last_chunks)
         if self.command_adapter:
             self.command_adapter.handle_response(text)
-        self._cleanup_thread(thread, worker)
+        self._cleanup_thread(self._active_thread, self._active_worker)
         self._set_busy(False)
         self.input.clear()
 
-    def _handle_error(self, thread: QThread, worker: _AIRequestWorker, error: str) -> None:
+    @Slot(str)
+    def _on_worker_failed(self, error: str) -> None:
+        if not self._active_thread or not self._active_worker:
+            return
         self._append("AI", f"Error: {error}")
-        self._cleanup_thread(thread, worker)
+        self._cleanup_thread(self._active_thread, self._active_worker)
         self._set_busy(False)
 
     def _cleanup_thread(self, thread: QThread, worker: _AIRequestWorker) -> None:
@@ -217,6 +224,8 @@ class AIChatPanel(QWidget):
         thread.deleteLater()
         if self._active_thread is thread:
             self._active_thread = None
+        if self._active_worker is worker:
+            self._active_worker = None
 
     def _gather_context(self, prompt: str) -> tuple[str | None, list[ContextChunk]]:
         instructions = self.instructions.toPlainText().strip()
@@ -245,10 +254,11 @@ class AIChatPanel(QWidget):
         worker = _AIRequestWorker(self.client, prompt, context)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.finished.connect(lambda p, text: self._handle_response(thread, worker, p, text))
-        worker.failed.connect(lambda error: self._handle_error(thread, worker, error))
+        worker.finished.connect(self._on_worker_finished, Qt.QueuedConnection)
+        worker.failed.connect(self._on_worker_failed, Qt.QueuedConnection)
         thread.start()
         self._active_thread = thread
+        self._active_worker = worker
 
     def _send(self) -> None:
         prompt = self.input.text().strip()
