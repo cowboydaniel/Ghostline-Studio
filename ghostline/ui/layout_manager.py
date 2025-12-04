@@ -13,6 +13,9 @@ class LayoutManager:
         state = self._saved.get(mode)
         if state:
             self.window.restoreState(state)
+            enforce = getattr(self.window, "_enforce_dock_policies", None)
+            if callable(enforce):
+                enforce()
 
     def save_mode(self, mode: str) -> None:
         self._saved[mode] = self.window.saveState()

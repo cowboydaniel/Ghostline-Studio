@@ -44,7 +44,6 @@ class ActivityBar(QWidget):
             ("run", QStyle.SP_MediaPlay, "Run / Debug", True),
             ("map3d", QStyle.SP_DirLinkIcon, "3D Architecture Map", True),
             ("terminal", QStyle.SP_ComputerIcon, "Terminal", True),
-            ("ai", QStyle.SP_FileDialogInfoView, "Ghostline AI", True),
         ]
 
         for tool_id, icon_id, tooltip, enabled in icons:
