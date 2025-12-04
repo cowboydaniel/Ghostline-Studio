@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QHBoxLayout,
+    QStackedLayout,
     QStackedWidget,
     QLineEdit,
     QMessageBox,
