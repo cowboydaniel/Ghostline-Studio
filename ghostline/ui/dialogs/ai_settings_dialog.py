@@ -5,8 +5,6 @@ import json
 import shutil
 import subprocess
 import threading
-
-from openai import OpenAI
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QComboBox,
@@ -131,6 +129,17 @@ class AISettingsDialog(QDialog):
 
         def worker() -> None:
             try:
+                try:
+                    from openai import OpenAI
+                except ImportError:
+                    QTimer.singleShot(
+                        0,
+                        lambda: self._update_openai_status(
+                            False, "OpenAI client not installed. Install with 'pip install openai'."
+                        ),
+                    )
+                    return
+
                 client = OpenAI(api_key=api_key, base_url=base_url)
                 response = client.models.list()
                 models = []
