@@ -49,8 +49,7 @@ class GhostlineApplication:
         initial_first_run = not bool(self.config.get("first_run_completed", False))
 
         if initial_first_run:
-            wizard = SetupWizardDialog(self.config, self.main_window)
-            result = wizard.exec()
+            result = self.main_window.show_setup_wizard(initial_run=True)
             if result != QDialog.Accepted and not self.config.get("first_run_completed", False):
                 self.logger.info("Setup wizard was cancelled; exiting before showing main window.")
                 self.qt_app.quit()
@@ -67,8 +66,6 @@ class GhostlineApplication:
                     self.main_window.open_folder(str(last_workspace))
 
         self.main_window.show()
-        if first_run_needed:
-            self.main_window.show_setup_wizard()
 
     def run(self) -> int:
         try:

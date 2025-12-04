@@ -955,12 +955,16 @@ class MainWindow(QMainWindow):
         dialog = AISettingsDialog(self.config, self)
         dialog.exec()
 
-    def show_setup_wizard(self) -> None:
+    def show_setup_wizard(self, initial_run: bool = False) -> int:
         wizard = SetupWizardDialog(self.config, self)
-        if wizard.exec():
+        result = wizard.exec()
+        if result == QDialog.Accepted:
             self.first_run = False
             self.status.show_message("Setup complete")
+        elif initial_run and not self.config.get("first_run_completed", False):
+            self.status.show_message("Setup cancelled")
         self._update_workspace_state()
+        return result
 
     def _open_global_search(self) -> None:
         if not hasattr(self, "_global_search_dialog"):
