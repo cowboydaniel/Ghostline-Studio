@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QUrl
 
+from ghostline.ai.model_registry import ModelDescriptor, ModelRegistry
 from ghostline.core.config import ConfigManager
 
 
@@ -44,6 +45,7 @@ class SetupWizardDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Ghostline Studio Setup")
         self.config = config
+        self.model_registry = ModelRegistry(self.config)
         self.selected_backend = "none"
         self.selected_model = ""
         self._openai_valid = False
@@ -126,10 +128,19 @@ class SetupWizardDialog(QDialog):
         self.openai_key.setPlaceholderText("sk-...")
         self.openai_key.textChanged.connect(lambda _: self._update_next_enabled())
         self.openai_model = QComboBox(openai_box)
-        self.openai_model.addItems(["gpt-4o-mini", "gpt-4o", "o3-mini"])
-        default_model = self.config.get("ai", {}).get("model")
-        if default_model:
-            self.openai_model.setCurrentText(default_model)
+        openai_models = self.model_registry.openai_models()
+        for model in openai_models:
+            self.openai_model.addItem(model.label, userData=model.id)
+        default_model = self.model_registry.last_used_model()
+        default_id = None
+        if default_model and default_model.provider == "openai":
+            default_id = default_model.id
+        if not default_id:
+            default_id = self.config.get("ai", {}).get("model")
+        if default_id:
+            idx = self.openai_model.findData(default_id)
+            if idx != -1:
+                self.openai_model.setCurrentIndex(idx)
         self.openai_endpoint = QLineEdit(openai_box)
         self.openai_endpoint.setText(self.config.get("ai", {}).get("openai_endpoint", "https://api.openai.com"))
         openai_form.addRow("API Key", self.openai_key)
@@ -431,13 +442,31 @@ class SetupWizardDialog(QDialog):
         ai_cfg = self.config.settings.setdefault("ai", {})
         ai_cfg["backend"] = self.selected_backend
         ai_cfg["enabled"] = self.selected_backend != "none"
+        providers = ai_cfg.setdefault("providers", {})
+        openai_cfg = providers.setdefault("openai", {})
+        ollama_cfg = providers.setdefault("ollama", {})
         if self.selected_backend == "openai":
+            selected_model = self.openai_model.currentData() or self.openai_model.currentText()
             ai_cfg["api_key"] = self.openai_key.text().strip()
-            ai_cfg["model"] = self.openai_model.currentText()
-            ai_cfg["openai_endpoint"] = self.openai_endpoint.text().strip() or "https://api.openai.com"
+            ai_cfg["model"] = selected_model
+            openai_cfg["api_key"] = self.openai_key.text().strip()
+            openai_cfg["base_url"] = self.openai_endpoint.text().strip() or "https://api.openai.com"
+            openai_cfg.setdefault("available_models", [model.to_dict() for model in self.model_registry.openai_models()])
+            if "enabled_models" not in openai_cfg:
+                openai_cfg["enabled_models"] = [model.id for model in self.model_registry.enabled_openai_models()]
+            ai_cfg["openai_endpoint"] = openai_cfg["base_url"]
+            ai_cfg["api_key"] = openai_cfg["api_key"]
+            ai_cfg["last_used_model"] = ModelDescriptor(
+                selected_model, self.openai_model.currentText(), "openai", "code", True
+            ).to_dict()
         elif self.selected_backend == "ollama":
-            ai_cfg["model"] = self.ollama_model_combo.currentText() or self.config.get("ai", {}).get("default_ollama_model")
+            selected_ollama = self.ollama_model_combo.currentText() or self.config.get("ai", {}).get("default_ollama_model")
+            ai_cfg["model"] = selected_ollama
             ai_cfg["backend"] = "ollama"
+            ollama_cfg.setdefault("host", ai_cfg.get("endpoint", "http://localhost:11434"))
+            ai_cfg["last_used_model"] = ModelDescriptor(
+                selected_ollama, selected_ollama or "Ollama", "ollama", "code", True
+            ).to_dict()
         else:
             ai_cfg["model"] = ""
         self.config.settings["first_run_completed"] = True

@@ -7,6 +7,7 @@ import subprocess
 import threading
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.core.config import ConfigManager
+from ghostline.ai.model_registry import ModelDescriptor, ModelRegistry
 
 
 class AISettingsDialog(QDialog):
@@ -33,7 +35,10 @@ class AISettingsDialog(QDialog):
     def __init__(self, config: ConfigManager, parent=None) -> None:
         super().__init__(parent)
         self.config = config
+        self.registry = ModelRegistry(config)
         self.setWindowTitle("AI Settings")
+        self._openai_models: list[ModelDescriptor] = self.registry.openai_models()
+        self._model_checkboxes: dict[str, QCheckBox] = {}
 
         layout = QVBoxLayout(self)
         self.backend_combo = QComboBox(self)
@@ -51,13 +56,11 @@ class AISettingsDialog(QDialog):
         self.openai_group = QGroupBox("OpenAI (Cloud)", self)
         openai_form = QFormLayout(self.openai_group)
         self.openai_key = QLineEdit(self.openai_group)
-        self.openai_key.setText(self.config.get("ai", {}).get("api_key", ""))
+        self.openai_key.setText(self.registry._openai_settings().get("api_key", ""))
         self.openai_model = QComboBox(self.openai_group)
-        saved_model = self.config.get("ai", {}).get("model", "gpt-4o-mini")
-        self.openai_model.addItem(saved_model)
-        self.openai_model.setCurrentText(saved_model)
+        self._populate_openai_model_combo()
         self.openai_endpoint = QLineEdit(self.openai_group)
-        self.openai_endpoint.setText(self.config.get("ai", {}).get("openai_endpoint", "https://api.openai.com"))
+        self.openai_endpoint.setText(self.registry._openai_settings().get("base_url", "https://api.openai.com"))
         self.openai_status = QLabel("", self.openai_group)
         self.test_openai_btn = QPushButton("Test connection", self.openai_group)
         self.test_openai_btn.clicked.connect(self._test_openai)
@@ -66,6 +69,21 @@ class AISettingsDialog(QDialog):
         openai_form.addRow("Model", self.openai_model)
         openai_form.addRow("Endpoint", self.openai_endpoint)
         openai_form.addRow(self.test_openai_btn, self.openai_status)
+
+        self.openai_models_box = QGroupBox("OpenAI coding models", self.openai_group)
+        self.models_layout = QVBoxLayout(self.openai_models_box)
+        helper = QLabel(
+            "Only enabled models appear in the AI dock selector. OpenAI models require a valid API key.",
+            self.openai_models_box,
+        )
+        helper.setWordWrap(True)
+        helper.setStyleSheet("color: palette(dark);")
+        self.models_layout.addWidget(helper)
+        self.model_rows_layout = QVBoxLayout()
+        self.models_layout.addLayout(self.model_rows_layout)
+        self._rebuild_model_rows()
+
+        openai_form.addRow(self.openai_models_box)
 
         # Ollama section
         self.ollama_group = QGroupBox("Local Ollama", self)
@@ -121,6 +139,81 @@ class AISettingsDialog(QDialog):
     def _maybe_load_openai_models(self) -> None:
         if self.openai_key.text().strip():
             self._load_openai_models()
+
+    def _populate_openai_model_combo(self) -> None:
+        current_model = self.registry.last_used_model()
+        current_id = None
+        if current_model and current_model.provider == "openai":
+            current_id = current_model.id
+        if not current_id:
+            current_id = self.config.get("ai", {}).get("model")
+        if not current_id and self._openai_models:
+            enabled = [model.id for model in self._openai_models if model.enabled]
+            current_id = enabled[0] if enabled else self._openai_models[0].id
+
+        self.openai_model.clear()
+        for model in self._openai_models:
+            self.openai_model.addItem(model.label, userData=model.id)
+
+        if current_id:
+            index = self.openai_model.findData(current_id)
+            if index != -1:
+                self.openai_model.setCurrentIndex(index)
+        elif self._openai_models:
+            self.openai_model.setCurrentIndex(0)
+
+    def _refresh_checkbox_states(self) -> None:
+        for model in self._openai_models:
+            checkbox = self._model_checkboxes.get(model.id)
+            if checkbox:
+                checkbox.setChecked(model.enabled)
+
+    def _rebuild_model_rows(self) -> None:
+        while self.model_rows_layout.count():
+            item = self.model_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    sub_item = item.layout().takeAt(0)
+                    if sub_item.widget():
+                        sub_item.widget().deleteLater()
+        self._model_checkboxes.clear()
+        for descriptor in self._openai_models:
+            row = QHBoxLayout()
+            checkbox = QCheckBox(descriptor.label, self.openai_models_box)
+            checkbox.setChecked(descriptor.enabled)
+            checkbox.stateChanged.connect(lambda _state, m=descriptor: self._toggle_model(m))
+            self._model_checkboxes[descriptor.id] = checkbox
+            row.addWidget(checkbox)
+            badge = QLabel(descriptor.provider.capitalize(), self.openai_models_box)
+            badge.setStyleSheet(
+                "padding: 2px 6px; border-radius: 8px; background: palette(midlight); font-size: 11px;"
+            )
+            row.addWidget(badge)
+            if descriptor.kind:
+                kind_badge = QLabel(descriptor.kind.title(), self.openai_models_box)
+                kind_badge.setStyleSheet(
+                    "padding: 2px 6px; border-radius: 8px; background: palette(mid); font-size: 11px;"
+                )
+                row.addWidget(kind_badge)
+            desc_label = QLabel(descriptor.description or "", self.openai_models_box)
+            desc_label.setStyleSheet("color: palette(dark);")
+            row.addWidget(desc_label, 1)
+            self.model_rows_layout.addLayout(row)
+
+    def _toggle_model(self, model: ModelDescriptor) -> None:
+        checkbox = self._model_checkboxes.get(model.id)
+        if checkbox:
+            model.enabled = checkbox.isChecked()
+        enabled_ids = [
+            descriptor.id
+            for descriptor in self._openai_models
+            if self._model_checkboxes.get(descriptor.id) and self._model_checkboxes[descriptor.id].isChecked()
+        ]
+        for descriptor in self._openai_models:
+            descriptor.enabled = descriptor.id in enabled_ids
+        self.registry.set_enabled_openai_models(enabled_ids)
 
     def _normalized_openai_endpoint(self) -> str:
         return self.openai_endpoint.text().strip().rstrip("/") or "https://api.openai.com"
@@ -183,13 +276,13 @@ class AISettingsDialog(QDialog):
         threading.Thread(target=worker, daemon=True).start()
 
     def _update_openai_models(self, models: list[str]) -> None:
-        current = self.config.get("ai", {}).get("model") or self.openai_model.currentText()
-        self.openai_model.clear()
-        self.openai_model.addItems(models)
-        if current and current in models:
-            self.openai_model.setCurrentText(current)
-        elif models:
-            self.openai_model.setCurrentText(models[0])
+        descriptors = [ModelDescriptor(model_id, model_id, "openai", "code", model_id in models) for model_id in models]
+        self._openai_models = descriptors
+        self.registry._openai_settings()["available_models"] = [m.to_dict() for m in descriptors]
+        self.registry.set_enabled_openai_models([m.id for m in descriptors])
+        self._rebuild_model_rows()
+        self._populate_openai_model_combo()
+        self._refresh_checkbox_states()
         self.openai_model.setEnabled(True)
 
     def _update_openai_status(self, ok: bool, message: str) -> None:
@@ -266,10 +359,26 @@ class AISettingsDialog(QDialog):
         ai_cfg["backend"] = backend
         ai_cfg["enabled"] = backend != "none"
         ai_cfg["api_key"] = self.openai_key.text().strip()
-        ai_cfg["model"] = (
-            self.openai_model.currentText() if backend == "openai" else self.ollama_models.currentText()
-        )
-        ai_cfg["openai_endpoint"] = self.openai_endpoint.text().strip() or "https://api.openai.com"
+        providers = ai_cfg.setdefault("providers", {})
+        openai_cfg = providers.setdefault("openai", {})
+        enabled_ids = [mid for mid, cb in self._model_checkboxes.items() if cb.isChecked()]
+        openai_cfg["api_key"] = self.openai_key.text().strip()
+        openai_cfg["base_url"] = self._normalized_openai_endpoint()
+        openai_cfg["available_models"] = [model.to_dict() for model in self._openai_models]
+        openai_cfg["enabled_models"] = enabled_ids
+        ai_cfg["openai_endpoint"] = openai_cfg["base_url"]
+        ai_cfg["api_key"] = openai_cfg["api_key"]
+        selected_openai = self.openai_model.currentData() or self.openai_model.currentText()
+        selected_ollama = self.ollama_models.currentText()
+        ai_cfg["model"] = selected_openai if backend == "openai" else selected_ollama
+        if selected_openai and backend == "openai":
+            ai_cfg["last_used_model"] = ModelDescriptor(
+                selected_openai, self.openai_model.currentText(), "openai", "code", True
+            ).to_dict()
+        elif selected_ollama and backend == "ollama":
+            ai_cfg["last_used_model"] = ModelDescriptor(
+                selected_ollama, selected_ollama, "ollama", "code", True
+            ).to_dict()
         self.config.save()
         self.accept()
 

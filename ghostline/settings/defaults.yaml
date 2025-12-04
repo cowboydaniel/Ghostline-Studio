@@ -24,6 +24,51 @@ ai:
   secondary_backend: null
   max_context_chars: 1200
   context_results: 5
+  providers:
+    openai:
+      api_key: ""
+      base_url: "https://api.openai.com"
+      available_models:
+        - id: "gpt-5.1"
+          label: "GPT-5.1"
+          provider: "openai"
+          kind: "code"
+          enabled: true
+          description: "Best for coding and agentic tasks"
+        - id: "gpt-5.1-mini"
+          label: "GPT-5.1 mini"
+          provider: "openai"
+          kind: "code"
+          enabled: true
+          description: "Fast, lower cost"
+        - id: "gpt-4.1"
+          label: "GPT-4.1"
+          provider: "openai"
+          kind: "code"
+          enabled: true
+          description: "Balanced coding model"
+        - id: "gpt-4.1-mini"
+          label: "GPT-4.1 mini"
+          provider: "openai"
+          kind: "code"
+          enabled: true
+          description: "Speed focused"
+        - id: "gpt-4.1-nano"
+          label: "GPT-4.1 nano"
+          provider: "openai"
+          kind: "code"
+          enabled: true
+          description: "Lightweight tasks"
+      enabled_models:
+        - "gpt-5.1"
+        - "gpt-5.1-mini"
+        - "gpt-4.1"
+        - "gpt-4.1-mini"
+        - "gpt-4.1-nano"
+    ollama:
+      host: "http://localhost:11434"
+      enabled: true
+      last_seen_models: []
 window:
   maximized: true
   geometry: null
