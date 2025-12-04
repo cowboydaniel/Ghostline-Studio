@@ -19,6 +19,7 @@ ai:
   background_analysis: true
   endpoint: "http://localhost:11434"
   default_ollama_model: "codellama:7b-code"
+  timeout_seconds: 30
   secondary_backend: null
 window:
   maximized: true
