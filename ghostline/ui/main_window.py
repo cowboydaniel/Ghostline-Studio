@@ -532,6 +532,41 @@ class MainWindow(QMainWindow):
             self.resizeDocks([self.project_dock, self.ai_dock], [320, 720], Qt.Horizontal)
         if hasattr(self, "terminal_dock") and hasattr(self, "diagnostics_dock"):
             self.resizeDocks([self.terminal_dock, self.diagnostics_dock], [280, 220], Qt.Vertical)
+        self._enforce_dock_policies()
+
+    def _enforce_dock_policies(self) -> None:
+        left_dock_names = [
+            "project_dock",
+            "terminal_dock",
+            "diagnostics_dock",
+            "debugger_dock",
+            "task_dock",
+            "test_dock",
+            "architecture_dock",
+            "build_dock",
+            "doc_dock",
+            "git_dock",
+            "coverage_dock",
+            "collab_dock",
+            "agent_console_dock",
+            "pipeline_dock",
+            "runtime_dock",
+        ]
+        for name in left_dock_names:
+            dock = getattr(self, name, None)
+            if not dock:
+                continue
+            dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+            if self.dockWidgetArea(dock) == Qt.RightDockWidgetArea:
+                self.removeDockWidget(dock)
+                self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+
+        ai_dock = getattr(self, "ai_dock", None)
+        if ai_dock:
+            ai_dock.setAllowedAreas(Qt.RightDockWidgetArea)
+            if self.dockWidgetArea(ai_dock) != Qt.RightDockWidgetArea:
+                self.removeDockWidget(ai_dock)
+                self.addDockWidget(Qt.RightDockWidgetArea, ai_dock)
 
     def apply_initial_window_state(self, force_maximize: bool = False) -> None:
         window_cfg = self.config.get("window", {}) if self.config else {}
@@ -579,6 +614,18 @@ class MainWindow(QMainWindow):
         if hasattr(self, "debugger_panel"):
             config_exists = bool(workspace and (Path(workspace) / ".vscode" / "launch.json").exists())
             self.debugger_panel.set_configured(config_exists)
+
+    def _place_left_dock(self, dock: QDockWidget, area: Qt.DockWidgetArea = Qt.LeftDockWidgetArea) -> None:
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self.addDockWidget(area, dock)
+
+    def _place_bottom_dock(self, dock: QDockWidget) -> None:
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+
+    def _place_ai_dock(self, dock: QDockWidget) -> None:
+        dock.setAllowedAreas(Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
 
     def _register_dock_action(self, dock: QDockWidget) -> None:
         if hasattr(self, "view_menu"):
@@ -640,8 +687,8 @@ class MainWindow(QMainWindow):
         self.action_ai_code_actions = QAction("AI Code Actions...", self)
         self.action_ai_code_actions.triggered.connect(lambda: self._run_ai_command(ai_code_actions))
 
-        self.action_ask_ai = QAction("Ask Ghostline AI…", self)
-        self.action_ask_ai.triggered.connect(self._focus_ai_dock)
+        self.action_ask_ai = QAction("Toggle AI Panel", self)
+        self.action_ask_ai.triggered.connect(self.toggle_ai_dock)
 
         self.action_open_plugins = QAction("Plugins", self)
         self.action_open_plugins.triggered.connect(self._open_plugin_manager)
@@ -808,8 +855,8 @@ class MainWindow(QMainWindow):
         terminal = TerminalWidget(self.workspace_manager)
         dock.setWidget(terminal)
         dock.setMinimumHeight(140)
-        dock.setAllowedAreas(Qt.BottomDockWidgetArea)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.terminal = terminal
         self.terminal_dock = dock
@@ -833,8 +880,8 @@ class MainWindow(QMainWindow):
         self.project_stack.addWidget(self.project_placeholder)
         self.project_stack.addWidget(self.project_view)
         dock.setWidget(container)
-        dock.setAllowedAreas(Qt.LeftDockWidgetArea)
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.project_dock = dock
         self._register_activity_mapping("explorer", dock)
@@ -849,10 +896,9 @@ class MainWindow(QMainWindow):
         panel.set_insert_handler(lambda code: self._with_editor(lambda e: e.insertPlainText(code)))
         dock.setWidget(panel)
         dock.setMinimumWidth(260)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self._place_ai_dock(dock)
         self._register_dock_action(dock)
         self.ai_dock = dock
-        self._register_activity_mapping("ai", dock)
 
     def _create_diagnostics_dock(self) -> None:
         dock = QDockWidget("Diagnostics", self)
@@ -871,7 +917,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(table)
         dock.setWidget(container)
         dock.setMinimumHeight(140)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_bottom_dock(dock)
         self._register_dock_action(dock)
         self.diagnostics_view = table
         self.diagnostics_dock = dock
@@ -881,7 +928,8 @@ class MainWindow(QMainWindow):
         dock.setObjectName("debuggerDock")
         panel = DebuggerPanel(self.debugger, self)
         dock.setWidget(panel)
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.debugger_panel = panel
         self.debugger_dock = dock
@@ -893,7 +941,8 @@ class MainWindow(QMainWindow):
         panel = TaskPanel(self.task_manager, self)
         dock.setWidget(panel)
         dock.setMinimumHeight(140)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_bottom_dock(dock)
         self._register_dock_action(dock)
         self.task_dock = dock
 
@@ -903,7 +952,8 @@ class MainWindow(QMainWindow):
         panel = TestPanel(self.test_manager, self.get_current_editor, self)
         dock.setWidget(panel)
         dock.setMinimumHeight(140)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_bottom_dock(dock)
         self._register_dock_action(dock)
         self.test_dock = dock
 
@@ -911,7 +961,8 @@ class MainWindow(QMainWindow):
         dock = ArchitectureDock(self)
         dock.setObjectName("architectureDock")
         dock.open_file_requested.connect(self._open_graph_location)
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.architecture_dock = dock
         self._register_activity_mapping("map3d", dock)
@@ -920,14 +971,16 @@ class MainWindow(QMainWindow):
     def _create_build_dock(self) -> None:
         dock = BuildPanel(self.build_manager, self)
         dock.setObjectName("buildDock")
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_bottom_dock(dock)
         self._register_dock_action(dock)
         self.build_dock = dock
 
     def _create_doc_dock(self) -> None:
         dock = DocPanel(self.doc_generator, self)
         dock.setObjectName("docDock")
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.doc_dock = dock
 
@@ -944,7 +997,8 @@ class MainWindow(QMainWindow):
         panel = GitPanel(self.git_service, self)
         dock.setWidget(panel)
         dock.setMinimumWidth(240)
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.git_panel = panel
         self.git_dock = dock
@@ -954,35 +1008,40 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("Coverage", self)
         dock.setObjectName("coverageDock")
         dock.setWidget(CoveragePanel(self))
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.coverage_dock = dock
 
     def _create_collaboration_dock(self) -> None:
         dock = CollabPanel(self.crdt_engine, self.collab_transport, self)
         dock.setObjectName("collabDock")
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.collab_dock = dock
 
     def _create_agent_console_dock(self) -> None:
         dock = AgentConsole(self.agent_manager, self)
         dock.setObjectName("agentConsoleDock")
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.agent_console_dock = dock
 
     def _create_pipeline_dock(self) -> None:
         dock = PipelinePanel(self.pipeline_manager, self)
         dock.setObjectName("pipelineDock")
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.pipeline_dock = dock
 
     def _create_runtime_dock(self) -> None:
         dock = RuntimePanel(self.runtime_inspector, self)
         dock.setObjectName("runtimeDock")
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.runtime_dock = dock
 
@@ -1102,7 +1161,8 @@ class MainWindow(QMainWindow):
 
     def register_dock(self, identifier: str, widget: QDockWidget) -> None:
         widget.setObjectName(identifier)
-        self.addDockWidget(Qt.LeftDockWidgetArea, widget)
+        widget.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        self._place_left_dock(widget)
         self._register_dock_action(widget)
 
     def execute_command(self, command_id: str, **kwargs) -> None:
@@ -1185,7 +1245,6 @@ class MainWindow(QMainWindow):
             "run": self._focus_run,
             "map3d": self._focus_architecture,
             "terminal": self._focus_terminal,
-            "ai": self._focus_ai,
             "settings": self._focus_settings,
         }
         handler = handlers.get(tool_id)
@@ -1231,9 +1290,6 @@ class MainWindow(QMainWindow):
 
     def _focus_terminal(self) -> None:
         self._activate_dock(getattr(self, "terminal_dock", None), "terminal")
-
-    def _focus_ai(self) -> None:
-        self._activate_dock(getattr(self, "ai_dock", None), "ai")
 
     def _focus_settings(self) -> None:
         if hasattr(self, "activity_bar"):
@@ -1367,6 +1423,15 @@ class MainWindow(QMainWindow):
         editor = self.get_current_editor()
         if editor:
             func(editor, self.ai_client)
+
+    def toggle_ai_dock(self) -> None:
+        dock = getattr(self, "ai_dock", None)
+        if not dock:
+            return
+        visible = dock.isVisible()
+        dock.setVisible(not visible)
+        if not visible:
+            dock.raise_()
 
     def _focus_ai_dock(self) -> None:
         dock = getattr(self, "ai_dock", None)
