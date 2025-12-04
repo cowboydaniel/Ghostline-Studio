@@ -1074,10 +1074,13 @@ class AIChatPanel(QWidget):
     def _set_busy(self, busy: bool) -> None:
         enabled = not busy and self.workspace_active
         self.input.setEnabled(enabled)
-        self.send_button.setEnabled(enabled)
-        self.mic_button.setEnabled(enabled)
         for button in (
-            self.mode_button,
+            self.send_button,
+            self.mic_button,
+            self.plus_button,
+            self.mode_chip,
+            self.model_chip,
+            self.agents_button,
             self.new_chat_button,
             self.history_button,
             self.tools_button,
