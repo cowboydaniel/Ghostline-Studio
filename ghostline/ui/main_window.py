@@ -323,6 +323,9 @@ class MainWindow(QMainWindow):
         self.git_service = GitService(self.workspace_manager.current_workspace)
         self.first_run = not bool(self.config.get("first_run_completed", False))
         self._recent_files_by_workspace: dict[str, list[str]] = {}
+        self.left_docks: list[QDockWidget] = []
+        self.bottom_docks: list[QDockWidget] = []
+        self.right_docks: list[QDockWidget] = []
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -422,6 +425,8 @@ class MainWindow(QMainWindow):
         self.plugin_loader.load_all()
         self.task_manager.load_workspace_tasks()
         self._apply_initial_layout()
+        self._collect_dock_regions()
+        self._connect_dock_toggles()
         self._update_workspace_state()
         self._show_welcome_if_empty()
 
@@ -450,6 +455,35 @@ class MainWindow(QMainWindow):
 
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         self.global_search_toolbar = toolbar
+
+        self.dock_toggle_bar = QToolBar("Dock Visibility", self)
+        self.dock_toggle_bar.setMovable(False)
+        self.dock_toggle_bar.setFloatable(False)
+        self.dock_toggle_bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+
+        toggle_spacer = QWidget(self.dock_toggle_bar)
+        toggle_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.dock_toggle_bar.addWidget(toggle_spacer)
+
+        def build_toggle(icon: QStyle.StandardPixmap, tooltip: str) -> QAction:
+            action = QAction(self.style().standardIcon(icon), "", self)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.setToolTip(tooltip)
+            button = QToolButton(self.dock_toggle_bar)
+            button.setDefaultAction(action)
+            button.setAutoRaise(True)
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            widget_action = QWidgetAction(self.dock_toggle_bar)
+            widget_action.setDefaultWidget(button)
+            self.dock_toggle_bar.addAction(widget_action)
+            return action
+
+        self.toggle_left_region = build_toggle(QStyle.SP_ArrowLeft, "Toggle left docks")
+        self.toggle_bottom_region = build_toggle(QStyle.SP_ArrowDown, "Toggle bottom docks")
+        self.toggle_right_region = build_toggle(QStyle.SP_ArrowRight, "Toggle right docks")
+
+        self.addToolBar(Qt.TopToolBarArea, self.dock_toggle_bar)
 
     def _install_title_bar(self) -> None:
         container = QWidget(self)
@@ -607,6 +641,19 @@ class MainWindow(QMainWindow):
             config_exists = bool(workspace and (Path(workspace) / ".vscode" / "launch.json").exists())
             self.debugger_panel.set_configured(config_exists)
 
+    def _collect_dock_regions(self) -> None:
+        self.left_docks = []
+        self.bottom_docks = []
+        self.right_docks = []
+        for dock in self.findChildren(QDockWidget):
+            area = self.dockWidgetArea(dock)
+            if area == Qt.LeftDockWidgetArea:
+                self.left_docks.append(dock)
+            elif area == Qt.BottomDockWidgetArea:
+                self.bottom_docks.append(dock)
+            elif area == Qt.RightDockWidgetArea:
+                self.right_docks.append(dock)
+
     def _place_left_dock(self, dock: QDockWidget, area: Qt.DockWidgetArea = Qt.LeftDockWidgetArea) -> None:
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
         self.addDockWidget(area, dock)
@@ -624,6 +671,15 @@ class MainWindow(QMainWindow):
             if dock.objectName() in {"projectDock", "terminalDock", "architectureDock"}:
                 return
             self.view_menu.addAction(dock.toggleViewAction())
+
+    def _connect_dock_toggles(self) -> None:
+        self.toggle_left_region.toggled.connect(lambda visible: self._toggle_region(self.left_docks, visible))
+        self.toggle_bottom_region.toggled.connect(lambda visible: self._toggle_region(self.bottom_docks, visible))
+        self.toggle_right_region.toggled.connect(lambda visible: self._toggle_region(self.right_docks, visible))
+
+    def _toggle_region(self, docks: list[QDockWidget], visible: bool) -> None:
+        for dock in docks:
+            dock.setVisible(visible)
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
