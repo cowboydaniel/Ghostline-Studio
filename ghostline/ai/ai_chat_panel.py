@@ -323,20 +323,20 @@ class AIChatPanel(QWidget):
         self.input_bar.setStyleSheet(
             """
             #chatInputBar {
-                border: none;
-                border-radius: 24px;
+                border: 1px solid palette(mid);
+                border-radius: 28px;
                 background: palette(base);
-                padding: 6px;
+                padding: 4px;
             }
             """
         )
         shadow = QGraphicsDropShadowEffect(self.input_bar)
-        shadow.setBlurRadius(22)
-        shadow.setOffset(0, 6)
-        shadow.setColor(self.palette().color(self.backgroundRole()).darker(115))
+        shadow.setBlurRadius(18)
+        shadow.setOffset(0, 4)
+        shadow.setColor(self.palette().color(self.backgroundRole()).darker(130))
         self.input_bar.setGraphicsEffect(shadow)
         input_layout = QHBoxLayout(self.input_bar)
-        input_layout.setContentsMargins(16, 10, 16, 10)
+        input_layout.setContentsMargins(18, 10, 18, 10)
         input_layout.setSpacing(12)
 
         self.mic_button = QToolButton(self.input_bar)
@@ -353,12 +353,45 @@ class AIChatPanel(QWidget):
         input_layout.addWidget(self.input, 1)
         input_layout.addWidget(self.send_button)
 
+        chips_row = QWidget(self)
+        chips_row.setObjectName("chatChipRow")
+        chips_row.setStyleSheet(
+            """
+            #chatChipRow {
+                padding-left: 6px;
+            }
+            QLabel#chatChip {
+                background: palette(alternate-base);
+                border: 1px solid palette(midlight);
+                border-radius: 10px;
+                padding: 4px 10px;
+                font-size: 11px;
+            }
+            """
+        )
+        chips_layout = QHBoxLayout(chips_row)
+        chips_layout.setContentsMargins(4, 0, 4, 4)
+        chips_layout.setSpacing(6)
+
+        code_chip = QLabel("Code", chips_row)
+        code_chip.setObjectName("chatChip")
+        chips_layout.addWidget(code_chip, 0, Qt.AlignLeft)
+        chips_layout.addStretch()
+
+        input_container = QFrame(self)
+        input_container.setFrameShape(QFrame.NoFrame)
+        input_container_layout = QVBoxLayout(input_container)
+        input_container_layout.setContentsMargins(6, 0, 6, 0)
+        input_container_layout.setSpacing(6)
+        input_container_layout.addWidget(chips_row)
+        input_container_layout.addWidget(self.input_bar)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 24)
+        layout.setContentsMargins(10, 10, 10, 40)
         layout.setSpacing(8)
         layout.addWidget(top_bar)
         layout.addWidget(transcript_container, 1)
-        layout.addWidget(self.input_bar)
+        layout.addWidget(input_container)
 
     def set_active_document_provider(self, provider) -> None:
         self.active_document_provider = provider
