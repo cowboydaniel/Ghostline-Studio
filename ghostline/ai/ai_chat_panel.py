@@ -7,14 +7,18 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
+    QDialogButtonBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -125,14 +129,22 @@ class AIChatPanel(QWidget):
         self.insert_handler = None
         self._last_chunks: list[ContextChunk] = []
 
-        self.status_label = QLabel("AI: Idle (no workspace)", self)
-        self.status_label.setAlignment(Qt.AlignLeft)
-
-        self.transcript_list = QListWidget(self)
-
         self.instructions = QTextEdit(self)
         self.instructions.setPlaceholderText("Optional: add custom instructions, tone, or constraints")
         self.instructions.setMaximumHeight(80)
+
+        self.status_label = QLabel("AI: Idle (no workspace)", self)
+        self.status_label.setAlignment(Qt.AlignLeft)
+
+        self.advanced_button = QToolButton(self)
+        self.advanced_button.setText("Advanced")
+        self.advanced_button.setPopupMode(QToolButton.MenuButtonPopup)
+        advanced_menu = QMenu(self.advanced_button)
+        instructions_action = advanced_menu.addAction("Settings")
+        instructions_action.triggered.connect(self._open_instructions_dialog)
+        self.advanced_button.setMenu(advanced_menu)
+
+        self.transcript_list = QListWidget(self)
 
         self.context_preview = QTextEdit(self)
         self.context_preview.setReadOnly(True)
@@ -176,16 +188,15 @@ class AIChatPanel(QWidget):
         context_layout.addWidget(QLabel("Preview", context_box))
         context_layout.addWidget(self.context_preview)
 
-        instructions_box = QGroupBox("Instructions", self)
-        instructions_layout = QVBoxLayout(instructions_box)
-        instructions_layout.setContentsMargins(6, 6, 6, 6)
-        instructions_layout.addWidget(self.instructions)
+        top_bar = QHBoxLayout()
+        top_bar.addWidget(self.status_label)
+        top_bar.addStretch()
+        top_bar.addWidget(self.advanced_button)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
-        layout.addWidget(self.status_label)
-        layout.addWidget(instructions_box)
+        layout.addLayout(top_bar)
         layout.addWidget(self.transcript_list)
         layout.addLayout(input_row)
         layout.addWidget(context_box)
@@ -314,6 +325,25 @@ class AIChatPanel(QWidget):
         self._last_chunks = chunks
         if context is not None:
             self.context_preview.setPlainText(context)
+
+    def _open_instructions_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("AI Instructions")
+        layout = QVBoxLayout(dialog)
+        helper = QLabel("Optional: add custom instructions, tone, or constraints", dialog)
+        helper.setWordWrap(True)
+        editor = QTextEdit(dialog)
+        editor.setPlainText(self.instructions.toPlainText())
+        editor.setPlaceholderText(self.instructions.placeholderText())
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel, dialog)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(helper)
+        layout.addWidget(editor)
+        layout.addWidget(buttons)
+
+        if dialog.exec():
+            self.instructions.setPlainText(editor.toPlainText())
 
     def _pin_active_document(self) -> None:
         if not self.context_engine or not self.active_document_provider:
