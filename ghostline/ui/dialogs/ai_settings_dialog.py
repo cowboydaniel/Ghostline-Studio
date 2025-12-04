@@ -5,7 +5,7 @@ import json
 import shutil
 import subprocess
 import threading
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -26,6 +26,9 @@ from ghostline.core.config import ConfigManager
 
 class AISettingsDialog(QDialog):
     """Expose AI backend configuration and helper tools."""
+
+    openai_models_ready = Signal(list)
+    openai_status_ready = Signal(bool, str)
 
     def __init__(self, config: ConfigManager, parent=None) -> None:
         super().__init__(parent)
@@ -99,6 +102,13 @@ class AISettingsDialog(QDialog):
         self._maybe_load_openai_models()
         self._update_enabled_state()
 
+        self.openai_models_ready.connect(
+            self._update_openai_models, Qt.ConnectionType.QueuedConnection
+        )
+        self.openai_status_ready.connect(
+            self._update_openai_status, Qt.ConnectionType.QueuedConnection
+        )
+
     def _update_enabled_state(self) -> None:
         backend = self.backend_combo.currentText()
         self.openai_group.setEnabled(backend == "openai")
@@ -133,8 +143,8 @@ class AISettingsDialog(QDialog):
 
             def finish(ok: bool, message: str, models: list[str] | None = None) -> None:
                 if models is not None:
-                    QTimer.singleShot(0, lambda: self._update_openai_models(models))
-                QTimer.singleShot(0, lambda: self._update_openai_status(ok, message))
+                    self.openai_models_ready.emit(models)
+                self.openai_status_ready.emit(ok, message)
 
             try:
                 try:
