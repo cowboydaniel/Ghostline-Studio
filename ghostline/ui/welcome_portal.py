@@ -1,31 +1,73 @@
 """Full-window welcome portal."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QListWidget, QPushButton, QVBoxLayout, QWidget
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class WelcomePortal(QWidget):
     """Modern welcome screen showing quick starts and templates."""
 
+    startRequested = Signal()
+    recentRequested = Signal(str)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.recent = QListWidget(self)
-        self.templates = QListWidget(self)
-        self.news = QLabel("Ghostline news & plugins")
-        self.start_button = QPushButton("Start with a template")
+        self.recent.setObjectName("WelcomeRecentList")
+        self.recent.itemActivated.connect(self._emit_recent_requested)
+
+        self.start_button = QPushButton("Open Folder…")
+        self.start_button.clicked.connect(self.startRequested)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Recent repositories"))
+        layout.setContentsMargins(48, 48, 48, 48)
+        layout.setSpacing(16)
+
+        title = QLabel("Welcome to Ghostline Studio", self)
+        title.setAlignment(Qt.AlignCenter)
+        title.setProperty("class", "hero")
+
+        subtitle = QLabel("Open a folder to start coding or pick a recent project.", self)
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setWordWrap(True)
+
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+
+        layout.addWidget(self.start_button, alignment=Qt.AlignCenter)
+
+        recent_label = QLabel("Recent Projects", self)
+        recent_label.setAlignment(Qt.AlignLeft)
+        layout.addWidget(recent_label)
         layout.addWidget(self.recent)
-        layout.addWidget(QLabel("Quick templates"))
-        layout.addWidget(self.templates)
-        layout.addWidget(self.start_button)
-        layout.addWidget(self.news)
+
+        layout.addStretch(1)
 
     def set_recents(self, items: list[str]) -> None:
         self.recent.clear()
-        self.recent.addItems(items)
+        if not items:
+            placeholder = QListWidgetItem("No recent workspaces yet")
+            placeholder.setFlags(Qt.NoItemFlags)
+            self.recent.addItem(placeholder)
+            return
 
-    def set_templates(self, templates: list[str]) -> None:
-        self.templates.clear()
-        self.templates.addItems(templates)
+        for path in items:
+            name = Path(path).name if path else "Unknown"
+            item = QListWidgetItem(f"{name}\n{path}")
+            item.setData(Qt.UserRole, path)
+            self.recent.addItem(item)
+
+    def _emit_recent_requested(self, item: QListWidgetItem) -> None:
+        path = item.data(Qt.UserRole)
+        if path:
+            self.recentRequested.emit(str(path))

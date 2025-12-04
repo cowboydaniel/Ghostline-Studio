@@ -81,3 +81,7 @@ class GlobalSearchDialog(QDialog):
         if result:
             self.open_callback(str(result.path), result.line - 1)
             self.close()
+
+    def open_with_query(self, query: str) -> None:
+        self.input.setText(query)
+        self._perform_search()

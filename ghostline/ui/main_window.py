@@ -24,10 +24,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QHBoxLayout,
-    QStackedLayout,
+    QStackedWidget,
     QLineEdit,
     QMessageBox,
     QStyle,
+    QToolBar,
+    QWidgetAction,
 )
 
 from ghostline.core.config import ConfigManager
@@ -66,7 +68,7 @@ from ghostline.ui.activity_bar import ActivityBar
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.layout_manager import LayoutManager
 from ghostline.ui.tabs import EditorTabs
-from ghostline.ui.workspace_dashboard import WorkspaceDashboard
+from ghostline.ui.welcome_portal import WelcomePortal
 from ghostline.visual3d.architecture_dock import ArchitectureDock
 from ghostline.ui.docks.build_panel import BuildPanel
 from ghostline.ui.docks.agent_console import AgentConsole
@@ -328,24 +330,26 @@ class MainWindow(QMainWindow):
         self.editor_tabs = EditorTabs(
             self, config=self.config, theme=self.theme, lsp_manager=self.lsp_manager, ai_client=self.ai_client
         )
-        self.editor_tabs.countChanged.connect(self._update_central_stack)
-
-        self.empty_state = self._create_empty_state()
-        self.workspace_dashboard = WorkspaceDashboard(
-            open_file=self.open_file,
-            open_palette=self.show_command_palette,
-        )
-        self.central_stack = QStackedLayout()
-        self.central_stack.setContentsMargins(0, 0, 0, 0)
-        self.central_stack.addWidget(self.empty_state)
-        self.central_stack.addWidget(self.workspace_dashboard)
-        self.central_stack.addWidget(self.editor_tabs)
-        self.central_container = QWidget(self)
-        self.central_container.setObjectName("EditorArea")
-        self.central_container.setLayout(self.central_stack)
+        self.editor_tabs.countChanged.connect(self._show_welcome_if_empty)
 
         self.activity_bar = ActivityBar(self)
-        self.activity_bar.toolActivated.connect(self._handle_activity_tool)
+
+        self.editor_container = QWidget(self)
+        self.editor_container.setObjectName("EditorArea")
+        editor_layout = QHBoxLayout(self.editor_container)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.setSpacing(0)
+        editor_layout.addWidget(self.activity_bar)
+        editor_layout.addWidget(self.editor_tabs, 1)
+
+        self.welcome_portal = WelcomePortal(self)
+        self.welcome_portal.startRequested.connect(self._prompt_open_folder)
+        self.welcome_portal.recentRequested.connect(self.open_folder)
+        self.welcome_portal.set_recents(self.workspace_manager.recent_items)
+
+        self.stack = QStackedWidget(self)
+        self.stack.addWidget(self.welcome_portal)
+        self.stack.addWidget(self.editor_container)
 
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
@@ -383,6 +387,7 @@ class MainWindow(QMainWindow):
             """
         )
 
+        self._setup_global_search_toolbar()
         self.command_palette = CommandPalette(self)
         self.command_palette.set_registry(self.command_registry)
         self.command_palette.set_navigation_assistant(self.navigation_assistant)
@@ -409,6 +414,7 @@ class MainWindow(QMainWindow):
         self._create_agent_console_dock()
         self._create_pipeline_dock()
         self._create_runtime_dock()
+        self._connect_activity_bar()
 
         self.lsp_manager.subscribe_diagnostics(self._handle_diagnostics)
         self.lsp_manager.lsp_error.connect(lambda msg: self.status.show_message(msg))
@@ -417,79 +423,58 @@ class MainWindow(QMainWindow):
         self.task_manager.load_workspace_tasks()
         self._apply_initial_layout()
         self._update_workspace_state()
-        self._update_central_stack()
+        self._show_welcome_if_empty()
+
+    def _setup_global_search_toolbar(self) -> None:
+        self.global_search_input = QLineEdit(self)
+        self.global_search_input.setPlaceholderText("Search")
+        self.global_search_input.returnPressed.connect(
+            lambda: self._open_global_search(self.global_search_input.text())
+        )
+
+        toolbar = QToolBar("Global Search", self)
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+
+        left_spacer = QWidget(toolbar)
+        left_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        right_spacer = QWidget(toolbar)
+        right_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        search_action = QWidgetAction(toolbar)
+        search_action.setDefaultWidget(self.global_search_input)
+
+        toolbar.addWidget(left_spacer)
+        toolbar.addAction(search_action)
+        toolbar.addWidget(right_spacer)
+
+        self.addToolBar(Qt.TopToolBarArea, toolbar)
+        self.global_search_toolbar = toolbar
 
     def _install_title_bar(self) -> None:
         container = QWidget(self)
-        main_layout = QHBoxLayout(container)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-
-        main_layout.addWidget(self.activity_bar)
-
-        content_container = QWidget(self)
-        layout = QVBoxLayout(content_container)
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         self.title_bar = GhostlineTitleBar(self)
         layout.addWidget(self.title_bar)
-        layout.addWidget(self.central_container)
-
-        main_layout.addWidget(content_container, 1)
+        layout.addWidget(self.stack)
 
         self.setCentralWidget(container)
 
-    def _create_empty_state(self) -> QWidget:
-        widget = QWidget(self)
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(32, 32, 32, 32)
-        layout.setSpacing(12)
-
-        title = QLabel("Ghostline Studio", widget)
-        title.setAlignment(Qt.AlignCenter)
-        subtitle = QLabel("Open a workspace to start exploring your codebase.", widget)
-        subtitle.setAlignment(Qt.AlignCenter)
-
-        button_row = QHBoxLayout()
-        open_folder_btn = QPushButton("Open Folder…", widget)
-        open_folder_btn.clicked.connect(self._prompt_open_folder)
-        open_file_btn = QPushButton("Open File…", widget)
-        open_file_btn.clicked.connect(self._prompt_open_file)
-        palette_btn = QPushButton("Command Palette…", widget)
-        palette_btn.clicked.connect(self.show_command_palette)
-        for btn in (open_folder_btn, open_file_btn, palette_btn):
-            button_row.addWidget(btn)
-
-        hint_label = QLabel("Press Ctrl+O to open a file\nPress Ctrl+P to open the Command Palette.", widget)
-        hint_label.setAlignment(Qt.AlignCenter)
-
-        layout.addStretch(1)
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
-        layout.addLayout(button_row)
-        layout.addWidget(hint_label)
-        layout.addStretch(2)
-        return widget
-
-    def _update_central_stack(self) -> None:
+    def _show_welcome_if_empty(self) -> None:
         workspace = self.workspace_manager.current_workspace
-        if self.editor_tabs.count():
-            self.central_stack.setCurrentWidget(self.editor_tabs)
+        if workspace:
+            self.stack.setCurrentWidget(self.editor_container)
             return
 
-        if workspace:
-            workspace_str = str(workspace)
-            last_path = self._recent_files_by_workspace.get(workspace_str, [None])
-            last_file = last_path[0] if last_path else None
-            if last_file and Path(last_file).exists():
-                self.open_file(last_file)
-                return
+        if self.editor_tabs.count():
+            self.stack.setCurrentWidget(self.editor_container)
+            return
 
-            self.workspace_dashboard.set_workspace(workspace, self._recent_files_by_workspace.get(workspace_str, []))
-            self.central_stack.setCurrentWidget(self.workspace_dashboard)
-        else:
-            self.central_stack.setCurrentWidget(self.empty_state)
+        self.welcome_portal.set_recents(self.workspace_manager.recent_items)
+        self.stack.setCurrentWidget(self.welcome_portal)
 
     def _apply_initial_layout(self) -> None:
         if hasattr(self, "terminal_dock") and hasattr(self, "diagnostics_dock"):
@@ -538,7 +523,6 @@ class MainWindow(QMainWindow):
     def _enforce_dock_policies(self) -> None:
         left_dock_names = [
             "project_dock",
-            "terminal_dock",
             "diagnostics_dock",
             "debugger_dock",
             "task_dock",
@@ -568,6 +552,13 @@ class MainWindow(QMainWindow):
             if self.dockWidgetArea(ai_dock) != Qt.RightDockWidgetArea:
                 self.removeDockWidget(ai_dock)
                 self.addDockWidget(Qt.RightDockWidgetArea, ai_dock)
+
+        terminal_dock = getattr(self, "terminal_dock", None)
+        if terminal_dock:
+            terminal_dock.setAllowedAreas(Qt.BottomDockWidgetArea)
+            if self.dockWidgetArea(terminal_dock) != Qt.BottomDockWidgetArea:
+                self.removeDockWidget(terminal_dock)
+                self.addDockWidget(Qt.BottomDockWidgetArea, terminal_dock)
 
     def apply_initial_window_state(self, force_maximize: bool = False) -> None:
         window_cfg = self.config.get("window", {}) if self.config else {}
@@ -646,7 +637,7 @@ class MainWindow(QMainWindow):
 
         self.action_global_search = QAction("Global Search", self)
         self.action_global_search.setShortcut("Ctrl+Shift+F")
-        self.action_global_search.triggered.connect(self._open_global_search)
+        self.action_global_search.triggered.connect(self._trigger_global_search_action)
 
         self.action_goto_symbol = QAction("Go to Symbol", self)
         self.action_goto_symbol.triggered.connect(self._open_symbol_picker)
@@ -856,12 +847,11 @@ class MainWindow(QMainWindow):
         terminal = TerminalWidget(self.workspace_manager)
         dock.setWidget(terminal)
         dock.setMinimumHeight(140)
-        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
-        self._place_left_dock(dock)
+        dock.setAllowedAreas(Qt.BottomDockWidgetArea)
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.terminal = terminal
         self.terminal_dock = dock
-        self._register_activity_mapping("terminal", dock)
 
     def _create_project_dock(self) -> None:
         dock = QDockWidget("Explorer", self)
@@ -885,7 +875,6 @@ class MainWindow(QMainWindow):
         self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.project_dock = dock
-        self._register_activity_mapping("explorer", dock)
 
     def _create_ai_dock(self) -> None:
         dock = QDockWidget("Ghostline AI", self)
@@ -934,7 +923,6 @@ class MainWindow(QMainWindow):
         self._register_dock_action(dock)
         self.debugger_panel = panel
         self.debugger_dock = dock
-        self._register_activity_mapping("run", dock)
 
     def _create_task_dock(self) -> None:
         dock = QDockWidget("Tasks", self)
@@ -966,7 +954,6 @@ class MainWindow(QMainWindow):
         self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.architecture_dock = dock
-        self._register_activity_mapping("map3d", dock)
         self._refresh_architecture_graph()
 
     def _create_build_dock(self) -> None:
@@ -1003,7 +990,6 @@ class MainWindow(QMainWindow):
         self._register_dock_action(dock)
         self.git_panel = panel
         self.git_dock = dock
-        self._register_activity_mapping("scm", dock)
 
     def _create_coverage_dock(self) -> None:
         dock = QDockWidget("Coverage", self)
@@ -1096,6 +1082,7 @@ class MainWindow(QMainWindow):
 
     def open_folder(self, folder: str) -> None:
         self.workspace_manager.open_workspace(folder)
+        self.welcome_portal.set_recents(self.workspace_manager.recent_items)
         workspace_path = self.workspace_manager.current_workspace
         if hasattr(self, "context_engine"):
             self.context_engine.on_workspace_changed(workspace_path)
@@ -1113,7 +1100,7 @@ class MainWindow(QMainWindow):
         self.plugin_loader.emit_event("workspace.opened", path=folder)
         self.task_manager.load_workspace_tasks()
         self.semantic_index.reindex()
-        self._update_central_stack()
+        self.stack.setCurrentWidget(self.editor_container)
 
     def save_all(self) -> None:
         for editor in self.editor_tabs.iter_editors():
@@ -1192,7 +1179,8 @@ class MainWindow(QMainWindow):
             self.terminal.set_workspace(None)
         if hasattr(self, "context_engine"):
             self.context_engine.on_workspace_changed(None)
-        self._update_central_stack()
+        self.welcome_portal.set_recents(self.workspace_manager.recent_items)
+        self._show_welcome_if_empty()
 
     def open_file_at(self, path: str, line: int) -> None:
         self.open_file(path)
@@ -1238,64 +1226,49 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
         registry.register_command(CommandDescriptor("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
 
-    def _handle_activity_tool(self, tool_id: str) -> None:
-        handlers = {
-            "explorer": self._focus_project_dock,
-            "search": self._focus_search,
-            "scm": self._focus_scm,
-            "run": self._focus_run,
-            "map3d": self._focus_architecture,
-            "terminal": self._focus_terminal,
-            "settings": self._focus_settings,
-        }
-        handler = handlers.get(tool_id)
-        if handler:
-            handler()
-
-    def _activate_dock(self, dock: QDockWidget | None, tool_id: str) -> None:
+    def _show_and_raise_dock(self, dock: QDockWidget | None, tool_id: str | None = None) -> None:
         if not dock:
             if hasattr(self, "status"):
                 self.status.show_message("This tool is coming soon")
             return
+        dock.setVisible(True)
         dock.show()
         dock.raise_()
-        dock.activateWindow()
-        if hasattr(self, "activity_bar"):
+        if tool_id and hasattr(self, "activity_bar"):
             self.activity_bar.setActiveTool(tool_id)
 
-    def _register_activity_mapping(self, tool_id: str, dock: QDockWidget | None) -> None:
-        if not dock:
-            return
-        dock.visibilityChanged.connect(lambda visible, tool=tool_id: self._on_dock_visibility_changed(tool, visible))
+    def _connect_activity_bar(self) -> None:
+        self.activity_bar.explorerRequested.connect(
+            lambda: self._show_and_raise_dock(getattr(self, "project_dock", None), "explorer")
+        )
+        self.activity_bar.searchRequested.connect(self._focus_global_search)
+        self.activity_bar.gitRequested.connect(
+            lambda: self._show_and_raise_dock(getattr(self, "git_dock", None), "git")
+        )
+        self.activity_bar.debugRequested.connect(
+            lambda: self._show_and_raise_dock(getattr(self, "debugger_dock", None), "debug")
+        )
+        self.activity_bar.testsRequested.connect(
+            lambda: self._show_and_raise_dock(getattr(self, "test_dock", None), "tests")
+        )
+        self.activity_bar.tasksRequested.connect(
+            lambda: self._show_and_raise_dock(getattr(self, "task_dock", None), "tasks")
+        )
+        self.activity_bar.architectureRequested.connect(
+            lambda: self._show_and_raise_dock(getattr(self, "architecture_dock", None), "architecture")
+        )
+        self.activity_bar.settingsRequested.connect(self._open_settings)
 
-    def _on_dock_visibility_changed(self, tool_id: str, visible: bool) -> None:
-        if visible and hasattr(self, "activity_bar"):
-            self.activity_bar.setActiveTool(tool_id)
-
-    def _focus_project_dock(self) -> None:
-        self._activate_dock(getattr(self, "project_dock", None), "explorer")
-
-    def _focus_search(self) -> None:
+    def _focus_global_search(self) -> None:
         if hasattr(self, "activity_bar"):
             self.activity_bar.setActiveTool("search")
-        self._open_global_search()
+        if hasattr(self, "global_search_input"):
+            self.global_search_input.setFocus()
+            self.global_search_input.selectAll()
+        self._open_global_search(self.global_search_input.text() if hasattr(self, "global_search_input") else None)
 
-    def _focus_scm(self) -> None:
-        self._activate_dock(getattr(self, "git_dock", None), "scm")
-
-    def _focus_run(self) -> None:
-        self._activate_dock(getattr(self, "debugger_dock", None), "run")
-
-    def _focus_architecture(self) -> None:
-        self._activate_dock(getattr(self, "architecture_dock", None), "map3d")
-
-    def _focus_terminal(self) -> None:
-        self._activate_dock(getattr(self, "terminal_dock", None), "terminal")
-
-    def _focus_settings(self) -> None:
-        if hasattr(self, "activity_bar"):
-            self.activity_bar.setActiveTool("settings")
-        self._open_settings()
+    def _trigger_global_search_action(self) -> None:
+        self._focus_global_search()
 
     def _toggle_project(self) -> None:
         visible = not self.project_dock.isVisible()
@@ -1344,7 +1317,7 @@ class MainWindow(QMainWindow):
         self._update_workspace_state()
         return result
 
-    def _open_global_search(self) -> None:
+    def _open_global_search(self, initial_query: str | None = None) -> None:
         if hasattr(self, "activity_bar"):
             self.activity_bar.setActiveTool("search")
         if not hasattr(self, "_global_search_dialog"):
@@ -1353,7 +1326,14 @@ class MainWindow(QMainWindow):
                 lambda path, line: self.open_file_at(path, line),
                 self,
             )
+
+        if initial_query:
+            if hasattr(self._global_search_dialog, "open_with_query"):
+                self._global_search_dialog.open_with_query(initial_query)
+            else:
+                self._global_search_dialog.input.setText(initial_query)
         self._global_search_dialog.show()
+        self._global_search_dialog.raise_()
 
     def _open_symbol_picker(self) -> None:
         query, ok = QInputDialog.getText(self, "Go to Symbol", "Name contains:")
