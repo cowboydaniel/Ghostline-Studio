@@ -5,8 +5,8 @@ import json
 import shutil
 import subprocess
 import threading
-from urllib import request
 
+from openai import OpenAI
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QComboBox,
@@ -52,8 +52,9 @@ class AISettingsDialog(QDialog):
         self.openai_key = QLineEdit(self.openai_group)
         self.openai_key.setText(self.config.get("ai", {}).get("api_key", ""))
         self.openai_model = QComboBox(self.openai_group)
-        self.openai_model.addItems(["gpt-4o-mini", "gpt-4o", "o3-mini"])
-        self.openai_model.setCurrentText(self.config.get("ai", {}).get("model", "gpt-4o-mini"))
+        saved_model = self.config.get("ai", {}).get("model", "gpt-4o-mini")
+        self.openai_model.addItem(saved_model)
+        self.openai_model.setCurrentText(saved_model)
         self.openai_endpoint = QLineEdit(self.openai_group)
         self.openai_endpoint.setText(self.config.get("ai", {}).get("openai_endpoint", "https://api.openai.com"))
         self.openai_status = QLabel("", self.openai_group)
@@ -97,6 +98,7 @@ class AISettingsDialog(QDialog):
         layout.addWidget(buttons_box)
 
         self._check_ollama()
+        self._maybe_load_openai_models()
         self._update_enabled_state()
 
     def _update_enabled_state(self) -> None:
@@ -106,26 +108,59 @@ class AISettingsDialog(QDialog):
 
     # OpenAI helpers
     def _test_openai(self) -> None:
+        self._load_openai_models(force_status=True)
+
+    def _maybe_load_openai_models(self) -> None:
+        if self.openai_key.text().strip():
+            self._load_openai_models()
+
+    def _normalized_openai_endpoint(self) -> str:
+        return self.openai_endpoint.text().strip().rstrip("/") or "https://api.openai.com"
+
+    def _load_openai_models(self, force_status: bool = False) -> None:
         api_key = self.openai_key.text().strip()
-        endpoint = self.openai_endpoint.text().strip().rstrip("/") or "https://api.openai.com"
-        self.openai_status.setText("Testing...")
+        if not api_key:
+            if force_status:
+                self._update_openai_status(False, "Enter an API key first.")
+            return
+
+        endpoint = self._normalized_openai_endpoint()
+        base_url = f"{endpoint}/v1" if not endpoint.endswith("/v1") else endpoint
+        self.openai_status.setText("Fetching models...")
         self.test_openai_btn.setEnabled(False)
 
         def worker() -> None:
             try:
-                req = request.Request(f"{endpoint}/v1/models")
-                if api_key:
-                    req.add_header("Authorization", f"Bearer {api_key}")
-                with request.urlopen(req, timeout=8) as resp:  # type: ignore[arg-type]
-                    payload = json.loads(resp.read().decode("utf-8")) if resp.status < 400 else {}
-                if payload.get("data") is not None:
-                    QTimer.singleShot(0, lambda: self._update_openai_status(True, "Connection successful"))
-                else:
-                    QTimer.singleShot(0, lambda: self._update_openai_status(False, "Unexpected response"))
+                client = OpenAI(api_key=api_key, base_url=base_url)
+                response = client.models.list()
+                models = []
+                for model in response.data:
+                    model_id = getattr(model, "id", "")
+                    if not model_id:
+                        continue
+                    capabilities = getattr(model, "capabilities", None)
+                    supports_chat = bool(getattr(capabilities, "chat_completions", False)) if capabilities else False
+                    if supports_chat or model_id.startswith(("gpt-", "o1", "o3")):
+                        models.append(model_id)
+                models = sorted(models, reverse=False)
+                if not models:
+                    raise RuntimeError("No models returned")
+                QTimer.singleShot(0, lambda: self._update_openai_models(models))
+                QTimer.singleShot(0, lambda: self._update_openai_status(True, "Connection successful"))
             except Exception as exc:  # noqa: BLE001
                 QTimer.singleShot(0, lambda: self._update_openai_status(False, str(exc)))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _update_openai_models(self, models: list[str]) -> None:
+        current = self.config.get("ai", {}).get("model") or self.openai_model.currentText()
+        self.openai_model.clear()
+        self.openai_model.addItems(models)
+        if current and current in models:
+            self.openai_model.setCurrentText(current)
+        elif models:
+            self.openai_model.setCurrentText(models[0])
+        self.openai_model.setEnabled(True)
 
     def _update_openai_status(self, ok: bool, message: str) -> None:
         self.openai_status.setText(message)

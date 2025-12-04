@@ -10,6 +10,8 @@ from typing import Generator
 from urllib import request
 from urllib.error import URLError
 
+from openai import OpenAI
+
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import get_logger
 from ghostline.ai.prompt_builder import PromptBuilder
@@ -69,23 +71,37 @@ class OpenAICompatibleBackend(HTTPBackend):
     def __init__(self, config: ConfigManager) -> None:
         super().__init__(config)
         ai_cfg = config.get("ai", {}) if config else {}
-        self.endpoint = ai_cfg.get("openai_endpoint", "https://api.openai.com")
+        self.endpoint = ai_cfg.get("openai_endpoint", "https://api.openai.com").rstrip("/")
+        base_url = self.endpoint
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        client_config: dict[str, str] = {"base_url": base_url}
+        if self.api_key:
+            client_config["api_key"] = self.api_key
+        self.client = OpenAI(**client_config)
 
     def send(self, prompt: str, context: str | None = None) -> AIResponse:
-        messages = [{"role": "user", "content": prompt}]
-        body = {
-            "model": self.model or "gpt-4o-mini",
-            "messages": messages,
-            "stream": False,
-            "temperature": self.temperature,
-        }
-        response = self._post(f"{self.endpoint}/v1/chat/completions", body)
-        choices = response.get("choices", [])
-        text = choices[0]["message"]["content"] if choices else ""
+        text = "".join(self.stream(prompt, context))
         return AIResponse(text=text)
 
     def stream(self, prompt: str, context: str | None = None) -> Generator[str, None, None]:
-        yield self.send(prompt, context).text
+        content = prompt if not context else f"[context]\n{context}\n\n{prompt}"
+        stream = self.client.responses.create(
+            model=self.model or "gpt-4o-mini",
+            input=[{"role": "user", "content": [{"type": "text", "text": content}]}],
+            temperature=self.temperature,
+            stream=True,
+        )
+
+        for event in stream:
+            if getattr(event, "type", "") == "response.output_text.delta":
+                delta = getattr(event, "delta", "")
+                if delta:
+                    yield delta
+            elif getattr(event, "type", "") == "response.output_text.done":
+                text = getattr(event, "text", "")
+                if text:
+                    yield text
 
 
 class AIClient:
