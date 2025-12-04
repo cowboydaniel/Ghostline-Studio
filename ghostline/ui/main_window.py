@@ -4,14 +4,17 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QModelIndex
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex
+from PySide6.QtGui import QAction, QDesktopServices, QStyle
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QDockWidget,
     QLabel,
     QMainWindow,
+    QMenuBar,
+    QSizePolicy,
+    QToolButton,
     QWidget,
     QTableView,
     QInputDialog,
@@ -91,6 +94,168 @@ from ghostline.collab.transport import WebSocketTransport
 logger = logging.getLogger(__name__)
 
 
+class GhostlineTitleBar(QWidget):
+    """Custom frameless title bar with navigation and command search."""
+
+    def __init__(self, window: "MainWindow") -> None:
+        super().__init__(window)
+        self.window = window
+        self._drag_position: QPoint | None = None
+
+        self.setObjectName("GhostlineTitleBar")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+
+        left_container = QWidget(self)
+        left_layout = QHBoxLayout(left_container)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+
+        icon_button = QToolButton(left_container)
+        icon_button.setObjectName("TitleIconButton")
+        icon_button.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+        icon_button.setAutoRaise(True)
+        icon_button.setToolTip("Ghostline Studio")
+        left_layout.addWidget(icon_button)
+
+        menubar: QMenuBar = self.window.menuBar()
+        menubar.setNativeMenuBar(False)
+        menubar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        left_layout.addWidget(menubar)
+
+        center_container = QWidget(self)
+        center_layout = QHBoxLayout(center_container)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(6)
+
+        # TODO: Wire navigation buttons to history actions when available.
+        self.back_button = QToolButton(center_container)
+        self.back_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
+        self.back_button.setEnabled(False)
+        self.back_button.setToolTip("Back (not yet implemented)")
+        center_layout.addWidget(self.back_button)
+
+        self.forward_button = QToolButton(center_container)
+        self.forward_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowForward))
+        self.forward_button.setEnabled(False)
+        self.forward_button.setToolTip("Forward (not yet implemented)")
+        center_layout.addWidget(self.forward_button)
+
+        self.command_input = QLineEdit(center_container)
+        self.command_input.setObjectName("CommandSearch")
+        self.command_input.setPlaceholderText("Search files and commands…")
+        self.command_input.returnPressed.connect(self._emit_command_search)
+        center_layout.addWidget(self.command_input)
+
+        spacer = QWidget(self)
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        right_container = QWidget(self)
+        right_layout = QHBoxLayout(right_container)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
+
+        self.minimize_button = QToolButton(right_container)
+        self.minimize_button.setObjectName("WindowControl")
+        self.minimize_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMinButton))
+        self.minimize_button.clicked.connect(self.window.showMinimized)
+        right_layout.addWidget(self.minimize_button)
+
+        self.maximize_button = QToolButton(right_container)
+        self.maximize_button.setObjectName("WindowControl")
+        self.maximize_button.clicked.connect(self.window.toggle_maximize_restore)
+        right_layout.addWidget(self.maximize_button)
+
+        self.close_button = QToolButton(right_container)
+        self.close_button.setObjectName("CloseControl")
+        self.close_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarCloseButton))
+        self.close_button.clicked.connect(self.window.close)
+        right_layout.addWidget(self.close_button)
+
+        layout.addWidget(left_container)
+        layout.addWidget(center_container, 1)
+        layout.addWidget(spacer)
+        layout.addWidget(right_container)
+
+        self._apply_styles()
+        self.update_maximize_icon()
+
+    def _emit_command_search(self) -> None:
+        self.window.show_command_palette(self.command_input.text())
+
+    def _apply_styles(self) -> None:
+        self.setStyleSheet(
+            """
+            #GhostlineTitleBar {
+                background: palette(window);
+                border-bottom: 1px solid palette(mid);
+            }
+            #GhostlineTitleBar QToolButton {
+                border: none;
+                padding: 6px 8px;
+                border-radius: 6px;
+            }
+            #GhostlineTitleBar QToolButton:hover {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            #CloseControl:hover {
+                background: #d9534f;
+                color: white;
+            }
+            #CommandSearch {
+                border-radius: 14px;
+                padding: 6px 10px;
+                background: palette(base);
+                border: 1px solid palette(mid);
+                min-height: 28px;
+            }
+            #CommandSearch:focus {
+                border: 1px solid palette(highlight);
+            }
+        """
+        )
+
+    def update_maximize_icon(self) -> None:
+        icon = (
+            self.style().standardIcon(QStyle.SP_TitleBarNormalButton)
+            if self.window.isMaximized()
+            else self.style().standardIcon(QStyle.SP_TitleBarMaxButton)
+        )
+        self.maximize_button.setIcon(icon)
+        self.maximize_button.setToolTip("Restore" if self.window.isMaximized() else "Maximize")
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if event.button() == Qt.LeftButton and not self._is_interactive_child(event.pos()):
+            self._drag_position = event.globalPosition().toPoint() - self.window.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if self._drag_position and event.buttons() & Qt.LeftButton and not self.window.isMaximized():
+            self.window.move(event.globalPosition().toPoint() - self._drag_position)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
+        self._drag_position = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
+        if not self._is_interactive_child(event.pos()):
+            self.window.toggle_maximize_restore()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def _is_interactive_child(self, pos) -> bool:
+        target = self.childAt(pos)
+        return isinstance(target, (QToolButton, QLineEdit, QMenuBar))
+
+
 class MainWindow(QMainWindow):
     """Hosts docks, tabs, and menus."""
 
@@ -98,11 +263,14 @@ class MainWindow(QMainWindow):
         self, config: ConfigManager, theme: ThemeManager, workspace_manager: WorkspaceManager
     ) -> None:
         super().__init__(None, Qt.Window)  # Set window type and parent
-        # Ensure proper window flags for maximize button
-        self.setWindowFlags(self.windowFlags() | 
-                          Qt.WindowMinimizeButtonHint | 
-                          Qt.WindowMaximizeButtonHint |
-                          Qt.WindowCloseButtonHint)
+        # Ensure proper window flags for custom title bar controls
+        self.setWindowFlags(
+            Qt.Window
+            | Qt.FramelessWindowHint
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
         # Ensure the window has proper size constraints
         self.setMinimumSize(800, 600)
         self.config = config
@@ -170,10 +338,9 @@ class MainWindow(QMainWindow):
         self.central_stack.addWidget(self.empty_state)
         self.central_stack.addWidget(self.workspace_dashboard)
         self.central_stack.addWidget(self.editor_tabs)
-        central_container = QWidget(self)
-        central_container.setObjectName("EditorArea")
-        central_container.setLayout(self.central_stack)
-        self.setCentralWidget(central_container)
+        self.central_container = QWidget(self)
+        self.central_container.setObjectName("EditorArea")
+        self.central_container.setLayout(self.central_stack)
 
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
@@ -199,7 +366,7 @@ class MainWindow(QMainWindow):
         self.ai_command_adapter = AICommandAdapter(self.command_registry, self.command_palette)
         self._create_actions()
         self._create_menus()
-        self._create_menu_search()
+        self._install_title_bar()
         self._create_terminal_dock()
         self._create_project_dock()
         self._create_ai_dock()
@@ -225,6 +392,18 @@ class MainWindow(QMainWindow):
         self._apply_initial_layout()
         self._update_workspace_state()
         self._update_central_stack()
+
+    def _install_title_bar(self) -> None:
+        container = QWidget(self)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.title_bar = GhostlineTitleBar(self)
+        layout.addWidget(self.title_bar)
+        layout.addWidget(self.central_container)
+
+        self.setCentralWidget(container)
 
     def _create_empty_state(self) -> QWidget:
         widget = QWidget(self)
@@ -396,9 +575,6 @@ class MainWindow(QMainWindow):
         self.action_command_palette = QAction("Command Palette", self)
         self.action_command_palette.setShortcut("Ctrl+P")
         self.action_command_palette.triggered.connect(self.show_command_palette)
-
-        self.action_search_bar = QAction("Search", self)
-        self.action_search_bar.setShortcut("Ctrl+P")
 
         self.action_toggle_autoflow = QAction("Toggle Autoflow Mode", self)
         self.action_toggle_autoflow.triggered.connect(self._toggle_autoflow_mode)
@@ -578,24 +754,6 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self.action_docs)
         help_menu.addAction(self.action_report_issue)
         help_menu.addAction(self.action_about)
-
-    def _create_menu_search(self) -> None:
-        container = QWidget(self)
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(4, 2, 8, 2)
-        layout.setSpacing(6)
-        self.menu_search = QLineEdit(container)
-        self.menu_search.setPlaceholderText("Search files and commands…")
-        self.menu_search.returnPressed.connect(self._handle_menu_search)
-        hint = QLabel("Ctrl+P", container)
-        hint.setStyleSheet("color: palette(mid); font-size: 11px;")
-        layout.addWidget(self.menu_search)
-        layout.addWidget(hint)
-        self.menuBar().setCornerWidget(container, Qt.TopRightCorner)
-
-    def _handle_menu_search(self) -> None:
-        text = self.menu_search.text()
-        self.show_command_palette(text)
 
     def _search_workspace_files(self, query: str):
         workspace = self.workspace_manager.current_workspace
@@ -795,6 +953,14 @@ class MainWindow(QMainWindow):
         else:
             self.command_palette.open_palette()
 
+    def toggle_maximize_restore(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        if hasattr(self, "title_bar"):
+            self.title_bar.update_maximize_icon()
+
     def _toggle_autoflow_mode(self) -> None:
         new_mode = "active" if self.command_palette.autoflow_mode == "passive" else "passive"
         self.command_palette.set_autoflow_mode(new_mode)
@@ -945,6 +1111,11 @@ class MainWindow(QMainWindow):
             window_cfg["geometry"] = bytes(geometry.toHex()).decode("ascii")
         self.config.save()
         super().closeEvent(event)
+
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange and hasattr(self, "title_bar"):
+            self.title_bar.update_maximize_icon()
 
     # Command registration
     def _register_core_commands(self) -> None:
