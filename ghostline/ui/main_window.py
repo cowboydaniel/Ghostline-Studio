@@ -61,6 +61,7 @@ from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
 from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
 from ghostline.ui.dialogs.ai_settings_dialog import AISettingsDialog
 from ghostline.ui.command_palette import CommandPalette
+from ghostline.ui.activity_bar import ActivityBar
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.layout_manager import LayoutManager
 from ghostline.ui.tabs import EditorTabs
@@ -342,6 +343,9 @@ class MainWindow(QMainWindow):
         self.central_container.setObjectName("EditorArea")
         self.central_container.setLayout(self.central_stack)
 
+        self.activity_bar = ActivityBar(self)
+        self.activity_bar.toolActivated.connect(self._handle_activity_tool)
+
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
         self.status.setContentsMargins(4, 0, 12, 0)
@@ -354,6 +358,27 @@ class MainWindow(QMainWindow):
             QDockWidget::title { font-size: 12px; padding: 6px 8px; }
             QTreeView { font-size: 12px; }
             QStatusBar QLabel { font-size: 11px; }
+            #ActivityBar {
+                background: palette(midlight);
+                border-right: 1px solid palette(mid);
+            }
+            #ActivityBar QToolButton {
+                border: none;
+                padding: 10px 6px;
+                margin: 2px 6px;
+                border-radius: 8px;
+                color: palette(mid);
+            }
+            #ActivityBar QToolButton:hover {
+                background: palette(button);
+                color: palette(text);
+            }
+            #ActivityBar QToolButton:checked {
+                background: palette(highlight);
+                color: palette(highlightedText);
+                border-left: 3px solid palette(highlightedText);
+                padding-left: 4px;
+            }
             """
         )
 
@@ -395,13 +420,22 @@ class MainWindow(QMainWindow):
 
     def _install_title_bar(self) -> None:
         container = QWidget(self)
-        layout = QVBoxLayout(container)
+        main_layout = QHBoxLayout(container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        main_layout.addWidget(self.activity_bar)
+
+        content_container = QWidget(self)
+        layout = QVBoxLayout(content_container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         self.title_bar = GhostlineTitleBar(self)
         layout.addWidget(self.title_bar)
         layout.addWidget(self.central_container)
+
+        main_layout.addWidget(content_container, 1)
 
         self.setCentralWidget(container)
 
@@ -779,6 +813,7 @@ class MainWindow(QMainWindow):
         self._register_dock_action(dock)
         self.terminal = terminal
         self.terminal_dock = dock
+        self._register_activity_mapping("terminal", dock)
 
     def _create_project_dock(self) -> None:
         dock = QDockWidget("Explorer", self)
@@ -802,6 +837,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.project_dock = dock
+        self._register_activity_mapping("explorer", dock)
 
     def _create_ai_dock(self) -> None:
         dock = QDockWidget("Ghostline AI", self)
@@ -816,6 +852,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.ai_dock = dock
+        self._register_activity_mapping("ai", dock)
 
     def _create_diagnostics_dock(self) -> None:
         dock = QDockWidget("Diagnostics", self)
@@ -848,6 +885,7 @@ class MainWindow(QMainWindow):
         self._register_dock_action(dock)
         self.debugger_panel = panel
         self.debugger_dock = dock
+        self._register_activity_mapping("run", dock)
 
     def _create_task_dock(self) -> None:
         dock = QDockWidget("Tasks", self)
@@ -876,6 +914,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._register_dock_action(dock)
         self.architecture_dock = dock
+        self._register_activity_mapping("map3d", dock)
         self._refresh_architecture_graph()
 
     def _create_build_dock(self) -> None:
@@ -909,6 +948,7 @@ class MainWindow(QMainWindow):
         self._register_dock_action(dock)
         self.git_panel = panel
         self.git_dock = dock
+        self._register_activity_mapping("scm", dock)
 
     def _create_coverage_dock(self) -> None:
         dock = QDockWidget("Coverage", self)
@@ -1137,6 +1177,69 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
         registry.register_command(CommandDescriptor("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
 
+    def _handle_activity_tool(self, tool_id: str) -> None:
+        handlers = {
+            "explorer": self._focus_project_dock,
+            "search": self._focus_search,
+            "scm": self._focus_scm,
+            "run": self._focus_run,
+            "map3d": self._focus_architecture,
+            "terminal": self._focus_terminal,
+            "ai": self._focus_ai,
+            "settings": self._focus_settings,
+        }
+        handler = handlers.get(tool_id)
+        if handler:
+            handler()
+
+    def _activate_dock(self, dock: QDockWidget | None, tool_id: str) -> None:
+        if not dock:
+            if hasattr(self, "status"):
+                self.status.show_message("This tool is coming soon")
+            return
+        dock.show()
+        dock.raise_()
+        dock.activateWindow()
+        if hasattr(self, "activity_bar"):
+            self.activity_bar.setActiveTool(tool_id)
+
+    def _register_activity_mapping(self, tool_id: str, dock: QDockWidget | None) -> None:
+        if not dock:
+            return
+        dock.visibilityChanged.connect(lambda visible, tool=tool_id: self._on_dock_visibility_changed(tool, visible))
+
+    def _on_dock_visibility_changed(self, tool_id: str, visible: bool) -> None:
+        if visible and hasattr(self, "activity_bar"):
+            self.activity_bar.setActiveTool(tool_id)
+
+    def _focus_project_dock(self) -> None:
+        self._activate_dock(getattr(self, "project_dock", None), "explorer")
+
+    def _focus_search(self) -> None:
+        if hasattr(self, "activity_bar"):
+            self.activity_bar.setActiveTool("search")
+        self._open_global_search()
+
+    def _focus_scm(self) -> None:
+        self._activate_dock(getattr(self, "git_dock", None), "scm")
+
+    def _focus_run(self) -> None:
+        self._activate_dock(getattr(self, "debugger_dock", None), "run")
+
+    def _focus_architecture(self) -> None:
+        self._activate_dock(getattr(self, "architecture_dock", None), "map3d")
+
+    def _focus_terminal(self) -> None:
+        self._activate_dock(getattr(self, "terminal_dock", None), "terminal")
+
+    def _focus_ai(self) -> None:
+        self._activate_dock(getattr(self, "ai_dock", None), "ai")
+
+    def _focus_settings(self) -> None:
+        if hasattr(self, "activity_bar"):
+            self.activity_bar.setActiveTool("settings")
+        self._open_settings()
+
     def _toggle_project(self) -> None:
         visible = not self.project_dock.isVisible()
         self.project_dock.setVisible(visible)
@@ -1161,6 +1264,8 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._refresh_architecture_graph)
 
     def _open_settings(self) -> None:
+        if hasattr(self, "activity_bar"):
+            self.activity_bar.setActiveTool("settings")
         dialog = SettingsDialog(self.config, self)
         if dialog.exec():
             app = QApplication.instance()
@@ -1183,6 +1288,8 @@ class MainWindow(QMainWindow):
         return result
 
     def _open_global_search(self) -> None:
+        if hasattr(self, "activity_bar"):
+            self.activity_bar.setActiveTool("search")
         if not hasattr(self, "_global_search_dialog"):
             self._global_search_dialog = GlobalSearchDialog(
                 lambda: str(self.workspace_manager.current_workspace) if self.workspace_manager.current_workspace else None,
