@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QPushButton,
+    QStackedLayout,
     QStyle,
     QTextEdit,
     QToolButton,
@@ -131,28 +131,86 @@ class AIChatPanel(QWidget):
         self.command_adapter = None
         self.insert_handler = None
         self._last_chunks: list[ContextChunk] = []
+        self._current_context_text: str = ""
+        self._current_pins: list[ContextChunk] = []
+
+        self.setObjectName("aiChatPanel")
+        self.setStyleSheet(
+            """
+            #aiChatPanel {
+                background: palette(base);
+                border-radius: 12px;
+            }
+            #chatTopBar {
+                background: transparent;
+            }
+            QListWidget#chatTranscript {
+                border: none;
+                background: transparent;
+            }
+            QLabel#chatShortcutHint {
+                color: palette(mid);
+                font-size: 11px;
+            }
+            QLabel#pinnedBadge {
+                padding: 2px 6px;
+                border-radius: 8px;
+                background: palette(highlight);
+                color: palette(bright-text);
+                font-weight: 600;
+            }
+            #chatInputBar {
+                border: 1px solid palette(mid);
+                border-radius: 18px;
+                background: palette(base);
+            }
+            """
+        )
 
         self.instructions = QTextEdit(self)
         self.instructions.setPlaceholderText("Optional: add custom instructions, tone, or constraints")
-        self.instructions.setMaximumHeight(80)
+        self.instructions.hide()
 
         self.status_label = QLabel("AI: Idle (no workspace)", self)
         self.status_label.setAlignment(Qt.AlignLeft)
 
-        self.advanced_button = QToolButton(self)
-        self.advanced_button.setText("Advanced")
-        self.advanced_button.setPopupMode(QToolButton.MenuButtonPopup)
-        advanced_menu = QMenu(self.advanced_button)
-        instructions_action = advanced_menu.addAction("Settings")
+        self.mode_button = QToolButton(self)
+        self.mode_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.mode_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
+        self.mode_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.mode_button.setToolTip("Select agent or mode")
+        mode_menu = QMenu(self.mode_button)
+        mode_menu.addAction("General")
+        mode_menu.addAction("Code")
+        mode_menu.addSeparator()
+        instructions_action = mode_menu.addAction("Instructions…")
         instructions_action.triggered.connect(self._open_instructions_dialog)
-        self.advanced_button.setMenu(advanced_menu)
+        self.mode_button.setMenu(mode_menu)
+
+        self.new_chat_button = QToolButton(self)
+        self.new_chat_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.new_chat_button.setIcon(self.style().standardIcon(QStyle.SP_FileIcon))
+        self.new_chat_button.setToolTip("Start a new chat")
+        self.new_chat_button.clicked.connect(self._reset_chat)
+
+        self.history_button = QToolButton(self)
+        self.history_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.history_button.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
+        self.history_button.setToolTip("Chat history")
+        self.history_button.clicked.connect(self._show_history_placeholder)
+
+        self.pinned_badge = QLabel("0", self)
+        self.pinned_badge.setObjectName("pinnedBadge")
+        self.pinned_badge.setVisible(False)
 
         self.tools_button = QToolButton(self)
-        self.tools_button.setText("Tools")
+        self.tools_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.tools_button.setIcon(self.style().standardIcon(QStyle.SP_ToolBarHorizontalExtensionButton))
         self.tools_button.setPopupMode(QToolButton.InstantPopup)
+        self.tools_button.setToolTip("Context and tools")
         tools_menu = QMenu(self.tools_button)
         self.context_action = QAction("Preview Context", self)
-        self.context_action.triggered.connect(self._refresh_context_view)
+        self.context_action.triggered.connect(self._open_context_dialog)
         self.pin_action = QAction("Pin active", self)
         self.pin_action.triggered.connect(self._pin_active_document)
         self.unpin_action = QAction("Unpin all", self)
@@ -169,14 +227,47 @@ class AIChatPanel(QWidget):
         )
         self.tools_button.setMenu(tools_menu)
 
+        top_bar = QFrame(self)
+        top_bar.setObjectName("chatTopBar")
+        top_layout = QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(6, 6, 6, 6)
+        top_layout.setSpacing(4)
+        top_layout.addWidget(self.status_label)
+        top_layout.addStretch()
+        top_layout.addWidget(self.pinned_badge)
+        top_layout.addWidget(self.mode_button)
+        top_layout.addWidget(self.new_chat_button)
+        top_layout.addWidget(self.history_button)
+        top_layout.addWidget(self.tools_button)
+
+        self.placeholder = QWidget(self)
+        placeholder_layout = QVBoxLayout(self.placeholder)
+        placeholder_layout.setAlignment(Qt.AlignCenter)
+        logo = QLabel("👻", self.placeholder)
+        logo.setStyleSheet("font-size: 42px;")
+        title = QLabel("Ghostline Studio", self.placeholder)
+        title.setStyleSheet("font-size: 20px; font-weight: 600;")
+        subtitle = QLabel("Your AI teammate is ready to collaborate.", self.placeholder)
+        subtitle.setStyleSheet("color: palette(mid);")
+        placeholder_hint = QLabel("// Chat bubbles will appear here soon", self.placeholder)
+        placeholder_hint.setStyleSheet("color: palette(mid);")
+        placeholder_layout.addWidget(logo, 0, Qt.AlignHCenter)
+        placeholder_layout.addWidget(title, 0, Qt.AlignHCenter)
+        placeholder_layout.addWidget(subtitle, 0, Qt.AlignHCenter)
+        placeholder_layout.addSpacing(12)
+        placeholder_layout.addWidget(placeholder_hint, 0, Qt.AlignHCenter)
+
         self.transcript_list = QListWidget(self)
+        self.transcript_list.setObjectName("chatTranscript")
+        self.transcript_list.setFrameShape(QFrame.NoFrame)
+        self.transcript_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        self.context_preview = QTextEdit(self)
-        self.context_preview.setReadOnly(True)
-        self.context_preview.setPlaceholderText("Context that will be sent with your prompt")
+        self.transcript_stack = QStackedLayout()
+        self.transcript_stack.addWidget(self.placeholder)
+        self.transcript_stack.addWidget(self.transcript_list)
 
-        self.context_list = QListWidget(self)
-        self.pinned_list = QListWidget(self)
+        transcript_container = QFrame(self)
+        transcript_container.setLayout(self.transcript_stack)
 
         self.input = QLineEdit(self)
         self.input.setPlaceholderText("Ask anything")
@@ -190,10 +281,6 @@ class AIChatPanel(QWidget):
                 border: 1px solid palette(mid);
                 border-radius: 18px;
                 background: palette(base);
-            }
-            QLabel#chatShortcutHint {
-                color: palette(mid);
-                font-size: 11px;
             }
             """
         )
@@ -219,29 +306,11 @@ class AIChatPanel(QWidget):
         input_layout.addWidget(self.shortcut_hint)
         input_layout.addWidget(self.send_button)
 
-        context_box = QGroupBox("Context sources", self)
-        context_layout = QVBoxLayout(context_box)
-        context_layout.setContentsMargins(6, 6, 6, 6)
-        context_layout.addWidget(QLabel("Pinned", context_box))
-        context_layout.addWidget(self.pinned_list)
-        context_layout.addWidget(QLabel("Planned context", context_box))
-        context_layout.addWidget(self.context_list)
-        context_layout.addWidget(QLabel("Preview", context_box))
-        context_layout.addWidget(self.context_preview)
-
-        top_bar = QHBoxLayout()
-        top_bar.addWidget(self.status_label)
-        top_bar.addStretch()
-        top_bar.addWidget(self.tools_button)
-        top_bar.addWidget(self.advanced_button)
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-        layout.addLayout(top_bar)
-        layout.addWidget(self.transcript_list)
-        layout.addWidget(context_box)
-        layout.addStretch()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        layout.addWidget(top_bar)
+        layout.addWidget(transcript_container, 1)
         layout.addWidget(self.input_bar)
 
     def set_active_document_provider(self, provider) -> None:
@@ -264,14 +333,40 @@ class AIChatPanel(QWidget):
         item.setSizeHint(card.sizeHint())
         self.transcript_list.addItem(item)
         self.transcript_list.setItemWidget(item, card)
+        self.transcript_stack.setCurrentWidget(self.transcript_list)
         return card
+
+    def _reset_chat(self) -> None:
+        if self._active_thread:
+            return
+        self.transcript_list.clear()
+        self._active_response_card = None
+        self._active_response_text = ""
+        self.transcript_stack.setCurrentWidget(self.placeholder)
+
+    def _show_history_placeholder(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Chat history")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Chat history will appear here soon.", dialog))
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, dialog)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _set_busy(self, busy: bool) -> None:
         enabled = not busy and self.workspace_active
         self.input.setEnabled(enabled)
         self.send_button.setEnabled(enabled)
         self.mic_button.setEnabled(enabled)
-        self.tools_button.setEnabled(enabled)
+        for button in (
+            self.mode_button,
+            self.new_chat_button,
+            self.history_button,
+            self.tools_button,
+        ):
+            button.setEnabled(enabled)
         for action in (
             self.context_action,
             self.pin_action,
@@ -334,9 +429,9 @@ class AIChatPanel(QWidget):
                 active_document=active,
                 open_documents=open_docs,
             )
-            self._show_context_sources(chunks, context)
+            self._update_context_state(chunks, context, instructions)
             return context, chunks
-        self._show_context_sources([], instructions)
+        self._update_context_state([], instructions or None, instructions)
         return instructions or None, []
 
     def _start_request(self, prompt: str, context: str | None) -> None:
@@ -367,12 +462,50 @@ class AIChatPanel(QWidget):
         self._last_chunks = chunks
         self._start_request(prompt, context)
 
-    def _refresh_context_view(self) -> None:
+    def _open_context_dialog(self) -> None:
         prompt = self.input.text().strip()
-        context, chunks = self._gather_context(prompt) if prompt else (None, [])
-        self._last_chunks = chunks
-        if context is not None:
-            self.context_preview.setPlainText(context)
+        context, chunks = self._gather_context(prompt)
+        preview_text = context or self._current_context_text
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Context preview")
+        layout = QVBoxLayout(dialog)
+
+        chunk_list = QListWidget(dialog)
+        chunk_list.setSelectionMode(QListWidget.NoSelection)
+        chunk_list.setFocusPolicy(Qt.NoFocus)
+        for chunk in chunks:
+            label = chunk.title
+            if chunk.reason:
+                label += f" — {chunk.reason}"
+            QListWidgetItem(label, chunk_list)
+        if not chunks:
+            QListWidgetItem("No contextual documents selected yet", chunk_list)
+        layout.addWidget(QLabel("Context sources", dialog))
+        layout.addWidget(chunk_list)
+
+        pinned_list = QListWidget(dialog)
+        pinned_list.setSelectionMode(QListWidget.NoSelection)
+        pinned_list.setFocusPolicy(Qt.NoFocus)
+        for pinned in self._current_pins:
+            QListWidgetItem(pinned.title, pinned_list)
+        if not self._current_pins:
+            QListWidgetItem("No pinned documents", pinned_list)
+        layout.addWidget(QLabel("Pinned", dialog))
+        layout.addWidget(pinned_list)
+
+        preview = QTextEdit(dialog)
+        preview.setReadOnly(True)
+        preview.setPlainText(preview_text)
+        layout.addWidget(QLabel("Preview", dialog))
+        layout.addWidget(preview)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close, dialog)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+
+        dialog.exec()
 
     def _open_instructions_dialog(self) -> None:
         dialog = QDialog(self)
@@ -403,34 +536,35 @@ class AIChatPanel(QWidget):
         path_obj = Path(path) if path else None
         title = f"Pinned: {path_obj.name}" if path_obj else "Pinned document"
         self.context_engine.pin_context(ContextChunk(title, text, path_obj, "Pinned manually"))
-        self._refresh_context_view()
+        self._gather_context(self.input.text().strip())
 
     def _clear_pins(self) -> None:
         if not self.context_engine:
             return
         for pinned in list(self.context_engine.pinned()):
             self.context_engine.unpin(pinned.title)
-        self._refresh_context_view()
+        self._gather_context(self.input.text().strip())
 
-    def _show_context_sources(self, chunks: list[ContextChunk], context: str | None) -> None:
-        self.context_list.clear()
-        for chunk in chunks:
-            label = chunk.title
-            if chunk.reason:
-                label += f" — {chunk.reason}"
-            QListWidgetItem(label, self.context_list)
-        self.pinned_list.clear()
+    def _update_context_state(
+        self, chunks: list[ContextChunk], context: str | None, instructions: str | None = None
+    ) -> None:
+        self._last_chunks = chunks
+        self._current_context_text = context or instructions or ""
         if self.context_engine:
-            for pinned in self.context_engine.pinned():
-                QListWidgetItem(pinned.title, self.pinned_list)
-        if context is not None:
-            self.context_preview.setPlainText(context)
+            self._current_pins = list(self.context_engine.pinned())
+        else:
+            self._current_pins = []
+        self._update_pinned_badge(len(self._current_pins))
 
     def set_workspace_active(self, active: bool) -> None:
         self.workspace_active = active
         label = "AI: Ready" if active else "AI: Idle (no workspace)"
         self.status_label.setText(label)
         self._set_busy(False)
+
+    def _update_pinned_badge(self, count: int) -> None:
+        self.pinned_badge.setText(str(count))
+        self.pinned_badge.setVisible(count > 0)
 
     @Slot(str)
     def _on_worker_partial(self, delta: str) -> None:
