@@ -1,9 +1,10 @@
 """Rich chat panel that exposes workspace-aware context controls."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 import re
 from pathlib import Path
-
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
@@ -30,6 +31,24 @@ from PySide6.QtWidgets import (
 
 from ghostline.ai.ai_client import AIClient
 from ghostline.ai.context_engine import ContextChunk, ContextEngine
+
+
+@dataclass
+class ChatMessage:
+    """A single message in a chat transcript."""
+
+    role: str
+    text: str
+    context: list[ContextChunk] | None = None
+
+
+@dataclass
+class ChatSession:
+    """Stored chat conversation with a friendly title."""
+
+    title: str
+    messages: list[ChatMessage]
+    created_at: datetime
 
 
 class _MessageCard(QWidget):
@@ -136,6 +155,9 @@ class AIChatPanel(QWidget):
         self._last_chunks: list[ContextChunk] = []
         self._current_context_text: str = ""
         self._current_pins: list[ContextChunk] = []
+        self._current_messages: list[ChatMessage] = []
+        self._current_chat_started_at: datetime = datetime.now()
+        self.chat_history: list[ChatSession] = []
 
         self.setObjectName("aiChatPanel")
         self.setStyleSheet(
@@ -203,7 +225,7 @@ class AIChatPanel(QWidget):
             )
         )
         self.history_button.setToolTip("Chat history")
-        self.history_button.clicked.connect(self._show_history_placeholder)
+        self.history_button.clicked.connect(self._open_history_dialog)
 
         self.tools_button = QToolButton(self)
         _style_toolbar_button(self.tools_button)
@@ -405,6 +427,39 @@ class AIChatPanel(QWidget):
     def set_command_adapter(self, adapter) -> None:
         self.command_adapter = adapter
 
+    def _snapshot_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
+        return [
+            ChatMessage(message.role, message.text, list(message.context or []))
+            for message in messages
+        ]
+
+    def _derive_title(self, messages: list[ChatMessage]) -> str:
+        for message in messages:
+            if message.role.lower() == "you" and message.text:
+                first_line = message.text.strip().splitlines()[0]
+                if first_line:
+                    return first_line[:60] + ("…" if len(first_line) > 60 else "")
+        return f"Chat started {self._current_chat_started_at.strftime('%Y-%m-%d %H:%M')}"
+
+    def _ensure_current_snapshot(self) -> None:
+        if not self._current_messages:
+            return
+        snapshot = self._snapshot_messages(self._current_messages)
+        session = ChatSession(
+            self._derive_title(snapshot), snapshot, self._current_chat_started_at
+        )
+        if self.chat_history and self.chat_history[0].created_at == session.created_at:
+            self.chat_history[0] = session
+        else:
+            self.chat_history.insert(0, session)
+
+    def _store_current_chat(self) -> None:
+        if not self._current_messages:
+            return
+        self._ensure_current_snapshot()
+        self._current_messages = []
+        self._current_chat_started_at = datetime.now()
+
     def _append(
         self, role: str, text: str, context: list[ContextChunk] | None = None
     ) -> _MessageCard:
@@ -419,20 +474,116 @@ class AIChatPanel(QWidget):
     def _reset_chat(self) -> None:
         if self._active_thread:
             return
+        self._store_current_chat()
         self.transcript_list.clear()
         self._active_response_card = None
         self._active_response_text = ""
+        self._current_messages = []
+        self._current_chat_started_at = datetime.now()
         self.transcript_stack.setCurrentWidget(self.placeholder)
 
-    def _show_history_placeholder(self) -> None:
+    def _render_history_preview(self, session: ChatSession) -> str:
+        lines = [
+            session.title,
+            session.created_at.strftime("%Y-%m-%d %H:%M"),
+        ]
+        for message in session.messages:
+            context_suffix = ""
+            if message.context:
+                context_suffix = " (" + ", ".join(chunk.title for chunk in message.context) + ")"
+            body = message.text.strip() or "[empty]"
+            lines.append(f"{message.role}{context_suffix}:\n{body}")
+        return "\n\n".join(lines)
+
+    def _restore_session(self, session: ChatSession) -> None:
+        self.transcript_list.clear()
+        self.transcript_stack.setCurrentWidget(self.transcript_list)
+        self._current_messages = self._snapshot_messages(session.messages)
+        for message in self._current_messages:
+            self._append(message.role, message.text, context=message.context)
+        self._active_response_card = None
+        self._active_response_text = ""
+        self._current_chat_started_at = session.created_at
+
+    def _delete_history_item(
+        self, item: QListWidgetItem | None, list_widget: QListWidget, preview: QTextEdit
+    ) -> None:
+        if not item:
+            return
+        session = item.data(Qt.UserRole)
+        if session in self.chat_history:
+            self.chat_history.remove(session)
+        row = list_widget.row(item)
+        removed = list_widget.takeItem(row)
+        if removed:
+            removed.setData(Qt.UserRole, None)
+        preview.clear()
+
+    def _load_history_item(self, item: QListWidgetItem | None, dialog: QDialog) -> None:
+        if not item:
+            return
+        session = item.data(Qt.UserRole)
+        if not session:
+            return
+        self._restore_session(session)
+        dialog.accept()
+
+    def _open_history_dialog(self) -> None:
+        self._ensure_current_snapshot()
         dialog = QDialog(self)
         dialog.setWindowTitle("Chat history")
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel("Chat history will appear here soon.", dialog))
+
+        if not self.chat_history:
+            layout.addWidget(QLabel("No chats yet. Start a conversation to build history.", dialog))
+            buttons = QDialogButtonBox(QDialogButtonBox.Close, dialog)
+            buttons.rejected.connect(dialog.reject)
+            buttons.accepted.connect(dialog.accept)
+            layout.addWidget(buttons)
+            dialog.exec()
+            return
+
+        list_widget = QListWidget(dialog)
+        list_widget.setSelectionMode(QListWidget.SingleSelection)
+        list_widget.setMinimumHeight(240)
+        for session in self.chat_history:
+            summary = f"{session.title} — {session.created_at.strftime('%b %d, %H:%M')}"
+            item = QListWidgetItem(summary, list_widget)
+            item.setData(Qt.UserRole, session)
+        layout.addWidget(list_widget)
+
+        preview = QTextEdit(dialog)
+        preview.setReadOnly(True)
+        layout.addWidget(preview)
+
+        def _update_preview() -> None:
+            item = list_widget.currentItem()
+            if not item:
+                preview.clear()
+                return
+            session = item.data(Qt.UserRole)
+            if session:
+                preview.setPlainText(self._render_history_preview(session))
+            else:
+                preview.clear()
+
+        list_widget.currentItemChanged.connect(lambda *_: _update_preview())
+
         buttons = QDialogButtonBox(QDialogButtonBox.Close, dialog)
+        load_btn = buttons.addButton("Load conversation", QDialogButtonBox.AcceptRole)
+        delete_btn = buttons.addButton("Delete", QDialogButtonBox.DestructiveRole)
+        load_btn.clicked.connect(lambda: self._load_history_item(list_widget.currentItem(), dialog))
+        delete_btn.clicked.connect(
+            lambda: self._delete_history_item(list_widget.currentItem(), list_widget, preview)
+        )
         buttons.rejected.connect(dialog.reject)
         buttons.accepted.connect(dialog.accept)
         layout.addWidget(buttons)
+
+        if list_widget.count():
+            list_widget.setCurrentRow(0)
+            _update_preview()
+
         dialog.exec()
 
     def _set_busy(self, busy: bool) -> None:
@@ -467,6 +618,7 @@ class AIChatPanel(QWidget):
             self._active_response_card.set_text(text)
         else:
             self._append("AI", text, context=self._last_chunks)
+        self._current_messages.append(ChatMessage("AI", text, list(self._last_chunks)))
         self._active_response_text = text
         if self.command_adapter:
             self.command_adapter.handle_response(text)
@@ -485,6 +637,7 @@ class AIChatPanel(QWidget):
             self._active_response_card.set_text(message)
         else:
             self._append("AI", message)
+        self._current_messages.append(ChatMessage("AI", message, list(self._last_chunks)))
         self._active_response_text = ""
         self._cleanup_thread(self._active_thread, self._active_worker)
         self._set_busy(False)
@@ -521,6 +674,9 @@ class AIChatPanel(QWidget):
             return
 
         self._append("You", prompt, context=self._last_chunks)
+        self._current_messages.append(
+            ChatMessage("You", prompt, list(self._last_chunks))
+        )
         self._set_busy(True)
 
         thread = QThread(self)
