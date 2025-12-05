@@ -33,6 +33,17 @@ class WelcomePortal(QWidget):
         layout.setContentsMargins(48, 48, 48, 48)
         layout.setSpacing(16)
 
+        self.container = QWidget()
+        container_layout = QVBoxLayout(self.container)
+        container_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        container_layout.setSpacing(16)
+
+        center_card = QWidget(self.container)
+        center_card.setMaximumWidth(540)
+        card_layout = QVBoxLayout(center_card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(16)
+
         title = QLabel("Welcome to Ghostline Studio", self)
         title.setAlignment(Qt.AlignCenter)
         title.setProperty("class", "hero")
@@ -41,16 +52,18 @@ class WelcomePortal(QWidget):
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setWordWrap(True)
 
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
+        card_layout.addWidget(title)
+        card_layout.addWidget(subtitle)
 
-        layout.addWidget(self.start_button, alignment=Qt.AlignCenter)
+        card_layout.addWidget(self.start_button, alignment=Qt.AlignCenter)
 
         recent_label = QLabel("Recent Projects", self)
         recent_label.setAlignment(Qt.AlignLeft)
-        layout.addWidget(recent_label)
-        layout.addWidget(self.recent)
+        card_layout.addWidget(recent_label)
+        card_layout.addWidget(self.recent)
 
+        container_layout.addWidget(center_card, alignment=Qt.AlignHCenter)
+        layout.addWidget(self.container)
         layout.addStretch(1)
 
     def set_recents(self, items: list[str]) -> None:
