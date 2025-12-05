@@ -425,6 +425,7 @@ class MainWindow(QMainWindow):
         self.lsp_manager.lsp_notice.connect(lambda msg: self.status.show_message(msg))
         self.plugin_loader.load_all()
         self.task_manager.load_workspace_tasks()
+        self._configure_dock_corners()
         self._apply_initial_layout()
         self._collect_dock_regions()
         self._connect_dock_toggles()
@@ -571,6 +572,10 @@ class MainWindow(QMainWindow):
             self.resizeDocks([self.terminal_dock, self.diagnostics_dock], [280, 220], Qt.Vertical)
         self._enforce_dock_policies()
 
+    def _configure_dock_corners(self) -> None:
+        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
+
     def _enforce_dock_policies(self) -> None:
         left_dock_names = [
             "project_dock",
@@ -592,7 +597,7 @@ class MainWindow(QMainWindow):
             dock = getattr(self, name, None)
             if not dock:
                 continue
-            dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+            dock.setAllowedAreas(Qt.LeftDockWidgetArea)
             if self.dockWidgetArea(dock) == Qt.RightDockWidgetArea:
                 self.removeDockWidget(dock)
                 self.addDockWidget(Qt.LeftDockWidgetArea, dock)
@@ -671,12 +676,24 @@ class MainWindow(QMainWindow):
             elif area == Qt.RightDockWidgetArea:
                 self.right_docks.append(dock)
 
+        preferred_left = getattr(self, "project_dock", None)
+        primary_left = preferred_left if preferred_left in self.left_docks else (self.left_docks[0] if self.left_docks else None)
+        self.primary_left_dock = primary_left
+        for dock in self.left_docks:
+            if dock is not primary_left:
+                dock.hide()
+        if primary_left:
+            primary_left.show()
+
+        for dock in self.left_docks:
+            dock.visibilityChanged.connect(lambda visible, d=dock: self._enforce_left_exclusivity(d, visible))
+
     def _place_left_dock(self, dock: QDockWidget, area: Qt.DockWidgetArea = Qt.LeftDockWidgetArea) -> None:
-        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea)
         self.addDockWidget(area, dock)
 
     def _place_bottom_dock(self, dock: QDockWidget) -> None:
-        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        dock.setAllowedAreas(Qt.BottomDockWidgetArea)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
 
     def _place_ai_dock(self, dock: QDockWidget) -> None:
@@ -695,8 +712,22 @@ class MainWindow(QMainWindow):
         self.toggle_right_region.toggled.connect(lambda visible: self._toggle_region(self.right_docks, visible))
 
     def _toggle_region(self, docks: list[QDockWidget], visible: bool) -> None:
+        if docks is getattr(self, "left_docks", None) and visible:
+            target = getattr(self, "primary_left_dock", None) or (docks[0] if docks else None)
+            for dock in docks:
+                dock.setVisible(dock is target)
+            return
         for dock in docks:
             dock.setVisible(visible)
+
+    def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
+        if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
+            return
+        for other in self.left_docks:
+            if other is dock:
+                continue
+            if other.isVisible() and not other.isFloating() and self.dockWidgetArea(other) == Qt.LeftDockWidgetArea:
+                other.hide()
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
