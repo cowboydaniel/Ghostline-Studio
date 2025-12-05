@@ -364,10 +364,11 @@ class MainWindow(QMainWindow):
         self.central_stack.addWidget(self.editor_container)
 
         self.left_region_container = QWidget(self)
-        self.left_region_layout = QVBoxLayout(self.left_region_container)
+        self.left_region_layout = QHBoxLayout(self.left_region_container)
         self.left_region_layout.setContentsMargins(0, 0, 0, 0)
         self.left_region_layout.setSpacing(0)
-        self.left_region_layout.addWidget(self.activity_bar, 0, Qt.AlignTop)
+        self.activity_bar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.left_region_layout.addWidget(self.activity_bar)
         self.left_dock_container = QWidget(self.left_region_container)
         self.left_dock_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.left_dock_container.setMinimumWidth(220)
@@ -388,7 +389,9 @@ class MainWindow(QMainWindow):
         self.right_region_layout.addWidget(self.right_dock_stack)
 
         self.left_region_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        self.left_region_container.setMinimumWidth(self.left_dock_container.minimumWidth())
+        self.left_region_container.setMinimumWidth(
+            self.left_dock_container.minimumWidth() + self.activity_bar.sizeHint().width()
+        )
         self.right_region_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
         self.central_stack.setMinimumWidth(400)
@@ -714,7 +717,10 @@ class MainWindow(QMainWindow):
             return
 
         self.left_dock_container.setVisible(visible)
-        min_width = self.left_dock_container.minimumWidth() if visible else self.activity_bar.width()
+        activity_bar_width = self.activity_bar.sizeHint().width()
+        min_width = (
+            self.left_dock_container.minimumWidth() + activity_bar_width if visible else activity_bar_width
+        )
         self.left_region_container.setMinimumWidth(min_width)
         self.left_region_container.setMaximumWidth(16777215 if visible else min_width)
 
@@ -726,7 +732,7 @@ class MainWindow(QMainWindow):
                     sizes[0] = previous
             else:
                 self._left_region_previous_size = sizes[0]
-                sizes[0] = max(min_width, self.activity_bar.sizeHint().width())
+                sizes[0] = max(min_width, activity_bar_width)
             self.main_splitter.setSizes(sizes)
 
         if visible:
