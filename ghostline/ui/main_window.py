@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex
-from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -447,29 +447,17 @@ class MainWindow(QMainWindow):
         )
         self.global_search_input.setFixedWidth(220)
 
-        toggle_container = QWidget(self)
-        toggle_layout = QHBoxLayout(toggle_container)
-        toggle_layout.setContentsMargins(0, 0, 0, 0)
-        toggle_layout.setSpacing(4)
+        icon_dir = Path(__file__).resolve().parent.parent / "resources" / "icons" / "dock_controls"
 
-        def build_toggle(icon: QStyle.StandardPixmap, tooltip: str) -> tuple[QAction, QToolButton]:
-            action = QAction(self.style().standardIcon(icon), "", self)
-            action.setCheckable(True)
-            action.setChecked(True)
-            action.setToolTip(tooltip)
-            button = QToolButton(toggle_container)
-            button.setDefaultAction(action)
-            button.setAutoRaise(True)
-            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-            toggle_layout.addWidget(button)
-            return action, button
+        def load_icon(name: str) -> QIcon:
+            return QIcon(str(icon_dir / f"{name}.svg"))
 
-        self.toggle_left_region, _ = build_toggle(QStyle.SP_ArrowLeft, "Toggle left docks")
-        self.toggle_bottom_region, _ = build_toggle(QStyle.SP_ArrowDown, "Toggle bottom docks")
-        self.toggle_right_region, _ = build_toggle(QStyle.SP_ArrowRight, "Toggle right docks")
-
-        toggle_layout.addStretch(1)
-        self.dock_toggle_bar = toggle_container
+        left_open_icon = load_icon("left_open")
+        left_closed_icon = load_icon("left_closed")
+        bottom_open_icon = load_icon("bottom_open")
+        bottom_closed_icon = load_icon("bottom_closed")
+        right_open_icon = load_icon("right_open")
+        right_closed_icon = load_icon("right_closed")
 
         self.dock_toggle_bar = QToolBar("Dock Visibility", self)
         self.dock_toggle_bar.setMovable(False)
@@ -480,11 +468,12 @@ class MainWindow(QMainWindow):
         toggle_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.dock_toggle_bar.addWidget(toggle_spacer)
 
-        def build_toggle(icon: QStyle.StandardPixmap, tooltip: str) -> QAction:
-            action = QAction(self.style().standardIcon(icon), "", self)
+        def build_toggle(open_icon: QIcon, closed_icon: QIcon, tooltip: str) -> QAction:
+            action = QAction(open_icon, "", self)
             action.setCheckable(True)
             action.setChecked(True)
             action.setToolTip(tooltip)
+            action.toggled.connect(lambda checked, a=action, o=open_icon, c=closed_icon: a.setIcon(o if checked else c))
             button = QToolButton(self.dock_toggle_bar)
             button.setDefaultAction(action)
             button.setAutoRaise(True)
@@ -494,9 +483,9 @@ class MainWindow(QMainWindow):
             self.dock_toggle_bar.addAction(widget_action)
             return action
 
-        self.toggle_left_region = build_toggle(QStyle.SP_ArrowLeft, "Toggle left docks")
-        self.toggle_bottom_region = build_toggle(QStyle.SP_ArrowDown, "Toggle bottom docks")
-        self.toggle_right_region = build_toggle(QStyle.SP_ArrowRight, "Toggle right docks")
+        self.toggle_left_region = build_toggle(left_open_icon, left_closed_icon, "Toggle left docks")
+        self.toggle_bottom_region = build_toggle(bottom_open_icon, bottom_closed_icon, "Toggle bottom docks")
+        self.toggle_right_region = build_toggle(right_open_icon, right_closed_icon, "Toggle right docks")
 
         self.addToolBar(Qt.TopToolBarArea, self.dock_toggle_bar)
 
