@@ -1216,9 +1216,12 @@ class MainWindow(QMainWindow):
         workspace_str = str(workspace_path) if workspace_path else None
         self.status.update_git(workspace_str)
         self.status.show_message(f"Opened workspace: {folder}")
+
+        # Make the opened folder the root of the explorer tree,
+        # so it behaves like Windsurf and shows just the project.
         index = self.project_model.set_workspace_root(workspace_str)
-        if index:
-            self.project_view.setRootIndex(QModelIndex())
+        if index and index.isValid():
+            self.project_view.setRootIndex(index)
             self.project_view.expand(index)
             self.project_view.setCurrentIndex(index)
         self._update_workspace_state()
