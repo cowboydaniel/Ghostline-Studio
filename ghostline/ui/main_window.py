@@ -490,13 +490,13 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.TopToolBarArea, self.dock_toggle_bar)
 
     def _install_title_bar(self) -> None:
+        self.title_bar = GhostlineTitleBar(self)
+        self.setMenuWidget(self.title_bar)
+
         container = QWidget(self)
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
-        self.title_bar = GhostlineTitleBar(self)
-        layout.addWidget(self.title_bar)
         layout.addWidget(self.stack)
 
         self.setCentralWidget(container)
