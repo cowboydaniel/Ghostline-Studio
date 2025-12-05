@@ -6,6 +6,8 @@ from pathlib import Path
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
+from ghostline.core.resources import icons_dir
+
 
 class ThemeManager:
     """Applies and exposes the Ghostline Studio theme."""
@@ -65,7 +67,9 @@ class ThemeManager:
     def _load_stylesheet(self) -> str:
         style_path = Path(__file__).resolve().parent.parent / "resources" / "styles" / "ghostline_dark.qss"
         try:
-            return style_path.read_text(encoding="utf-8")
+            stylesheet = style_path.read_text(encoding="utf-8")
+            icons_base = icons_dir()
+            return stylesheet.replace("url(:/icons/", f"url({icons_base.as_uri()}/")
         except FileNotFoundError:
             return ""
 
