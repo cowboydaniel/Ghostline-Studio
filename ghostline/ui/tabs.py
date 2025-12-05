@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterator
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QTabWidget
 
 from ghostline.core.config import ConfigManager
@@ -42,10 +43,19 @@ class EditorTabs(QTabWidget):
             lsp_manager=self.lsp_manager,
             ai_client=self.ai_client,
         )
-        self.addTab(editor, path.name)
+        icon = self._icon_for_file(path)
+        self.addTab(icon, editor, path.name)
         self.setCurrentWidget(editor)
         self.countChanged.emit(self.count())
         return editor
+
+    def _icon_for_file(self, path: Path) -> QIcon:
+        suffix = path.suffix.lower()
+        if suffix in {".py"}:
+            return QIcon(":/icons/file_python.svg")
+        if suffix in {".json"}:
+            return QIcon(":/icons/file_json.svg")
+        return QIcon(":/icons/file_generic.svg")
 
     def _close_tab(self, index: int) -> None:
         widget = self.widget(index)
