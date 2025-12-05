@@ -44,7 +44,7 @@ class EditorTabs(QTabWidget):
             ai_client=self.ai_client,
         )
         icon = self._icon_for_file(path)
-        self.addTab(icon, editor, path.name)
+        self.addTab(editor, icon, path.name)
         self.setCurrentWidget(editor)
         self.countChanged.emit(self.count())
         return editor
