@@ -22,18 +22,31 @@ class ProjectView(QTreeView):
         self.setEditTriggers(QTreeView.NoEditTriggers)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
-        self.setIndentation(18)
+
+        # Match Windsurf-style explorer tree: tight rows, subtle hover,
+        # full-width selection, and slightly reduced indentation.
+        self.setIndentation(14)
+        self.setAlternatingRowColors(True)
+        self.setUniformRowHeights(True)
+
         self.setStyleSheet(
             """
             QTreeView {
-                font-size: 12px;
+                font-size: 11px;
                 show-decoration-selected: 1;
+                background: #101113;
+                border: none;
+                alternate-background-color: #15171a;
             }
             QTreeView::item {
-                padding: 2px 4px;
+                padding: 2px 8px;
             }
-            QTreeView::item:selected {
-                background: palette(midlight);
+            QTreeView::item:selected:active,
+            QTreeView::item:selected:!active {
+                background-color: rgba(255, 255, 255, 0.06);
+            }
+            QTreeView::item:hover {
+                background-color: rgba(255, 255, 255, 0.03);
             }
             """
         )
