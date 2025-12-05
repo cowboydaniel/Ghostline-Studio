@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QHBoxLayout,
+    QStackedLayout,
     QStackedWidget,
     QLineEdit,
     QMessageBox,
@@ -472,6 +473,35 @@ class MainWindow(QMainWindow):
 
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         self.global_search_toolbar = toolbar
+
+        self.dock_toggle_bar = QToolBar("Dock Visibility", self)
+        self.dock_toggle_bar.setMovable(False)
+        self.dock_toggle_bar.setFloatable(False)
+        self.dock_toggle_bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+
+        toggle_spacer = QWidget(self.dock_toggle_bar)
+        toggle_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.dock_toggle_bar.addWidget(toggle_spacer)
+
+        def build_toggle(icon: QStyle.StandardPixmap, tooltip: str) -> QAction:
+            action = QAction(self.style().standardIcon(icon), "", self)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.setToolTip(tooltip)
+            button = QToolButton(self.dock_toggle_bar)
+            button.setDefaultAction(action)
+            button.setAutoRaise(True)
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            widget_action = QWidgetAction(self.dock_toggle_bar)
+            widget_action.setDefaultWidget(button)
+            self.dock_toggle_bar.addAction(widget_action)
+            return action
+
+        self.toggle_left_region = build_toggle(QStyle.SP_ArrowLeft, "Toggle left docks")
+        self.toggle_bottom_region = build_toggle(QStyle.SP_ArrowDown, "Toggle bottom docks")
+        self.toggle_right_region = build_toggle(QStyle.SP_ArrowRight, "Toggle right docks")
+
+        self.addToolBar(Qt.TopToolBarArea, self.dock_toggle_bar)
 
     def _install_title_bar(self) -> None:
         container = QWidget(self)
