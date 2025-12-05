@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex
+from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex, QSize
 from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QHBoxLayout,
+    QSplitter,
     QStackedLayout,
     QStackedWidget,
     QLineEdit,
@@ -358,9 +359,43 @@ class MainWindow(QMainWindow):
         self.welcome_portal.recentRequested.connect(self.open_folder)
         self.welcome_portal.set_recents(self.workspace_manager.recent_items)
 
-        self.stack = QStackedWidget(self)
-        self.stack.addWidget(self.welcome_portal)
-        self.stack.addWidget(self.editor_container)
+        self.central_stack = QStackedWidget(self)
+        self.central_stack.addWidget(self.welcome_portal)
+        self.central_stack.addWidget(self.editor_container)
+
+        self.left_region_container = QWidget(self)
+        left_region_layout = QVBoxLayout(self.left_region_container)
+        left_region_layout.setContentsMargins(0, 0, 0, 0)
+        left_region_layout.setSpacing(0)
+        left_region_layout.addWidget(self.activity_bar, 0, Qt.AlignTop)
+        self.left_dock_stack = QStackedWidget(self.left_region_container)
+        left_region_layout.addWidget(self.left_dock_stack, 1)
+
+        self.right_region_container = QWidget(self)
+        right_region_layout = QVBoxLayout(self.right_region_container)
+        right_region_layout.setContentsMargins(0, 0, 0, 0)
+        right_region_layout.setSpacing(0)
+        self.right_dock_stack = QStackedWidget(self.right_region_container)
+        right_region_layout.addWidget(self.right_dock_stack)
+        self.right_region_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.right_region_container.setMinimumWidth(320)
+
+        self.main_splitter = QSplitter(Qt.Horizontal, self)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.addWidget(self.left_region_container)
+        self.main_splitter.addWidget(self.central_stack)
+        self.main_splitter.addWidget(self.right_region_container)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setStretchFactor(2, 0)
+
+        self.bottom_dock_container = QWidget(self)
+        bottom_layout = QVBoxLayout(self.bottom_dock_container)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(0)
+        self.bottom_dock_stack = QStackedWidget(self.bottom_dock_container)
+        bottom_layout.addWidget(self.bottom_dock_stack)
+        self.bottom_dock_container.setVisible(False)
 
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
@@ -472,6 +507,9 @@ class MainWindow(QMainWindow):
             button.setDefaultAction(action)
             button.setAutoRaise(True)
             button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setFixedSize(26, 26)
+            button.setIconSize(QSize(16, 16))
+            button.setStyleSheet("padding: 0; margin: 0;")
             widget_action = QWidgetAction(self.dock_toggle_bar)
             widget_action.setDefaultWidget(button)
             self.dock_toggle_bar.addAction(widget_action)
@@ -491,33 +529,25 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.stack)
+        layout.addWidget(self.main_splitter, 1)
+        layout.addWidget(self.bottom_dock_container, 0)
 
         self.setCentralWidget(container)
 
     def _show_welcome_if_empty(self) -> None:
         workspace = self.workspace_manager.current_workspace
         if workspace:
-            self.stack.setCurrentWidget(self.editor_container)
+            self.central_stack.setCurrentWidget(self.editor_container)
             return
 
         if self.editor_tabs.count():
-            self.stack.setCurrentWidget(self.editor_container)
+            self.central_stack.setCurrentWidget(self.editor_container)
             return
 
         self.welcome_portal.set_recents(self.workspace_manager.recent_items)
-        self.stack.setCurrentWidget(self.welcome_portal)
+        self.central_stack.setCurrentWidget(self.welcome_portal)
 
     def _apply_initial_layout(self) -> None:
-        if hasattr(self, "terminal_dock") and hasattr(self, "diagnostics_dock"):
-            self.tabifyDockWidget(self.terminal_dock, self.diagnostics_dock)
-        if hasattr(self, "task_dock"):
-            self.tabifyDockWidget(self.diagnostics_dock, self.task_dock)
-        if hasattr(self, "test_dock"):
-            self.tabifyDockWidget(self.diagnostics_dock, self.test_dock)
-        if hasattr(self, "build_dock"):
-            self.tabifyDockWidget(self.diagnostics_dock, self.build_dock)
-
         optional_right = [
             getattr(self, name)
             for name in (
@@ -542,59 +572,21 @@ class MainWindow(QMainWindow):
         ]
         for dock in bottom_docks:
             dock.hide()
+        if self.bottom_dock_container:
+            self.bottom_dock_container.setVisible(False)
+            if hasattr(self, "toggle_bottom_region"):
+                self.toggle_bottom_region.setChecked(False)
 
         if self.first_run and hasattr(self, "debugger_dock"):
-            self.debugger_dock.show()
+            self._show_and_raise_dock(self.debugger_dock)
 
-        if hasattr(self, "project_dock") and hasattr(self, "ai_dock"):
-            self.resizeDocks([self.project_dock, self.ai_dock], [320, 720], Qt.Horizontal)
-        if hasattr(self, "terminal_dock") and hasattr(self, "diagnostics_dock"):
-            self.resizeDocks([self.terminal_dock, self.diagnostics_dock], [280, 220], Qt.Vertical)
         self._enforce_dock_policies()
 
     def _configure_dock_corners(self) -> None:
-        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
-        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
+        return
 
     def _enforce_dock_policies(self) -> None:
-        left_dock_names = [
-            "project_dock",
-            "diagnostics_dock",
-            "debugger_dock",
-            "task_dock",
-            "test_dock",
-            "architecture_dock",
-            "build_dock",
-            "doc_dock",
-            "git_dock",
-            "coverage_dock",
-            "collab_dock",
-            "agent_console_dock",
-            "pipeline_dock",
-            "runtime_dock",
-        ]
-        for name in left_dock_names:
-            dock = getattr(self, name, None)
-            if not dock:
-                continue
-            dock.setAllowedAreas(Qt.LeftDockWidgetArea)
-            if self.dockWidgetArea(dock) == Qt.RightDockWidgetArea:
-                self.removeDockWidget(dock)
-                self.addDockWidget(Qt.LeftDockWidgetArea, dock)
-
-        ai_dock = getattr(self, "ai_dock", None)
-        if ai_dock:
-            ai_dock.setAllowedAreas(Qt.RightDockWidgetArea)
-            if self.dockWidgetArea(ai_dock) != Qt.RightDockWidgetArea:
-                self.removeDockWidget(ai_dock)
-                self.addDockWidget(Qt.RightDockWidgetArea, ai_dock)
-
-        terminal_dock = getattr(self, "terminal_dock", None)
-        if terminal_dock:
-            terminal_dock.setAllowedAreas(Qt.BottomDockWidgetArea)
-            if self.dockWidgetArea(terminal_dock) != Qt.BottomDockWidgetArea:
-                self.removeDockWidget(terminal_dock)
-                self.addDockWidget(Qt.BottomDockWidgetArea, terminal_dock)
+        self.right_region_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
     def apply_initial_window_state(self, force_maximize: bool = False) -> None:
         window_cfg = self.config.get("window", {}) if self.config else {}
@@ -644,45 +636,39 @@ class MainWindow(QMainWindow):
             self.debugger_panel.set_configured(config_exists)
 
     def _collect_dock_regions(self) -> None:
-        self.left_docks = []
-        self.bottom_docks = []
-        self.right_docks = []
-        for dock in self.findChildren(QDockWidget):
-            if dock is getattr(self, "activity_dock", None):
-                continue
-            area = self.dockWidgetArea(dock)
-            if area == Qt.LeftDockWidgetArea:
-                self.left_docks.append(dock)
-            elif area == Qt.BottomDockWidgetArea:
-                self.bottom_docks.append(dock)
-            elif area == Qt.RightDockWidgetArea:
-                self.right_docks.append(dock)
+        self.left_docks = [self.left_dock_stack.widget(i) for i in range(self.left_dock_stack.count())]
+        self.bottom_docks = [self.bottom_dock_stack.widget(i) for i in range(self.bottom_dock_stack.count())]
+        self.right_docks = [self.right_dock_stack.widget(i) for i in range(self.right_dock_stack.count())]
 
         preferred_left = getattr(self, "project_dock", None)
         primary_left = preferred_left if preferred_left in self.left_docks else (self.left_docks[0] if self.left_docks else None)
         self.primary_left_dock = primary_left
-        for dock in self.left_docks:
-            if dock is not primary_left:
-                dock.hide()
         if primary_left:
-            primary_left.show()
-
+            self.left_dock_stack.setCurrentWidget(primary_left)
         for dock in self.left_docks:
-            dock.visibilityChanged.connect(lambda visible, d=dock: self._enforce_left_exclusivity(d, visible))
+            dock.setVisible(dock is self.left_dock_stack.currentWidget())
+
+        if self.right_docks:
+            self.right_dock_stack.setCurrentWidget(self.right_docks[0])
+        for dock in self.right_docks:
+            dock.setVisible(dock is self.right_dock_stack.currentWidget())
+
+        if self.bottom_docks:
+            self.bottom_dock_stack.setCurrentWidget(self.bottom_docks[0])
+        for dock in self.bottom_docks:
+            dock.setVisible(False)
 
     def _place_left_dock(self, dock: QDockWidget, area: Qt.DockWidgetArea = Qt.LeftDockWidgetArea) -> None:
         dock.setAllowedAreas(Qt.LeftDockWidgetArea)
-        self.addDockWidget(area, dock)
-        if hasattr(self, "activity_dock") and dock is not self.activity_dock:
-            self.splitDockWidget(self.activity_dock, dock, Qt.Horizontal)
+        self.left_dock_stack.addWidget(dock)
 
     def _place_bottom_dock(self, dock: QDockWidget) -> None:
         dock.setAllowedAreas(Qt.BottomDockWidgetArea)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.bottom_dock_stack.addWidget(dock)
 
     def _place_ai_dock(self, dock: QDockWidget) -> None:
         dock.setAllowedAreas(Qt.RightDockWidgetArea)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.right_dock_stack.addWidget(dock)
 
     def _register_dock_action(self, dock: QDockWidget) -> None:
         if hasattr(self, "view_menu"):
@@ -691,18 +677,20 @@ class MainWindow(QMainWindow):
             self.view_menu.addAction(dock.toggleViewAction())
 
     def _connect_dock_toggles(self) -> None:
-        self.toggle_left_region.toggled.connect(lambda visible: self._toggle_region(self.left_docks, visible))
-        self.toggle_bottom_region.toggled.connect(lambda visible: self._toggle_region(self.bottom_docks, visible))
-        self.toggle_right_region.toggled.connect(lambda visible: self._toggle_region(self.right_docks, visible))
+        self.toggle_left_region.toggled.connect(
+            lambda visible: self._toggle_region(getattr(self, "left_region_container", None), visible)
+        )
+        self.toggle_bottom_region.toggled.connect(
+            lambda visible: self._toggle_region(getattr(self, "bottom_dock_container", None), visible)
+        )
+        self.toggle_right_region.toggled.connect(
+            lambda visible: self._toggle_region(getattr(self, "right_region_container", None), visible)
+        )
 
-    def _toggle_region(self, docks: list[QDockWidget], visible: bool) -> None:
-        if docks is getattr(self, "left_docks", None) and visible:
-            target = getattr(self, "primary_left_dock", None) or (docks[0] if docks else None)
-            for dock in docks:
-                dock.setVisible(dock is target)
+    def _toggle_region(self, region_widget: QWidget | None, visible: bool) -> None:
+        if not region_widget:
             return
-        for dock in docks:
-            dock.setVisible(visible)
+        region_widget.setVisible(visible)
 
     def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
         if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
@@ -714,14 +702,7 @@ class MainWindow(QMainWindow):
                 other.hide()
 
     def _create_activity_dock(self) -> None:
-        dock = QDockWidget("", self)
-        dock.setObjectName("activityDock")
-        dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        dock.setTitleBarWidget(QWidget(dock))
-        dock.setAllowedAreas(Qt.LeftDockWidgetArea)
-        dock.setWidget(self.activity_bar)
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
-        self.activity_dock = dock
+        self.activity_dock = QWidget(self)
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
@@ -946,7 +927,7 @@ class MainWindow(QMainWindow):
         dock.setWidget(terminal)
         dock.setMinimumHeight(140)
         dock.setAllowedAreas(Qt.BottomDockWidgetArea)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self._place_bottom_dock(dock)
         self._register_dock_action(dock)
         self.terminal = terminal
         self.terminal_dock = dock
@@ -1198,7 +1179,7 @@ class MainWindow(QMainWindow):
         self.plugin_loader.emit_event("workspace.opened", path=folder)
         self.task_manager.load_workspace_tasks()
         self.semantic_index.reindex()
-        self.stack.setCurrentWidget(self.editor_container)
+        self.central_stack.setCurrentWidget(self.editor_container)
 
     def save_all(self) -> None:
         for editor in self.editor_tabs.iter_editors():
@@ -1330,8 +1311,18 @@ class MainWindow(QMainWindow):
                 self.status.show_message("This tool is coming soon")
             return
         dock.setVisible(True)
-        dock.show()
-        dock.raise_()
+        if dock in getattr(self, "left_docks", []):
+            self.left_dock_stack.setCurrentWidget(dock)
+            self.left_region_container.show()
+            self.toggle_left_region.setChecked(True)
+        elif dock in getattr(self, "right_docks", []):
+            self.right_dock_stack.setCurrentWidget(dock)
+            self.right_region_container.show()
+            self.toggle_right_region.setChecked(True)
+        elif dock in getattr(self, "bottom_docks", []):
+            self.bottom_dock_stack.setCurrentWidget(dock)
+            self.bottom_dock_container.show()
+            self.toggle_bottom_region.setChecked(True)
         if tool_id and hasattr(self, "activity_bar"):
             self.activity_bar.setActiveTool(tool_id)
 
@@ -1371,18 +1362,50 @@ class MainWindow(QMainWindow):
         self._focus_global_search()
 
     def _toggle_project(self) -> None:
-        visible = not self.project_dock.isVisible()
-        self.project_dock.setVisible(visible)
+        if not hasattr(self, "project_dock"):
+            return
+        currently_visible = (
+            self.left_region_container.isVisible()
+            and self.left_dock_stack.currentWidget() is self.project_dock
+            and self.project_dock.isVisible()
+        )
+        if currently_visible:
+            self.left_region_container.setVisible(False)
+            self.toggle_left_region.setChecked(False)
+            return
+        self.left_dock_stack.setCurrentWidget(self.project_dock)
+        self.project_dock.show()
+        self.left_region_container.setVisible(True)
+        self.toggle_left_region.setChecked(True)
 
     def _toggle_terminal(self) -> None:
-        visible = not self.terminal_dock.isVisible()
-        self.terminal_dock.setVisible(visible)
+        if not hasattr(self, "terminal_dock"):
+            return
+        currently_visible = (
+            self.bottom_dock_container.isVisible()
+            and self.bottom_dock_stack.currentWidget() is self.terminal_dock
+            and self.terminal_dock.isVisible()
+        )
+        if currently_visible:
+            self.bottom_dock_container.setVisible(False)
+            self.toggle_bottom_region.setChecked(False)
+            return
+        self.bottom_dock_stack.setCurrentWidget(self.terminal_dock)
+        self.terminal_dock.show()
+        self.bottom_dock_container.setVisible(True)
+        self.toggle_bottom_region.setChecked(True)
 
     def _toggle_architecture_map(self) -> None:
         dock = getattr(self, "architecture_dock", None)
         if not dock:
             return
-        dock.setVisible(not dock.isVisible())
+        if dock.isVisible():
+            dock.hide()
+        else:
+            self.left_dock_stack.setCurrentWidget(dock)
+            dock.show()
+            self.left_region_container.show()
+            self.toggle_left_region.setChecked(True)
 
     def _refresh_architecture_graph(self) -> None:
         dock = getattr(self, "architecture_dock", None)
