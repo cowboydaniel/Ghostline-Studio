@@ -1,10 +1,14 @@
 """Theme helpers for Ghostline Studio."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
+
+from ghostline.core.resources import icons_dir
 
 
 class ThemeManager:
@@ -65,9 +69,19 @@ class ThemeManager:
     def _load_stylesheet(self) -> str:
         style_path = Path(__file__).resolve().parent.parent / "resources" / "styles" / "ghostline_dark.qss"
         try:
-            return style_path.read_text(encoding="utf-8")
+            stylesheet = style_path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return ""
+
+        icons_base = icons_dir().resolve()
+
+        def _replace_icon(match: re.Match[str]) -> str:
+            icon_name = match.group(1)
+            icon_path = (icons_base / icon_name).resolve()
+            url = QUrl.fromLocalFile(str(icon_path)).toString()
+            return f'url("{url}")'
+
+        return re.sub(r"url\(:/icons/([^\)]+)\)", _replace_icon, stylesheet)
 
     def _default_syntax_colors(self) -> dict[str, QColor]:
         return {

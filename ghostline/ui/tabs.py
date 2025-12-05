@@ -9,6 +9,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QTabWidget
 
 from ghostline.core.config import ConfigManager
+from ghostline.core.resources import load_icon
 from ghostline.core.theme import ThemeManager
 from ghostline.editor.code_editor import CodeEditor
 from ghostline.lang.lsp_manager import LSPManager
@@ -52,10 +53,10 @@ class EditorTabs(QTabWidget):
     def _icon_for_file(self, path: Path) -> QIcon:
         suffix = path.suffix.lower()
         if suffix in {".py"}:
-            return QIcon(":/icons/file_python.svg")
+            return load_icon("file_python.svg", fallback="file_generic.svg")
         if suffix in {".json"}:
-            return QIcon(":/icons/file_json.svg")
-        return QIcon(":/icons/file_generic.svg")
+            return load_icon("file_json.svg", fallback="file_generic.svg")
+        return load_icon("file_generic.svg")
 
     def _close_tab(self, index: int) -> None:
         widget = self.widget(index)
