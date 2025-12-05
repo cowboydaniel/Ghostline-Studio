@@ -154,8 +154,14 @@ class GhostlineTitleBar(QWidget):
         self.command_input.returnPressed.connect(self._emit_command_search)
         center_layout.addWidget(self.command_input)
 
-        spacer = QWidget(self)
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        dock_toggle_bar = getattr(self.window, "dock_toggle_bar", None)
+
+        dock_container = QWidget(self)
+        dock_layout = QHBoxLayout(dock_container)
+        dock_layout.setContentsMargins(0, 0, 0, 0)
+        dock_layout.setSpacing(0)
+        if dock_toggle_bar:
+            dock_layout.addWidget(dock_toggle_bar)
 
         right_container = QWidget(self)
         right_layout = QHBoxLayout(right_container)
@@ -179,17 +185,12 @@ class GhostlineTitleBar(QWidget):
         self.close_button.clicked.connect(self.window.close)
         right_layout.addWidget(self.close_button)
 
-        dock_toggle_bar = getattr(self.window, "dock_toggle_bar", None)
-        global_search = getattr(self.window, "global_search_input", None)
-
         layout.addWidget(left_container)
         layout.addWidget(center_container, 1)
-        layout.addWidget(spacer)
-        layout.addWidget(right_container)
         if dock_toggle_bar:
-            layout.addWidget(dock_toggle_bar)
-        if global_search:
-            layout.addWidget(global_search)
+            layout.addWidget(dock_container, 0, Qt.AlignVCenter)
+        layout.addStretch()
+        layout.addWidget(right_container)
 
         self._apply_styles()
         self.update_maximize_icon()
@@ -440,13 +441,6 @@ class MainWindow(QMainWindow):
         self._show_welcome_if_empty()
 
     def _setup_global_search_toolbar(self) -> None:
-        self.global_search_input = QLineEdit(self)
-        self.global_search_input.setPlaceholderText("Search")
-        self.global_search_input.returnPressed.connect(
-            lambda: self._open_global_search(self.global_search_input.text())
-        )
-        self.global_search_input.setFixedWidth(220)
-
         icon_dir = Path(__file__).resolve().parent.parent / "resources" / "icons" / "dock_controls"
 
         def load_icon(name: str) -> QIcon:
@@ -490,13 +484,13 @@ class MainWindow(QMainWindow):
         self.addToolBar(Qt.TopToolBarArea, self.dock_toggle_bar)
 
     def _install_title_bar(self) -> None:
+        self.title_bar = GhostlineTitleBar(self)
+        self.setMenuWidget(self.title_bar)
+
         container = QWidget(self)
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
-        self.title_bar = GhostlineTitleBar(self)
-        layout.addWidget(self.title_bar)
         layout.addWidget(self.stack)
 
         self.setCentralWidget(container)
@@ -1366,10 +1360,12 @@ class MainWindow(QMainWindow):
     def _focus_global_search(self) -> None:
         if hasattr(self, "activity_bar"):
             self.activity_bar.setActiveTool("search")
-        if hasattr(self, "global_search_input"):
-            self.global_search_input.setFocus()
-            self.global_search_input.selectAll()
-        self._open_global_search(self.global_search_input.text() if hasattr(self, "global_search_input") else None)
+        query: str | None = None
+        if hasattr(self, "title_bar") and hasattr(self.title_bar, "command_input"):
+            query = self.title_bar.command_input.text()
+            self.title_bar.command_input.setFocus()
+            self.title_bar.command_input.selectAll()
+        self._open_global_search(query)
 
     def _trigger_global_search_action(self) -> None:
         self._focus_global_search()
