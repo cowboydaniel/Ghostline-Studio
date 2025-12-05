@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file>icons/file_generic.svg</file>
+        <file>icons/file_python.svg</file>
+        <file>icons/close_small.svg</file>
+        <file>icons/close_small_hover.svg</file>
+    </qresource>
+</RCC>
