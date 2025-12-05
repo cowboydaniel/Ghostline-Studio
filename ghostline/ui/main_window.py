@@ -323,6 +323,9 @@ class MainWindow(QMainWindow):
         self.git_service = GitService(self.workspace_manager.current_workspace)
         self.first_run = not bool(self.config.get("first_run_completed", False))
         self._recent_files_by_workspace: dict[str, list[str]] = {}
+        self.left_docks: list[QDockWidget] = []
+        self.bottom_docks: list[QDockWidget] = []
+        self.right_docks: list[QDockWidget] = []
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -421,7 +424,10 @@ class MainWindow(QMainWindow):
         self.lsp_manager.lsp_notice.connect(lambda msg: self.status.show_message(msg))
         self.plugin_loader.load_all()
         self.task_manager.load_workspace_tasks()
+        self._configure_dock_corners()
         self._apply_initial_layout()
+        self._collect_dock_regions()
+        self._connect_dock_toggles()
         self._update_workspace_state()
         self._show_welcome_if_empty()
 
@@ -435,18 +441,34 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Global Search", self)
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
 
         left_spacer = QWidget(toolbar)
         left_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        right_spacer = QWidget(toolbar)
-        right_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        def build_toggle(icon: QStyle.StandardPixmap, tooltip: str) -> QAction:
+            action = QAction(self.style().standardIcon(icon), "", self)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.setToolTip(tooltip)
+            button = QToolButton(toolbar)
+            button.setDefaultAction(action)
+            button.setAutoRaise(True)
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            widget_action = QWidgetAction(toolbar)
+            widget_action.setDefaultWidget(button)
+            toolbar.addAction(widget_action)
+            return action
 
         search_action = QWidgetAction(toolbar)
         search_action.setDefaultWidget(self.global_search_input)
 
         toolbar.addWidget(left_spacer)
+        self.toggle_left_region = build_toggle(QStyle.SP_ArrowLeft, "Toggle left docks")
+        self.toggle_bottom_region = build_toggle(QStyle.SP_ArrowDown, "Toggle bottom docks")
+        self.toggle_right_region = build_toggle(QStyle.SP_ArrowRight, "Toggle right docks")
+        toolbar.addSeparator()
         toolbar.addAction(search_action)
-        toolbar.addWidget(right_spacer)
 
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         self.global_search_toolbar = toolbar
@@ -520,6 +542,10 @@ class MainWindow(QMainWindow):
             self.resizeDocks([self.terminal_dock, self.diagnostics_dock], [280, 220], Qt.Vertical)
         self._enforce_dock_policies()
 
+    def _configure_dock_corners(self) -> None:
+        self.setCorner(Qt.BottomLeftCorner, Qt.LeftDockWidgetArea)
+        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
+
     def _enforce_dock_policies(self) -> None:
         left_dock_names = [
             "project_dock",
@@ -541,7 +567,7 @@ class MainWindow(QMainWindow):
             dock = getattr(self, name, None)
             if not dock:
                 continue
-            dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+            dock.setAllowedAreas(Qt.LeftDockWidgetArea)
             if self.dockWidgetArea(dock) == Qt.RightDockWidgetArea:
                 self.removeDockWidget(dock)
                 self.addDockWidget(Qt.LeftDockWidgetArea, dock)
@@ -607,12 +633,37 @@ class MainWindow(QMainWindow):
             config_exists = bool(workspace and (Path(workspace) / ".vscode" / "launch.json").exists())
             self.debugger_panel.set_configured(config_exists)
 
+    def _collect_dock_regions(self) -> None:
+        self.left_docks = []
+        self.bottom_docks = []
+        self.right_docks = []
+        for dock in self.findChildren(QDockWidget):
+            area = self.dockWidgetArea(dock)
+            if area == Qt.LeftDockWidgetArea:
+                self.left_docks.append(dock)
+            elif area == Qt.BottomDockWidgetArea:
+                self.bottom_docks.append(dock)
+            elif area == Qt.RightDockWidgetArea:
+                self.right_docks.append(dock)
+
+        preferred_left = getattr(self, "project_dock", None)
+        primary_left = preferred_left if preferred_left in self.left_docks else (self.left_docks[0] if self.left_docks else None)
+        self.primary_left_dock = primary_left
+        for dock in self.left_docks:
+            if dock is not primary_left:
+                dock.hide()
+        if primary_left:
+            primary_left.show()
+
+        for dock in self.left_docks:
+            dock.visibilityChanged.connect(lambda visible, d=dock: self._enforce_left_exclusivity(d, visible))
+
     def _place_left_dock(self, dock: QDockWidget, area: Qt.DockWidgetArea = Qt.LeftDockWidgetArea) -> None:
-        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea)
         self.addDockWidget(area, dock)
 
     def _place_bottom_dock(self, dock: QDockWidget) -> None:
-        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
+        dock.setAllowedAreas(Qt.BottomDockWidgetArea)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
 
     def _place_ai_dock(self, dock: QDockWidget) -> None:
@@ -624,6 +675,29 @@ class MainWindow(QMainWindow):
             if dock.objectName() in {"projectDock", "terminalDock", "architectureDock"}:
                 return
             self.view_menu.addAction(dock.toggleViewAction())
+
+    def _connect_dock_toggles(self) -> None:
+        self.toggle_left_region.toggled.connect(lambda visible: self._toggle_region(self.left_docks, visible))
+        self.toggle_bottom_region.toggled.connect(lambda visible: self._toggle_region(self.bottom_docks, visible))
+        self.toggle_right_region.toggled.connect(lambda visible: self._toggle_region(self.right_docks, visible))
+
+    def _toggle_region(self, docks: list[QDockWidget], visible: bool) -> None:
+        if docks is getattr(self, "left_docks", None) and visible:
+            target = getattr(self, "primary_left_dock", None) or (docks[0] if docks else None)
+            for dock in docks:
+                dock.setVisible(dock is target)
+            return
+        for dock in docks:
+            dock.setVisible(visible)
+
+    def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
+        if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
+            return
+        for other in self.left_docks:
+            if other is dock:
+                continue
+            if other.isVisible() and not other.isFloating() and self.dockWidgetArea(other) == Qt.LeftDockWidgetArea:
+                other.hide()
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
