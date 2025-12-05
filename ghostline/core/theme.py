@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -72,11 +73,13 @@ class ThemeManager:
         except FileNotFoundError:
             return ""
 
-        icons_base = icons_dir().resolve().as_uri()
+        icons_base = icons_dir().resolve()
 
         def _replace_icon(match: re.Match[str]) -> str:
             icon_name = match.group(1)
-            return f'url("{icons_base}/{icon_name}")'
+            icon_path = (icons_base / icon_name).resolve()
+            url = QUrl.fromLocalFile(str(icon_path)).toString()
+            return f'url("{url}")'
 
         return re.sub(r"url\(:/icons/([^\)]+)\)", _replace_icon, stylesheet)
 
