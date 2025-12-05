@@ -32,13 +32,16 @@ class WelcomePortal(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(48, 48, 48, 48)
         layout.setSpacing(16)
+        layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 
-        self.container = QWidget()
-        container_layout = QVBoxLayout(self.container)
+        self._content_widget = QWidget(self)
+        self._content_widget.setMaximumWidth(560)
+
+        container_layout = QVBoxLayout(self._content_widget)
         container_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         container_layout.setSpacing(16)
 
-        center_card = QWidget(self.container)
+        center_card = QWidget(self._content_widget)
         center_card.setMaximumWidth(540)
         card_layout = QVBoxLayout(center_card)
         card_layout.setContentsMargins(0, 0, 0, 0)
@@ -63,7 +66,7 @@ class WelcomePortal(QWidget):
         card_layout.addWidget(self.recent)
 
         container_layout.addWidget(center_card, alignment=Qt.AlignHCenter)
-        layout.addWidget(self.container)
+        layout.addWidget(self._content_widget, alignment=Qt.AlignHCenter)
         layout.addStretch(1)
 
     def set_recents(self, items: list[str]) -> None:

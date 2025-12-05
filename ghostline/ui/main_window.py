@@ -364,21 +364,28 @@ class MainWindow(QMainWindow):
         self.central_stack.addWidget(self.editor_container)
 
         self.left_region_container = QWidget(self)
-        left_region_layout = QVBoxLayout(self.left_region_container)
-        left_region_layout.setContentsMargins(0, 0, 0, 0)
-        left_region_layout.setSpacing(0)
-        left_region_layout.addWidget(self.activity_bar, 0, Qt.AlignTop)
+        self.left_region_layout = QVBoxLayout(self.left_region_container)
+        self.left_region_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_region_layout.setSpacing(0)
+        self.left_region_layout.addWidget(self.activity_bar, 0, Qt.AlignTop)
         self.left_dock_stack = QStackedWidget(self.left_region_container)
-        left_region_layout.addWidget(self.left_dock_stack, 1)
+        self.left_region_layout.addWidget(self.left_dock_stack, 1)
+
+        self.central_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.right_region_container = QWidget(self)
-        right_region_layout = QVBoxLayout(self.right_region_container)
-        right_region_layout.setContentsMargins(0, 0, 0, 0)
-        right_region_layout.setSpacing(0)
+        self.right_region_layout = QVBoxLayout(self.right_region_container)
+        self.right_region_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_region_layout.setSpacing(0)
         self.right_dock_stack = QStackedWidget(self.right_region_container)
-        right_region_layout.addWidget(self.right_dock_stack)
-        self.right_region_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self.right_region_container.setMinimumWidth(320)
+        self.right_region_layout.addWidget(self.right_dock_stack)
+
+        self.left_region_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.right_region_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+
+        self.left_region_container.setMinimumWidth(220)
+        self.central_stack.setMinimumWidth(400)
+        self.right_region_container.setMinimumWidth(260)
 
         self.main_splitter = QSplitter(Qt.Horizontal, self)
         self.main_splitter.setChildrenCollapsible(False)
@@ -388,6 +395,11 @@ class MainWindow(QMainWindow):
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
         self.main_splitter.setStretchFactor(2, 0)
+
+        total_width = self.width() or 1400
+        self.main_splitter.setSizes(
+            [int(total_width * 0.22), int(total_width * 0.48), int(total_width * 0.30)]
+        )
 
         self.bottom_dock_container = QWidget(self)
         bottom_layout = QVBoxLayout(self.bottom_dock_container)
@@ -678,19 +690,19 @@ class MainWindow(QMainWindow):
 
     def _connect_dock_toggles(self) -> None:
         self.toggle_left_region.toggled.connect(
-            lambda visible: self._toggle_region(getattr(self, "left_region_container", None), visible)
+            lambda visible: self._toggle_region_widget(getattr(self, "left_region_container", None), visible)
         )
         self.toggle_bottom_region.toggled.connect(
-            lambda visible: self._toggle_region(getattr(self, "bottom_dock_container", None), visible)
+            lambda visible: self._toggle_region_widget(getattr(self, "bottom_dock_container", None), visible)
         )
         self.toggle_right_region.toggled.connect(
-            lambda visible: self._toggle_region(getattr(self, "right_region_container", None), visible)
+            lambda visible: self._toggle_region_widget(getattr(self, "right_region_container", None), visible)
         )
 
-    def _toggle_region(self, region_widget: QWidget | None, visible: bool) -> None:
-        if not region_widget:
+    def _toggle_region_widget(self, widget: QWidget | None, visible: bool) -> None:
+        if not widget:
             return
-        region_widget.setVisible(visible)
+        widget.setVisible(visible)
 
     def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
         if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
