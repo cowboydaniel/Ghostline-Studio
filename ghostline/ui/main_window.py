@@ -441,18 +441,34 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Global Search", self)
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
 
         left_spacer = QWidget(toolbar)
         left_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        right_spacer = QWidget(toolbar)
-        right_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        def build_toggle(icon: QStyle.StandardPixmap, tooltip: str) -> QAction:
+            action = QAction(self.style().standardIcon(icon), "", self)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.setToolTip(tooltip)
+            button = QToolButton(toolbar)
+            button.setDefaultAction(action)
+            button.setAutoRaise(True)
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            widget_action = QWidgetAction(toolbar)
+            widget_action.setDefaultWidget(button)
+            toolbar.addAction(widget_action)
+            return action
 
         search_action = QWidgetAction(toolbar)
         search_action.setDefaultWidget(self.global_search_input)
 
         toolbar.addWidget(left_spacer)
+        self.toggle_left_region = build_toggle(QStyle.SP_ArrowLeft, "Toggle left docks")
+        self.toggle_bottom_region = build_toggle(QStyle.SP_ArrowDown, "Toggle bottom docks")
+        self.toggle_right_region = build_toggle(QStyle.SP_ArrowRight, "Toggle right docks")
+        toolbar.addSeparator()
         toolbar.addAction(search_action)
-        toolbar.addWidget(right_spacer)
 
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         self.global_search_toolbar = toolbar
