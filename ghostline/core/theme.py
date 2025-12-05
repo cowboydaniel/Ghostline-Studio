@@ -78,7 +78,10 @@ class ThemeManager:
         def _replace_icon(match: re.Match[str]) -> str:
             icon_name = match.group(1)
             icon_path = (icons_base / icon_name).resolve()
-            url = QUrl.fromLocalFile(str(icon_path)).toString()
+            # Use an explicit file URI so Qt does not treat the value as a relative
+            # path and prepend the current working directory (which produced
+            # paths such as `/path/to/app/file:/path/to/app/...`).
+            url = icon_path.as_uri()
             return f'url("{url}")'
 
         return re.sub(r"url\(:/icons/([^\)]+)\)", _replace_icon, stylesheet)
