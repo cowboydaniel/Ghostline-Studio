@@ -364,12 +364,20 @@ class MainWindow(QMainWindow):
         self.central_stack.addWidget(self.editor_container)
 
         self.left_region_container = QWidget(self)
-        self.left_region_layout = QVBoxLayout(self.left_region_container)
+        self.left_region_layout = QHBoxLayout(self.left_region_container)
         self.left_region_layout.setContentsMargins(0, 0, 0, 0)
         self.left_region_layout.setSpacing(0)
-        self.left_region_layout.addWidget(self.activity_bar, 0, Qt.AlignTop)
-        self.left_dock_stack = QStackedWidget(self.left_region_container)
-        self.left_region_layout.addWidget(self.left_dock_stack, 1)
+        self.activity_bar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.left_region_layout.addWidget(self.activity_bar)
+        self.left_dock_container = QWidget(self.left_region_container)
+        self.left_dock_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.left_dock_container.setMinimumWidth(220)
+        left_dock_layout = QVBoxLayout(self.left_dock_container)
+        left_dock_layout.setContentsMargins(0, 0, 0, 0)
+        left_dock_layout.setSpacing(0)
+        self.left_dock_stack = QStackedWidget(self.left_dock_container)
+        left_dock_layout.addWidget(self.left_dock_stack)
+        self.left_region_layout.addWidget(self.left_dock_container, 1)
 
         self.central_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -381,9 +389,11 @@ class MainWindow(QMainWindow):
         self.right_region_layout.addWidget(self.right_dock_stack)
 
         self.left_region_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.left_region_container.setMinimumWidth(
+            self.left_dock_container.minimumWidth() + self.activity_bar.sizeHint().width()
+        )
         self.right_region_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
-        self.left_region_container.setMinimumWidth(220)
         self.central_stack.setMinimumWidth(400)
         self.right_region_container.setMinimumWidth(260)
 
@@ -689,9 +699,7 @@ class MainWindow(QMainWindow):
             self.view_menu.addAction(dock.toggleViewAction())
 
     def _connect_dock_toggles(self) -> None:
-        self.toggle_left_region.toggled.connect(
-            lambda visible: self._toggle_region_widget(getattr(self, "left_region_container", None), visible)
-        )
+        self.toggle_left_region.toggled.connect(self._set_left_docks_visible)
         self.toggle_bottom_region.toggled.connect(
             lambda visible: self._toggle_region_widget(getattr(self, "bottom_dock_container", None), visible)
         )
@@ -703,6 +711,34 @@ class MainWindow(QMainWindow):
         if not widget:
             return
         widget.setVisible(visible)
+
+    def _set_left_docks_visible(self, visible: bool) -> None:
+        if not hasattr(self, "left_dock_container"):
+            return
+
+        self.left_dock_container.setVisible(visible)
+        activity_bar_width = self.activity_bar.sizeHint().width()
+        min_width = (
+            self.left_dock_container.minimumWidth() + activity_bar_width if visible else activity_bar_width
+        )
+        self.left_region_container.setMinimumWidth(min_width)
+        self.left_region_container.setMaximumWidth(16777215 if visible else min_width)
+
+        if hasattr(self, "main_splitter"):
+            sizes = self.main_splitter.sizes()
+            if visible:
+                previous = getattr(self, "_left_region_previous_size", None)
+                if previous is not None:
+                    sizes[0] = previous
+            else:
+                self._left_region_previous_size = sizes[0]
+                sizes[0] = max(min_width, activity_bar_width)
+            self.main_splitter.setSizes(sizes)
+
+        if visible:
+            current = self.left_dock_stack.currentWidget()
+            if current:
+                current.show()
 
     def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
         if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
@@ -1325,7 +1361,7 @@ class MainWindow(QMainWindow):
         dock.setVisible(True)
         if dock in getattr(self, "left_docks", []):
             self.left_dock_stack.setCurrentWidget(dock)
-            self.left_region_container.show()
+            self._set_left_docks_visible(True)
             self.toggle_left_region.setChecked(True)
         elif dock in getattr(self, "right_docks", []):
             self.right_dock_stack.setCurrentWidget(dock)
@@ -1377,17 +1413,17 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "project_dock"):
             return
         currently_visible = (
-            self.left_region_container.isVisible()
+            self.left_dock_container.isVisible()
             and self.left_dock_stack.currentWidget() is self.project_dock
             and self.project_dock.isVisible()
         )
         if currently_visible:
-            self.left_region_container.setVisible(False)
+            self._set_left_docks_visible(False)
             self.toggle_left_region.setChecked(False)
             return
         self.left_dock_stack.setCurrentWidget(self.project_dock)
         self.project_dock.show()
-        self.left_region_container.setVisible(True)
+        self._set_left_docks_visible(True)
         self.toggle_left_region.setChecked(True)
 
     def _toggle_terminal(self) -> None:
@@ -1416,7 +1452,7 @@ class MainWindow(QMainWindow):
         else:
             self.left_dock_stack.setCurrentWidget(dock)
             dock.show()
-            self.left_region_container.show()
+            self._set_left_docks_visible(True)
             self.toggle_left_region.setChecked(True)
 
     def _refresh_architecture_graph(self) -> None:
