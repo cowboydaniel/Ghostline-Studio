@@ -29,8 +29,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QStyle,
-    QToolBar,
-    QWidgetAction,
 )
 
 from ghostline.core.config import ConfigManager
@@ -179,10 +177,17 @@ class GhostlineTitleBar(QWidget):
         self.close_button.clicked.connect(self.window.close)
         right_layout.addWidget(self.close_button)
 
+        dock_toggle_bar = getattr(self.window, "dock_toggle_bar", None)
+        global_search = getattr(self.window, "global_search_input", None)
+
         layout.addWidget(left_container)
         layout.addWidget(center_container, 1)
         layout.addWidget(spacer)
         layout.addWidget(right_container)
+        if dock_toggle_bar:
+            layout.addWidget(dock_toggle_bar)
+        if global_search:
+            layout.addWidget(global_search)
 
         self._apply_styles()
         self.update_maximize_icon()
@@ -343,7 +348,6 @@ class MainWindow(QMainWindow):
         editor_layout = QHBoxLayout(self.editor_container)
         editor_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.setSpacing(0)
-        editor_layout.addWidget(self.activity_bar)
         editor_layout.addWidget(self.editor_tabs, 1)
 
         self.welcome_portal = WelcomePortal(self)
@@ -402,6 +406,7 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_menus()
         self._install_title_bar()
+        self._create_activity_dock()
         self._create_terminal_dock()
         self._create_project_dock()
         self._create_ai_dock()
@@ -438,41 +443,31 @@ class MainWindow(QMainWindow):
         self.global_search_input.returnPressed.connect(
             lambda: self._open_global_search(self.global_search_input.text())
         )
+        self.global_search_input.setFixedWidth(220)
 
-        toolbar = QToolBar("Global Search", self)
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        toggle_container = QWidget(self)
+        toggle_layout = QHBoxLayout(toggle_container)
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        toggle_layout.setSpacing(4)
 
-        left_spacer = QWidget(toolbar)
-        left_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-        def build_toggle(icon: QStyle.StandardPixmap, tooltip: str) -> QAction:
+        def build_toggle(icon: QStyle.StandardPixmap, tooltip: str) -> tuple[QAction, QToolButton]:
             action = QAction(self.style().standardIcon(icon), "", self)
             action.setCheckable(True)
             action.setChecked(True)
             action.setToolTip(tooltip)
-            button = QToolButton(toolbar)
+            button = QToolButton(toggle_container)
             button.setDefaultAction(action)
             button.setAutoRaise(True)
             button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-            widget_action = QWidgetAction(toolbar)
-            widget_action.setDefaultWidget(button)
-            toolbar.addAction(widget_action)
-            return action
+            toggle_layout.addWidget(button)
+            return action, button
 
-        search_action = QWidgetAction(toolbar)
-        search_action.setDefaultWidget(self.global_search_input)
+        self.toggle_left_region, _ = build_toggle(QStyle.SP_ArrowLeft, "Toggle left docks")
+        self.toggle_bottom_region, _ = build_toggle(QStyle.SP_ArrowDown, "Toggle bottom docks")
+        self.toggle_right_region, _ = build_toggle(QStyle.SP_ArrowRight, "Toggle right docks")
 
-        toolbar.addWidget(left_spacer)
-        self.toggle_left_region = build_toggle(QStyle.SP_ArrowLeft, "Toggle left docks")
-        self.toggle_bottom_region = build_toggle(QStyle.SP_ArrowDown, "Toggle bottom docks")
-        self.toggle_right_region = build_toggle(QStyle.SP_ArrowRight, "Toggle right docks")
-        toolbar.addSeparator()
-        toolbar.addAction(search_action)
-
-        self.addToolBar(Qt.TopToolBarArea, toolbar)
-        self.global_search_toolbar = toolbar
+        toggle_layout.addStretch(1)
+        self.dock_toggle_bar = toggle_container
 
         self.dock_toggle_bar = QToolBar("Dock Visibility", self)
         self.dock_toggle_bar.setMovable(False)
@@ -668,6 +663,8 @@ class MainWindow(QMainWindow):
         self.bottom_docks = []
         self.right_docks = []
         for dock in self.findChildren(QDockWidget):
+            if dock is getattr(self, "activity_dock", None):
+                continue
             area = self.dockWidgetArea(dock)
             if area == Qt.LeftDockWidgetArea:
                 self.left_docks.append(dock)
@@ -691,6 +688,8 @@ class MainWindow(QMainWindow):
     def _place_left_dock(self, dock: QDockWidget, area: Qt.DockWidgetArea = Qt.LeftDockWidgetArea) -> None:
         dock.setAllowedAreas(Qt.LeftDockWidgetArea)
         self.addDockWidget(area, dock)
+        if hasattr(self, "activity_dock") and dock is not self.activity_dock:
+            self.splitDockWidget(self.activity_dock, dock, Qt.Horizontal)
 
     def _place_bottom_dock(self, dock: QDockWidget) -> None:
         dock.setAllowedAreas(Qt.BottomDockWidgetArea)
@@ -702,7 +701,7 @@ class MainWindow(QMainWindow):
 
     def _register_dock_action(self, dock: QDockWidget) -> None:
         if hasattr(self, "view_menu"):
-            if dock.objectName() in {"projectDock", "terminalDock", "architectureDock"}:
+            if dock.objectName() in {"projectDock", "terminalDock", "architectureDock", "activityDock"}:
                 return
             self.view_menu.addAction(dock.toggleViewAction())
 
@@ -728,6 +727,16 @@ class MainWindow(QMainWindow):
                 continue
             if other.isVisible() and not other.isFloating() and self.dockWidgetArea(other) == Qt.LeftDockWidgetArea:
                 other.hide()
+
+    def _create_activity_dock(self) -> None:
+        dock = QDockWidget("", self)
+        dock.setObjectName("activityDock")
+        dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
+        dock.setTitleBarWidget(QWidget(dock))
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea)
+        dock.setWidget(self.activity_bar)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self.activity_dock = dock
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
