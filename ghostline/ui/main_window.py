@@ -716,6 +716,18 @@ class MainWindow(QMainWindow):
         self.left_dock_container.setVisible(visible)
         min_width = self.left_dock_container.minimumWidth() if visible else self.activity_bar.width()
         self.left_region_container.setMinimumWidth(min_width)
+        self.left_region_container.setMaximumWidth(16777215 if visible else min_width)
+
+        if hasattr(self, "main_splitter"):
+            sizes = self.main_splitter.sizes()
+            if visible:
+                previous = getattr(self, "_left_region_previous_size", None)
+                if previous is not None:
+                    sizes[0] = previous
+            else:
+                self._left_region_previous_size = sizes[0]
+                sizes[0] = max(min_width, self.activity_bar.sizeHint().width())
+            self.main_splitter.setSizes(sizes)
 
         if visible:
             current = self.left_dock_stack.currentWidget()
