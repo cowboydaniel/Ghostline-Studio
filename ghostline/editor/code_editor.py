@@ -164,7 +164,9 @@ class CodeEditor(QPlainTextEdit):
         )
 
     def _update_line_number_area_width(self, _=None) -> None:
-        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+        # Left margin for gutter, small top margin so code does not stick
+        # directly to the tab strip (more like Windsurf).
+        self.setViewportMargins(self.line_number_area_width(), 4, 0, 0)
 
     def _update_line_number_area(self, rect, dy) -> None:
         if dy:
@@ -209,6 +211,11 @@ class CodeEditor(QPlainTextEdit):
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
+
+        # Vertical divider between gutter and code area.
+        gutter_right = self.line_number_area.width() - 1
+        painter.setPen(self.theme.color(QPalette.Dark) if self.theme else QColor(55, 55, 60))
+        painter.drawLine(gutter_right, event.rect().top(), gutter_right, event.rect().bottom())
 
     def _block_at_position(self, y: float):
         block = self.firstVisibleBlock()
@@ -301,6 +308,9 @@ class CodeEditor(QPlainTextEdit):
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
             line_color = self.theme.color(QPalette.AlternateBase) if self.theme else QColor(60, 65, 70)
+            # Softer, translucent band across the full width, Windsurf-style.
+            line_color = QColor(line_color)
+            line_color.setAlpha(80)
             selection.format.setBackground(line_color)
             selection.format.setProperty(QTextFormat.FullWidthSelection, True)
             selection.cursor = self.textCursor()

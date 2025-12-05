@@ -11,11 +11,13 @@ class MiniMap(QPlainTextEdit):
     def __init__(self, editor: QPlainTextEdit) -> None:
         super().__init__(editor)
         self.editor = editor
+        self.setObjectName("MiniMap")
         self.setReadOnly(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.setStyleSheet("font-size:8px; color: #888;")
+        # Colors and background now come from QSS; keep only the tiny font size here.
+        self.setStyleSheet("font-size: 8px;")
         self.setFixedWidth(120)
         self._syncing = False
         self.hide()

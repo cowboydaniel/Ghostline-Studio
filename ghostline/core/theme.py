@@ -35,8 +35,9 @@ class ThemeManager:
         palette = QPalette()
         palette.setColor(QPalette.Window, QColor("#15161a"))
         palette.setColor(QPalette.WindowText, QColor("#e0e0e0"))
-        palette.setColor(QPalette.Base, QColor("#1e1f24"))
-        palette.setColor(QPalette.AlternateBase, QColor("#1b1c22"))
+        # Editor base and current line background
+        palette.setColor(QPalette.Base, QColor("#1a1b1f"))
+        palette.setColor(QPalette.AlternateBase, QColor("#22232a"))
         palette.setColor(QPalette.ToolTipBase, QColor("#1e1f24"))
         palette.setColor(QPalette.ToolTipText, QColor("#e0e0e0"))
         palette.setColor(QPalette.Text, QColor("#e0e0e0"))
@@ -47,6 +48,8 @@ class ThemeManager:
         palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
         palette.setColor(QPalette.Link, QColor("#4f8cff"))
         palette.setColor(QPalette.LinkVisited, QColor("#a68cff"))
+        # Used for gutter divider etc
+        palette.setColor(QPalette.Dark, QColor("#111219"))
         return palette
 
     def _preferred_font(self) -> QFont:

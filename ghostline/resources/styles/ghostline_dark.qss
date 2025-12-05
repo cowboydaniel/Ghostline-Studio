@@ -121,11 +121,23 @@ QComboBox,
 QSpinBox,
 QTextEdit,
 QPlainTextEdit {
-    background-color: #1b1c22;
-    color: #f0f0f0;
-    border: 1px solid #2b2d34;
-    border-radius: 3px;
-    padding: 6px;
+    /* Flat, full-bleed editor surface similar to Windsurf */
+    background-color: #1a1b1f;
+    color: #f3f3f3;
+    border: none;
+    border-radius: 0;
+    padding: 8px 10px;
+}
+
+/* Minimap strip on the right */
+QPlainTextEdit#MiniMap {
+    background-color: #101117;
+    color: #6c6f82;
+    border-left: 1px solid #2b2d34;
+    border-top: none;
+    border-right: none;
+    border-bottom: none;
+    padding: 0;
 }
 
 QLineEdit:focus,
