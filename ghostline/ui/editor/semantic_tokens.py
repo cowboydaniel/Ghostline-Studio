@@ -81,32 +81,52 @@ class SemanticTokenProvider:
 
     # Custom tokenization for Python
     def custom_tokens(self, text: str) -> list[SemanticToken]:
-        """Produce a basic semantic token set for Python code."""
+        """Produce a basic semantic token set for Python code.
 
-        tokens: list[SemanticToken] = []
-        lines = text.splitlines(keepends=True)
+        This is intentionally defensive: if anything inside the regex-based
+        logic misbehaves (including RecursionError on Python 3.12), we just
+        fall back to no semantic tokens rather than crashing the editor.
+        """
+        try:
+            tokens: list[SemanticToken] = []
+            lines = text.splitlines(keepends=True)
 
-        for lineno, line in enumerate(lines):
-            tokens.extend(self._function_and_class_tokens(lineno, line))
-            tokens.extend(self._dunder_tokens(lineno, line))
-            tokens.extend(self._import_tokens(lineno, line))
-            tokens.extend(self._type_hint_tokens(lineno, line))
+            for lineno, line in enumerate(lines):
+                tokens.extend(self._function_and_class_tokens(lineno, line))
+                tokens.extend(self._dunder_tokens(lineno, line))
+                tokens.extend(self._import_tokens(lineno, line))
+                tokens.extend(self._type_hint_tokens(lineno, line))
 
-        tokens.extend(self._docstring_tokens(text))
-        tokens.extend(self._fstring_tokens(text))
-        return tokens
+            tokens.extend(self._docstring_tokens(text))
+            tokens.extend(self._fstring_tokens(text))
+            return tokens
+        except RecursionError:
+            return []
+        except Exception:
+            return []
 
     def _function_and_class_tokens(self, lineno: int, line: str) -> list[SemanticToken]:
-        matches = []
+        matches: list[SemanticToken] = []
         for pattern, token_type in (
             (r"^\s*def\s+([A-Za-z_][\w]*)", "function"),
             (r"^\s*class\s+([A-Za-z_][\w]*)", "class"),
         ):
-            for match in re.finditer(pattern, line):
-                name = match.group(1)
-                matches.append(
-                    SemanticToken(line=lineno, start=match.start(1), length=len(name), token_type=token_type)
-                )
+            try:
+                for match in re.finditer(pattern, line):
+                    name = match.group(1)
+                    matches.append(
+                        SemanticToken(
+                            line=lineno,
+                            start=match.start(1),
+                            length=len(name),
+                            token_type=token_type,
+                        )
+                    )
+            except RecursionError:
+                # If the regex engine gets into trouble, skip this line.
+                continue
+            except Exception:
+                continue
         return matches
 
     def _dunder_tokens(self, lineno: int, line: str) -> list[SemanticToken]:
