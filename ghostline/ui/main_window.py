@@ -1358,8 +1358,15 @@ class MainWindow(QMainWindow):
             if hasattr(self, "lsp_manager") and self.lsp_manager:
                 try:
                     self.lsp_manager.shutdown()
+                    logger.debug(
+                        "LSP manager shutdown invoked during application close; remaining clients: %s",
+                        getattr(self.lsp_manager, "clients", {}),
+                    )
                 except Exception:
-                    pass
+                    logger.debug(
+                        "LSP manager shutdown encountered an error during application close",
+                        exc_info=True,
+                    )
         except Exception:
             pass
 
