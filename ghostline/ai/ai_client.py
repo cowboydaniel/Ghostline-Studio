@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Generator
 from urllib import request
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 from openai import OpenAI
 
@@ -180,6 +180,7 @@ class AIClient:
     def __init__(self, config: ConfigManager) -> None:
         self.config = config
         self.logger = get_logger(__name__)
+        self._http_error_counts: dict[str, int] = {}
         ai_settings = self.config.get("ai", {}) if self.config else {}
         self.settings = SimpleNamespace(allow_openai=bool(ai_settings.get("allow_openai", True)))
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
@@ -238,6 +239,41 @@ class AIClient:
             backend.model = model.id  # type: ignore[attr-defined]
         return backend, backend_type
 
+    def _friendly_http_error(self, backend: object, status: int) -> str:
+        endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
+        if status == 404:
+            hint = (
+                "Check the `ai.endpoint` path (Ollama default: /api/generate) "
+                "or OpenAI-style base URL ending with /v1, and verify the model name."
+            )
+            return f"AI backend at {endpoint} returned 404 (not found). {hint}"
+        if status == 401:
+            hint = "Verify your API key or token in settings for this endpoint."
+            return f"AI backend at {endpoint} returned 401 (unauthorized). {hint}"
+        return f"AI backend at {endpoint} returned HTTP {status}."
+
+    def _record_http_error(self, backend: object, status: int) -> str | None:
+        backend_name = getattr(backend, "name", None)
+        if status not in {401, 404} or not backend_name or not isinstance(backend, HTTPBackend):
+            return None
+
+        count = self._http_error_counts.get(backend_name, 0) + 1
+        self._http_error_counts[backend_name] = count
+
+        if count > 1:
+            endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
+            dummy = DummyBackend(self.config)
+            setattr(dummy, "name", backend_name)
+            self._backends[backend_name] = dummy
+            self.logger.warning(
+                "Switching AI backend '%s' to DummyBackend after repeated HTTP %s responses from %s.",
+                backend_name,
+                status,
+                endpoint,
+            )
+            return "Repeated authentication or routing failures detected; switched to the local echo fallback for this session."
+        return None
+
     def send(self, prompt: str, context: str | None = None, model: ModelDescriptor | None = None) -> AIResponse:
         if self.disabled:
             return AIResponse(text="AI backend disabled due to previous errors.")
@@ -248,6 +284,13 @@ class AIClient:
         self.active_model = model or self.active_model
         try:
             return backend.send(prompt, context)
+        except HTTPError as exc:
+            message = self._friendly_http_error(backend, getattr(exc, "code", 0))
+            fallback_note = self._record_http_error(backend, getattr(exc, "code", 0))
+            if fallback_note:
+                message = f"{message} {fallback_note}"
+            self.logger.error("HTTP error from AI backend: %s", exc)
+            return AIResponse(text=message)
         except TimeoutError:
             timeout = getattr(backend, "timeout", None) or getattr(backend, "timeout_seconds", None)
             endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
@@ -307,6 +350,13 @@ class AIClient:
                 yield from backend.stream(prompt, context)
                 return
             yield self.send(prompt, context, model=model).text
+        except HTTPError as exc:
+            message = self._friendly_http_error(backend, getattr(exc, "code", 0))
+            fallback_note = self._record_http_error(backend, getattr(exc, "code", 0))
+            if fallback_note:
+                message = f"{message} {fallback_note}"
+            self.logger.error("HTTP error during AI streaming: %s", exc)
+            yield message
         except Exception as exc:  # noqa: BLE001
             self.logger.exception("AI streaming failure: %s", exc)
             self.disabled = True

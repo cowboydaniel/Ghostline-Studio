@@ -165,6 +165,8 @@ Configurable areas include:
 
 AI features default to a dummy backend that echoes prompts so the AI chat dock is immediately usable. To point Ghostline at your own service, update `~/.config/ghostline/settings.yaml` (or the Settings dialog) with your endpoint, model, and `ai.timeout_seconds` for slower local models such as Ollama. Start local Ollama instances with `ollama serve` before launching Ghostline if you select the Ollama backend.
 
+Expected endpoints match the defaults in `ghostline/settings/defaults.yaml`: `ai.endpoint` and `providers.ollama.host` should point to an Ollama-compatible server exposing `/api/generate`, while `ai.openai_endpoint` or `providers.openai.base_url` should be the OpenAI Responses-compatible base URL ending with `/v1`. Ghostline will surface clear messages for 401/404 responses suggesting API key or path fixes, and if those errors repeat in a session the client automatically falls back to the dummy echo backend so the AI dock stays usable until the configuration is corrected.
+
 Context retrieval settings live under the `ai` key:
 
 ```yaml
