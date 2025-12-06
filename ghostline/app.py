@@ -117,8 +117,23 @@ class GhostlineApplication:
         sys.excepthook = self._handle_exception  # type: ignore[assignment]
 
     def _handle_exception(self, exc_type, exc_value, exc_tb) -> None:  # type: ignore[override]
-        formatted = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-        logging.error("Uncaught exception:\n%s", formatted)
+        """Global exception hook that avoids recursive crashes when formatting fails."""
+        try:
+            formatted = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        except RecursionError:
+            logging.error("Uncaught exception (formatting failed with RecursionError)")
+            return
+        except Exception:
+            logging.error("Uncaught exception (formatting failed)")
+            return
+
+        try:
+            logging.error("Uncaught exception:\n%s", formatted)
+        except RecursionError:
+            # Give up quietly if the logging system itself recurses
+            return
+        except Exception:
+            return
         dialog = QMessageBox()
         dialog.setWindowTitle("Unexpected Error")
         dialog.setIcon(QMessageBox.Critical)

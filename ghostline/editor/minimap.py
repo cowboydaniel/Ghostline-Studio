@@ -5,6 +5,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
+MINIMAP_ENABLED = False
+
 
 class MiniMap(QWidget):
     """A cached, scaled preview of the code editor's document."""
@@ -25,16 +27,22 @@ class MiniMap(QWidget):
         self._render_timer.timeout.connect(self._render_cache)
         self._content_height = 0.0
 
-        self.editor.textChanged.connect(self.queue_render)
-        self.editor.updateRequest.connect(lambda *_: self.queue_render())
-        self.editor.verticalScrollBar().valueChanged.connect(lambda *_: self.update())
+        if MINIMAP_ENABLED:
+            self.editor.textChanged.connect(self.queue_render)
+            self.editor.updateRequest.connect(lambda *_: self.queue_render())
+            self.editor.verticalScrollBar().valueChanged.connect(lambda *_: self.update())
 
-        self.queue_render()
+        if MINIMAP_ENABLED:
+            self.queue_render()
 
     def queue_render(self) -> None:
+        if not MINIMAP_ENABLED:
+            return
         self._render_timer.start()
 
     def _render_cache(self) -> None:
+        if not MINIMAP_ENABLED:
+            return
         document = self.editor.document()
         layout = document.documentLayout()
         size = layout.documentSize().toSize()
@@ -63,6 +71,8 @@ class MiniMap(QWidget):
         self.update()
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
+        if not MINIMAP_ENABLED:
+            return
         painter = QPainter(self)
         if self._cache:
             painter.drawPixmap(0, 0, self._cache)
@@ -70,6 +80,8 @@ class MiniMap(QWidget):
         painter.end()
 
     def _draw_viewport_marker(self, painter: QPainter) -> None:
+        if not MINIMAP_ENABLED:
+            return
         if self._content_height <= 0:
             return
         scrollbar = self.editor.verticalScrollBar()
@@ -87,13 +99,19 @@ class MiniMap(QWidget):
         painter.drawRect(0, y, self.width(), 2)
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        if not MINIMAP_ENABLED:
+            return
         self._jump_to(event.position().y())
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
+        if not MINIMAP_ENABLED:
+            return
         if event.buttons() & Qt.LeftButton:
             self._jump_to(event.position().y())
 
     def _jump_to(self, y: float) -> None:
+        if not MINIMAP_ENABLED:
+            return
         if self._content_height <= 0:
             return
         scrollbar = self.editor.verticalScrollBar()
