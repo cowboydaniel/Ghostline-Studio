@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from typing import Any, Callable, Dict, Iterable
 
 import yaml
@@ -39,48 +40,63 @@ class LSPManager(QObject):
         self.self_healing = SelfHealingService(config, lambda: self.workspace_manager.current_workspace)
 
     # Client management
-    def _normalize_path(self, path: Any) -> Path | None:
-        """Convert input into a Path or return None when invalid."""
+    def _normalize_path(self, path):
+        """Convert different path-like objects into an absolute path string.
 
+        This deliberately avoids returning pathlib.Path objects, because on
+        Python 3.12 we have seen recursion inside pathlib when dealing with
+        Qt types and file: URIs.
+        """
         try:
             if path is None:
                 return None
-            if isinstance(path, Path):
-                return path
 
-            # QUrl objects can provide a local file path without string parsing
+            # Qt QUrl objects: use local file path
             if hasattr(path, "toLocalFile"):
-                local_file = path.toLocalFile()
-                if local_file:
-                    return Path(local_file)
+                local = path.toLocalFile()
+                if local:
+                    return os.path.abspath(str(local))
 
-            path_str = str(path)
-            if path_str.startswith("file:/"):
+            # os.PathLike / Path / plain string
+            try:
+                path_str = os.fspath(path)
+            except TypeError:
+                path_str = str(path)
+
+            if not path_str:
+                return None
+
+            # Handle file: URIs such as file:/home/... or file:///home/...
+            if isinstance(path_str, str) and path_str.startswith("file:"):
                 parsed = urlparse(path_str)
                 if parsed.scheme == "file" and parsed.path:
-                    return Path(parsed.path)
+                    path_str = parsed.path
 
-            return Path(path_str)
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.error("Invalid path %r: %s", path, exc)
+            return os.path.abspath(path_str)
+        except Exception:
+            # Do not log here to avoid recursive logging failures when
+            # path / stack state is already corrupted.
             return None
 
-    def _language_for_file(self, path: Any) -> str | None:
+    def _language_for_file(self, path):
         normalized = self._normalize_path(path)
         if not normalized:
             return None
         try:
-            suffix = normalized.suffix.lower()
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.error("Failed to read suffix for %r: %s", normalized, exc)
+            _, ext = os.path.splitext(normalized)
+            suffix = ext.lower()
+        except Exception:
             return None
         return self._language_map.get(suffix)
 
-    def _uri_for_path(self, path: Path) -> str | None:
+    def _uri_for_path(self, path):
         try:
-            return path.resolve().as_uri()
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.error("Failed to resolve URI for %r: %s", path, exc)
+            normalized = self._normalize_path(path)
+            if not normalized:
+                return None
+            # Construct a POSIX-style file:// URI without using Path.as_uri
+            return "file://" + quote(normalized, safe="/")
+        except Exception:
             return None
 
     def _build_language_map(self) -> dict[str, str]:
