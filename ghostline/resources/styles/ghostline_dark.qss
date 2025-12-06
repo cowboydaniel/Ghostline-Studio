@@ -142,7 +142,7 @@ QPlainTextEdit {
 }
 
 /* Minimap strip on the right */
-QPlainTextEdit#MiniMap {
+#MiniMap {
     background-color: #101117;
     color: #6c6f82;
     border-left: 1px solid #2b2d34;
