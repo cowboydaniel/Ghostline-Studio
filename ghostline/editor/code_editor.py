@@ -552,18 +552,21 @@ class CodeEditor(QPlainTextEdit):
             self.lsp_manager.open_document(str(self.path), self.toPlainText())
 
     def _notify_lsp_change(self) -> None:
-        if self.lsp_manager and self.path:
-            self._document_version += 1
-            self.lsp_manager.change_document(
-                str(self.path), self.toPlainText(), version=self._document_version
-            )
+        """Temporarily disable LSP document change notifications on Python 3.12.
+
+        The current LSP plumbing can trigger RecursionError deep inside
+        pathlib / logging. We keep the editor functional without live LSP updates.
+        """
+        return
 
     def _refresh_semantic_tokens(self) -> None:
-        if self.path and self.lsp_manager and self.lsp_manager.supports_semantic_tokens(str(self.path)):
-            if self.lsp_manager.request_semantic_tokens(str(self.path), self._apply_semantic_tokens):
-                return
-        tokens = self._semantic_provider.custom_tokens(self.toPlainText())
-        self._highlighter.set_semantic_tokens(tokens)
+        """Disable semantic token refresh for now.
+
+        The combination of QSyntaxHighlighter and Python 3.12 is causing
+        deep RecursionError in highlightBlock. Base syntax highlighting is
+        still active, we just skip the extra semantic overlays.
+        """
+        return
 
     def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
         tokens = SemanticTokenProvider.from_lsp(result, legend)

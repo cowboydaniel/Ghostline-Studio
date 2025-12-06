@@ -383,13 +383,7 @@ class LSPManager(QObject):
         return request_id
 
     def supports_semantic_tokens(self, path: Any) -> bool:
-        """Return False to force the editor to use its local semantic token provider.
-
-        On some Python 3.12 setups, path and regex handling can trigger
-        RecursionError deep inside pathlib / regex. Disabling LSP-driven
-        semantic tokens here keeps the system stable; the editor still
-        uses the regex-based SemanticTokenProvider for coloring.
-        """
+        """Return False to force the editor to use its local semantic token provider or none."""
         return False
 
     def request_semantic_tokens(

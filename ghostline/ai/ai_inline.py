@@ -23,11 +23,8 @@ class InlineCompletionController(QObject):
         self.editor.textChanged.connect(self._arm_timer)
 
     def _arm_timer(self) -> None:
-        self.ghost_text = ""
-        self.editor.viewport().update()
-        if self.config and not self.config.get("ai", {}).get("enabled", False):
-            return
-        self.timer.start()
+        """Disable inline AI timer on Python 3.12 to avoid recursion storms."""
+        return
 
     def _request_completion(self) -> None:
         if not self.client:
