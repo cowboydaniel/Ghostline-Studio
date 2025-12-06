@@ -219,12 +219,19 @@ class CodeEditor(QPlainTextEdit):
         )
 
     def _update_line_number_area(self, rect, dy) -> None:
+        """Update the visible area of the line number gutter.
+
+        Important: do NOT adjust margins from here. On some Qt builds,
+        changing viewport margins during an updateRequest causes an
+        endless cascade of update events and RecursionError.
+        """
         if dy:
             self.line_number_area.scroll(0, dy)
         else:
             self.line_number_area.update(0, rect.y(), self.line_number_area.width(), rect.height())
-        if rect.contains(self.viewport().rect()):
-            self._update_line_number_area_width()
+        # We intentionally do NOT call _update_line_number_area_width() here.
+        # Line number area width is already updated via blockCountChanged
+        # and explicit resizeEvent handling.
 
     def _paint_line_numbers(self, event) -> None:
         painter = QPainter(self.line_number_area)
