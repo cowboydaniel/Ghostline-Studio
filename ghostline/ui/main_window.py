@@ -1345,6 +1345,28 @@ class MainWindow(QMainWindow):
             editor.setTextCursor(cursor)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        try:
+            if hasattr(self, "analysis_service") and self.analysis_service:
+                try:
+                    self.analysis_service.shutdown()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "lsp_manager") and self.lsp_manager:
+                try:
+                    self.lsp_manager.shutdown()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        from ghostline.core import threads as _threads
+
+        _threads.SHUTTING_DOWN = True
+
         self.workspace_manager.save_recents()
         window_cfg = self.config.settings.setdefault("window", {})
         window_cfg["maximized"] = self.isMaximized()
@@ -1619,7 +1641,23 @@ class MainWindow(QMainWindow):
             dock.raise_()
 
     def _handle_diagnostics(self, diagnostics) -> None:
-        self.diagnostics_model.set_diagnostics(diagnostics)
+        app = QApplication.instance()
+        if app is None:
+            return
+        if getattr(self, "isVisible", None) and not self.isVisible():
+            return
+        try:
+            if hasattr(self, "analysis_service") and self.analysis_service:
+                self.analysis_service.on_diagnostics([diag.__dict__ for diag in diagnostics])
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "diagnostics_model") and self.diagnostics_model:
+                self.diagnostics_model.set_diagnostics(diagnostics)
+        except RuntimeError:
+            return
+        except Exception:
+            return
         if hasattr(self, "diagnostics_empty"):
             has_items = bool(diagnostics)
             self.diagnostics_empty.setVisible(not has_items)
@@ -1627,7 +1665,6 @@ class MainWindow(QMainWindow):
         for editor in self.editor_tabs.iter_editors():
             file_diags = [d for d in diagnostics if d.file == str(editor.path)]
             editor.apply_diagnostics(file_diags)
-        self.analysis_service.on_diagnostics([diag.__dict__ for diag in diagnostics])
 
     def _jump_to_diagnostic(self, index) -> None:
         file_path = self.diagnostics_model.item(index.row(), 0).text()
