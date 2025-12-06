@@ -188,15 +188,33 @@ class CodeEditor(QPlainTextEdit):
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
+        self._update_margins()
         cr = self.contentsRect()
         self.line_number_area.setGeometry(
             QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
         )
+        self._position_minimap(cr)
 
     def _update_line_number_area_width(self, _=None) -> None:
         # Left margin for gutter, small top margin so code does not stick
         # directly to the tab strip (more like Windsurf).
-        self.setViewportMargins(self.line_number_area_width(), 4, 0, 0)
+        self._update_margins()
+
+    def _update_margins(self) -> None:
+        right_margin = self.minimap.width() if self.minimap.isVisible() else 0
+        self.setViewportMargins(self.line_number_area_width(), 4, right_margin, 0)
+
+    def minimap_resized(self) -> None:
+        self._update_margins()
+        self._position_minimap()
+        self.updateGeometry()
+
+    def _position_minimap(self, rect: QRect | None = None) -> None:
+        cr = rect or self.contentsRect()
+        minimap_width = self.minimap.width()
+        self.minimap.setGeometry(
+            QRect(cr.right() - minimap_width + 1, cr.top(), minimap_width, cr.height())
+        )
 
     def _update_line_number_area(self, rect, dy) -> None:
         if dy:
