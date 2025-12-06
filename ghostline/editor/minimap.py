@@ -25,7 +25,7 @@ class MiniMap(QWidget):
         doc = self.editor.document()
         doc.contentsChanged.connect(self._on_editor_changed)
         self.editor.verticalScrollBar().valueChanged.connect(self._on_editor_changed)
-        self.editor.viewport().updateRequest.connect(self._on_editor_update)
+        self.editor.updateRequest.connect(self._on_editor_update)
 
     # Sizing
     def sizeHint(self) -> QSize:  # type: ignore[override]
