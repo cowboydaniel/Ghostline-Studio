@@ -38,8 +38,24 @@ class LSPManager(QObject):
         self.self_healing = SelfHealingService(config, lambda: self.workspace_manager.current_workspace)
 
     # Client management
-    def _language_for_file(self, path: str) -> str | None:
-        suffix = Path(path).suffix.lower()
+    def _normalize_path(self, path: Any) -> Path | None:
+        """Convert input into a Path or return None when invalid."""
+
+        try:
+            if path is None:
+                return None
+            if isinstance(path, Path):
+                return path
+            return Path(str(path))
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.error("Invalid path %r: %s", path, exc)
+            return None
+
+    def _language_for_file(self, path: Any) -> str | None:
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return None
+        suffix = normalized.suffix.lower()
         return self._language_map.get(suffix)
 
     def _build_language_map(self) -> dict[str, str]:
@@ -225,16 +241,20 @@ class LSPManager(QObject):
         return clients
 
     # Document events
-    def open_document(self, path: str, text: str) -> None:
-        language = self._language_for_file(path)
+    def open_document(self, path: Any, text: str) -> None:
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return
+        language = self._language_for_file(normalized)
         if not language:
             return
+        uri = normalized.resolve().as_uri()
         for client in self._clients_for_language(language):
             client.send_notification(
                 "textDocument/didOpen",
                 {
                     "textDocument": {
-                        "uri": Path(path).resolve().as_uri(),
+                        "uri": uri,
                         "languageId": language,
                         "version": 1,
                         "text": text,
@@ -242,74 +262,94 @@ class LSPManager(QObject):
                 },
             )
 
-    def change_document(self, path: str, text: str, version: int) -> None:
-        language = self._language_for_file(path)
+    def change_document(self, path: Any, text: str, version: int) -> None:
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return
+        language = self._language_for_file(normalized)
         if not language:
             return
+        uri = normalized.resolve().as_uri()
         for client in self._clients_for_language(language):
             client.send_notification(
                 "textDocument/didChange",
                 {
                     "textDocument": {
-                        "uri": Path(path).resolve().as_uri(),
+                        "uri": uri,
                         "version": version,
                     },
                     "contentChanges": [{"text": text}],
                 },
             )
 
-    def close_document(self, path: str) -> None:
-        language = self._language_for_file(path)
+    def close_document(self, path: Any) -> None:
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return
+        language = self._language_for_file(normalized)
         if not language:
             return
+        uri = normalized.resolve().as_uri()
         for client in self._clients_for_language(language):
             client.send_notification(
                 "textDocument/didClose",
-                {"textDocument": {"uri": Path(path).resolve().as_uri()}},
+                {"textDocument": {"uri": uri}},
             )
 
     # Feature requests
-    def request_completions(self, path: str, position: dict[str, int], callback: Callable[[dict], None] | None = None) -> int | None:
-        language = self._language_for_file(path)
+    def request_completions(self, path: Any, position: dict[str, int], callback: Callable[[dict], None] | None = None) -> int | None:
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return None
+        language = self._language_for_file(normalized)
         client = self._get_client(language) if language else None
         if not client:
             return None
+        uri = normalized.resolve().as_uri()
         request_id = client.send_request(
             "textDocument/completion",
-            {"textDocument": {"uri": Path(path).resolve().as_uri()}, "position": position},
+            {"textDocument": {"uri": uri}, "position": position},
         )
         if callback:
             self._pending[request_id] = callback
         return request_id
 
-    def request_hover(self, path: str, position: dict[str, int], callback: Callable[[dict], None] | None = None) -> int | None:
-        language = self._language_for_file(path)
+    def request_hover(self, path: Any, position: dict[str, int], callback: Callable[[dict], None] | None = None) -> int | None:
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return None
+        language = self._language_for_file(normalized)
         client = self._get_client(language) if language else None
         if not client:
             return None
+        uri = normalized.resolve().as_uri()
         request_id = client.send_request(
             "textDocument/hover",
-            {"textDocument": {"uri": Path(path).resolve().as_uri()}, "position": position},
+            {"textDocument": {"uri": uri}, "position": position},
         )
         if callback:
             self._pending[request_id] = callback
         return request_id
 
-    def supports_semantic_tokens(self, path: str) -> bool:
+    def supports_semantic_tokens(self, path: Any) -> bool:
         language = self._language_for_file(path)
         client = self._get_client(language) if language else None
         return bool(client and getattr(client, "semantic_tokens_capable", False))
 
     def request_semantic_tokens(
-        self, path: str, callback: Callable[[dict, list[str]], None] | None = None
+        self, path: Any, callback: Callable[[dict, list[str]], None] | None = None
     ) -> bool:
-        language = self._language_for_file(path)
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return False
+        language = self._language_for_file(normalized)
         client = self._get_client(language) if language else None
         if not (client and getattr(client, "semantic_tokens_capable", False)):
             return False
+        uri = normalized.resolve().as_uri()
         request_id = client.send_request(
             "textDocument/semanticTokens/full",
-            {"textDocument": {"uri": Path(path).resolve().as_uri()}},
+            {"textDocument": {"uri": uri}},
         )
         if callback:
             legend = getattr(client, "semantic_tokens_legend", [])
