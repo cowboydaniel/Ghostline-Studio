@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any, Callable, Dict, Iterable
 
 import yaml
@@ -46,7 +47,19 @@ class LSPManager(QObject):
                 return None
             if isinstance(path, Path):
                 return path
-            return Path(str(path))
+
+            if hasattr(path, "toLocalFile"):
+                local_file = path.toLocalFile()
+                if local_file:
+                    return Path(local_file)
+
+            path_str = str(path)
+            if path_str.startswith("file:/"):
+                parsed = urlparse(path_str)
+                if parsed.scheme == "file" and parsed.path:
+                    return Path(parsed.path)
+
+            return Path(path_str)
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.error("Invalid path %r: %s", path, exc)
             return None
