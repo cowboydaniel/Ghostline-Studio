@@ -66,12 +66,15 @@ class OllamaBackend(HTTPBackend):
     def __init__(self, config: ConfigManager) -> None:
         super().__init__(config)
         ollama_cfg = self._providers.get("ollama", {}) if hasattr(self, "_providers") else {}
-        self.endpoint = ollama_cfg.get("host", self.endpoint)
+        default_host = self.endpoint or "http://localhost:11434"
+        self.host = (ollama_cfg.get("host") or default_host).rstrip("/")
+        self.endpoint = self.host
         self.model = self.model or ollama_cfg.get("default_model", "")
 
     def send(self, prompt: str, context: str | None = None) -> AIResponse:
         body = {"model": self.model or "codellama", "prompt": prompt, "stream": False}
-        response = self._post(f"{self.endpoint}/api/generate", body)
+        base = self.host.rstrip("/")
+        response = self._post(f"{base}/api/generate", body)
         return AIResponse(text=response.get("response", ""))
 
     def stream(self, prompt: str, context: str | None = None) -> Generator[str, None, None]:
@@ -148,9 +151,10 @@ class AIClient:
     """Factory for AI backends. Currently provides dummy implementation."""
 
     def _ollama_is_running(self) -> bool:
-        """Return True if Ollama is responding on localhost:11434."""
+        """Return True if Ollama is responding on the configured host."""
         try:
-            with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=0.3) as r:
+            base = self.settings.ollama_host.rstrip("/")
+            with urllib.request.urlopen(f"{base}/api/tags", timeout=0.3) as r:
                 return r.status == 200
         except Exception:
             return False
@@ -182,7 +186,13 @@ class AIClient:
         self.logger = get_logger(__name__)
         self._http_error_counts: dict[str, int] = {}
         ai_settings = self.config.get("ai", {}) if self.config else {}
+        providers = ai_settings.get("providers", {}) if ai_settings else {}
         self.settings = SimpleNamespace(allow_openai=bool(ai_settings.get("allow_openai", True)))
+        self.settings.ollama_host = (
+            providers.get("ollama", {}).get("host")
+            or ai_settings.get("endpoint")
+            or "http://localhost:11434"
+        ).rstrip("/")
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
         self.disabled = self.backend_type in {"none", "disabled"}
         self._backends: dict[str, object] = {}
