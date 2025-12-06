@@ -148,6 +148,8 @@ class LSPManager(QObject):
             self.lsp_error.emit(message)
             self._emit_failure_diagnostic(language)
             return None
+        client.semantic_tokens_capable = False
+        client.semantic_tokens_legend: list[str] = []
         self._register_client_hooks(language, workspace, role, client)
         client.notification_received.connect(self._handle_notification)
         client.response_received.connect(self._handle_response)
@@ -168,7 +170,7 @@ class LSPManager(QObject):
 
     def _initialize(self, client: LSPClient, workspace: str) -> None:
         root_uri = Path(workspace).resolve().as_uri()
-        client.send_request(
+        request_id = client.send_request(
             "initialize",
             {
                 "processId": None,
@@ -177,7 +179,14 @@ class LSPManager(QObject):
                 "workspaceFolders": [{"uri": root_uri, "name": Path(workspace).name}],
             },
         )
-        client.send_notification("initialized", {})
+
+        def _handle_initialize(message: dict) -> None:
+            result = message.get("result", {}) if isinstance(message, dict) else {}
+            capabilities = result.get("capabilities", {}) if isinstance(result, dict) else {}
+            self._configure_capabilities(client, capabilities)
+            client.send_notification("initialized", {})
+
+        self._pending[request_id] = _handle_initialize
 
     def _drop_client(self, language: str, workspace: str, role: str) -> None:
         if workspace in self.clients and language in self.clients[workspace]:
@@ -286,6 +295,27 @@ class LSPManager(QObject):
             self._pending[request_id] = callback
         return request_id
 
+    def supports_semantic_tokens(self, path: str) -> bool:
+        language = self._language_for_file(path)
+        client = self._get_client(language) if language else None
+        return bool(client and getattr(client, "semantic_tokens_capable", False))
+
+    def request_semantic_tokens(
+        self, path: str, callback: Callable[[dict, list[str]], None] | None = None
+    ) -> bool:
+        language = self._language_for_file(path)
+        client = self._get_client(language) if language else None
+        if not (client and getattr(client, "semantic_tokens_capable", False)):
+            return False
+        request_id = client.send_request(
+            "textDocument/semanticTokens/full",
+            {"textDocument": {"uri": Path(path).resolve().as_uri()}},
+        )
+        if callback:
+            legend = getattr(client, "semantic_tokens_legend", [])
+            self._pending[request_id] = lambda message: callback(message.get("result", {}), legend)
+        return True
+
     # Diagnostics
     def subscribe_diagnostics(self, callback: Callable[[list[Diagnostic]], None]) -> None:
         self._diag_callbacks.append(callback)
@@ -317,6 +347,17 @@ class LSPManager(QObject):
         if request_id in self._pending:
             callback = self._pending.pop(request_id)
             callback(message)
+
+    def _configure_capabilities(self, client: LSPClient, capabilities: dict[str, Any]) -> None:
+        semantic_provider = capabilities.get("semanticTokensProvider") if isinstance(capabilities, dict) else None
+        legend: list[str] = []
+        if isinstance(semantic_provider, dict):
+            if isinstance(semantic_provider.get("legend"), dict):
+                legend = list(semantic_provider.get("legend", {}).get("tokenTypes", []))
+            elif isinstance(semantic_provider.get("legend"), list):
+                legend = list(semantic_provider.get("legend", []))
+        client.semantic_tokens_legend = legend
+        client.semantic_tokens_capable = bool(legend)
 
     def _emit_failure_diagnostic(self, language: str) -> None:
         if language in self._reported_failures:

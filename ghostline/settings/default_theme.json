@@ -1,0 +1,16 @@
+{
+  "syntax": {
+    "keyword": "#bd93f9",
+    "string": "#98c379",
+    "comment": "#787878",
+    "number": "#d19a66",
+    "builtin": "#61afef",
+    "definition": "#4f8cff",
+    "function": "#5ad4e6",
+    "class": "#73e0c9",
+    "import": "#c2b560",
+    "literal": "#b89cf6",
+    "dunder": "#7a7a7a",
+    "typehint": "#7cc7ff"
+  }
+}
