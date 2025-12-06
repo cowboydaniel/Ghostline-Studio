@@ -30,7 +30,7 @@ from ghostline.editor.minimap import MiniMap
 from ghostline.ai.ai_inline import InlineCompletionController
 from ghostline.debugger.breakpoints import BreakpointStore
 from ghostline.ai.ai_client import AIClient
-from ghostline.ui.editor import SemanticToken, SemanticTokenProvider
+from ghostline.ui.editor.semantic_tokens import SemanticToken, SemanticTokenProvider
 
 
 class LineNumberArea(QWidget):
