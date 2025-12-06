@@ -44,7 +44,20 @@ class LSPClient(QObject):
         if not isValid(self.process):
             return
         if self.process.state() == QProcess.Running:
+            try:
+                self.send_request("shutdown", {})
+            except Exception:
+                logger.debug("Failed to send LSP shutdown request", exc_info=True)
+            try:
+                self.send_notification("exit", {})
+            except Exception:
+                logger.debug("Failed to send LSP exit notification", exc_info=True)
             self.process.terminate()
+            finished = self.process.waitForFinished(2000)
+            if not finished and self.process.state() != QProcess.NotRunning:
+                logger.warning("LSP client did not terminate gracefully; killing process")
+                self.process.kill()
+                self.process.waitForFinished(1000)
 
     def send_request(self, method: str, params: dict[str, Any] | None = None) -> int:
         self._id_counter += 1

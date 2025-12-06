@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Iterable
 
 import yaml
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QProcess
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import LOG_FILE
@@ -276,6 +276,7 @@ class LSPManager(QObject):
     def shutdown(self):
         """Terminate all LSP clients and stop emitting diagnostics."""
         self._shutting_down = True
+        shutdown_failures: list[tuple[str, str, str]] = []
         for workspace, languages in list(self.clients.items()):
             for language, roles in list(languages.items()):
                 for role, client in list(roles.items()):
@@ -289,12 +290,23 @@ class LSPManager(QObject):
                         pass
                     try:
                         client.stop()
+                        finished = client.process.waitForFinished(3000)
                     except Exception:
-                        try:
-                            client.process.kill()
-                        except Exception:
-                            pass
+                        finished = False
+                    if not finished and client.process.state() != QProcess.NotRunning:
+                        logger.warning(
+                            "LSP server for %s (%s) in %s did not exit cleanly during shutdown",
+                            language,
+                            role,
+                            workspace,
+                        )
+                        shutdown_failures.append((workspace, language, role))
+                    roles.pop(role, None)
         self.clients.clear()
+        if shutdown_failures:
+            logger.error("LSP shutdown completed with lingering processes: %s", shutdown_failures)
+        else:
+            logger.debug("All LSP client processes terminated before destruction")
 
     def _notify_failure(self, language: str, error_detail: str | None = None) -> None:
         if getattr(self, "_shutting_down", False):
