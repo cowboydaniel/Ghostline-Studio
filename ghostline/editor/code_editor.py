@@ -11,6 +11,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QMouseEvent,
     QPainter,
+    QPen,
     QTextCharFormat,
     QTextCursor,
     QTextFormat,
@@ -150,6 +151,7 @@ class CodeEditor(QPlainTextEdit):
         self._diagnostics: list[Diagnostic] = []
         self._extra_cursors: list[QTextCursor] = []
         self._bracket_selection: list[QTextEdit.ExtraSelection] = []
+        self._bracket_scope: tuple[int, int, int] | None = None
         self.breakpoints = BreakpointStore.instance()
         self._semantic_provider = SemanticTokenProvider(self.theme)
 
@@ -285,6 +287,7 @@ class CodeEditor(QPlainTextEdit):
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         super().paintEvent(event)
+        self._paint_indent_guides()
         if self.inline_ai:
             self.inline_ai.paint_hint()
 
@@ -382,6 +385,7 @@ class CodeEditor(QPlainTextEdit):
             backward = True
         if char not in brackets:
             self._bracket_selection = []
+            self._bracket_scope = None
             self._highlight_current_line()
             return
         target = brackets[char]
@@ -401,12 +405,17 @@ class CodeEditor(QPlainTextEdit):
             idx += step
         if match_pos is None:
             self._bracket_selection = []
+            self._bracket_scope = None
             self._highlight_current_line()
             return
         self._bracket_selection = [
             self._selection_for_position(pos),
             self._selection_for_position(match_pos),
         ]
+        start_line, start_col = self._block_and_column(min(pos, match_pos))
+        end_line, end_col = self._block_and_column(max(pos, match_pos))
+        scope_col = min(start_col, end_col)
+        self._bracket_scope = (start_line, end_line, scope_col) if end_line != start_line else None
         self._highlight_current_line()
 
     def _diagnostic_selections(self) -> list[QTextEdit.ExtraSelection]:
@@ -434,6 +443,11 @@ class CodeEditor(QPlainTextEdit):
         selection.format.setBackground(QColor(80, 120, 200, 120))
         return selection
 
+    def _block_and_column(self, position: int) -> tuple[int, int]:
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(position)
+        return cursor.blockNumber(), cursor.positionInBlock()
+
     def _multi_cursor_selections(self) -> list[QTextEdit.ExtraSelection]:
         selections: list[QTextEdit.ExtraSelection] = []
         for cursor in self._extra_cursors:
@@ -452,6 +466,78 @@ class CodeEditor(QPlainTextEdit):
             synced.append(clone)
         self._extra_cursors = synced
         self._highlight_current_line()
+
+    def _indent_columns(self, text: str) -> list[int]:
+        tab_size = self.config.get("tabs", {}).get("tab_size", 4) if self.config else 4
+        columns: list[int] = []
+        col = 0
+        for ch in text:
+            if ch == " ":
+                col += 1
+            elif ch == "\t":
+                remainder = col % tab_size
+                col += tab_size - remainder if remainder else tab_size
+            else:
+                break
+            if col and col % tab_size == 0:
+                columns.append(col)
+        return columns
+
+    def _paint_indent_guides(self) -> None:
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.Antialiasing, False)
+
+        base_color = self.theme.color(QPalette.Dark) if self.theme else QColor(60, 60, 70)
+        active_color = self.theme.color(QPalette.Highlight) if self.theme else QColor(100, 130, 180)
+        base_color = QColor(base_color)
+        base_color.setAlpha(80)
+        active_color = QColor(active_color)
+        active_color.setAlpha(110)
+
+        tab_size = self.config.get("tabs", {}).get("tab_size", 4) if self.config else 4
+        space_width = (self.tabStopDistance() or self.fontMetrics().horizontalAdvance(" " * tab_size)) / tab_size
+
+        cursor_block = self.textCursor().block()
+        active_columns = set(self._indent_columns(cursor_block.text()))
+        if self._bracket_scope:
+            active_columns.add(self._bracket_scope[2])
+
+        block = self.firstVisibleBlock()
+        offset = self.contentOffset()
+        top = int(self.blockBoundingGeometry(block).translated(offset).top())
+        bottom = top + int(self.blockBoundingRect(block).height())
+
+        while block.isValid() and top <= self.viewport().rect().bottom():
+            if block.isVisible() and bottom >= self.viewport().rect().top():
+                indent_cols = self._indent_columns(block.text())
+                for col in indent_cols:
+                    x = offset.x() + col * space_width - space_width / 2
+                    color = active_color if col in active_columns else base_color
+                    painter.setPen(QPen(color, 1))
+                    painter.drawLine(
+                        int(x),
+                        top,
+                        int(x),
+                        bottom,
+                    )
+
+            block = block.next()
+            top = bottom
+            bottom = top + int(self.blockBoundingRect(block).height())
+
+        if self._bracket_scope:
+            start_line, end_line, col = self._bracket_scope
+            start_block = self.document().findBlockByNumber(start_line)
+            end_block = self.document().findBlockByNumber(end_line)
+            if start_block.isValid() and end_block.isValid():
+                start_top = int(self.blockBoundingGeometry(start_block).translated(offset).top())
+                end_bottom = int(
+                    self.blockBoundingGeometry(end_block).translated(offset).top()
+                    + self.blockBoundingRect(end_block).height()
+                )
+                x = offset.x() + col * space_width - space_width / 2
+                painter.setPen(QPen(active_color, 2))
+                painter.drawLine(int(x), start_top, int(x), end_bottom)
 
     # LSP integration
     def _open_in_lsp(self) -> None:
