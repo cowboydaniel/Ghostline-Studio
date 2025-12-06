@@ -15,7 +15,7 @@ from ghostline.core.theme import ThemeManager
 from ghostline.editor.code_editor import CodeEditor
 from ghostline.lang.lsp_manager import LSPManager
 from ghostline.ai.ai_client import AIClient
-from ghostline.ui.editor import EditorWidget
+from ghostline.ui.editor.EditorWidget import EditorWidget
 
 
 class EditorTabs(QTabWidget):
