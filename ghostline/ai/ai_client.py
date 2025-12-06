@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Generator
 from urllib import request
 from urllib.error import URLError
@@ -148,6 +149,8 @@ class AIClient:
     def __init__(self, config: ConfigManager) -> None:
         self.config = config
         self.logger = get_logger(__name__)
+        ai_settings = self.config.get("ai", {}) if self.config else {}
+        self.settings = SimpleNamespace(allow_openai=bool(ai_settings.get("allow_openai", True)))
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
         self.disabled = self.backend_type in {"none", "disabled"}
         self._backends: dict[str, object] = {}
@@ -156,6 +159,12 @@ class AIClient:
         self.secondary_backend = self._create_backend(self.secondary_backend_type) if self.secondary_backend_type else None
         self._ollama_started = False
         self.active_model: ModelDescriptor | None = None
+        openai_models = ai_settings.get("providers", {}).get("openai", {}).get("enabled_models", []) or []
+        self.backends = {
+            "ollama": self._create_backend("ollama"),
+            "openai": self._create_backend("openai"),
+            "openai_models": [model.lower() for model in openai_models],
+        }
 
     def _create_backend(self, backend_type: str | None = None):
         backend = backend_type or self.backend_type
@@ -167,6 +176,7 @@ class AIClient:
             instance = OpenAICompatibleBackend(self.config)
         else:
             instance = DummyBackend(self.config)
+        setattr(instance, "name", backend)
         self._backends[backend] = instance
         return instance
 
@@ -210,11 +220,30 @@ class AIClient:
             self.logger.error("AI retry after Ollama start failed: %s", exc)
             return None
 
+    def _get_backend_for_model(self, model_name: str):
+        """Return the correct backend and never fall back to OpenAI."""
+        model_name = (model_name or "").lower()
+
+        # Detect Ollama models
+        if model_name.startswith("ollama:") or "ollama" in model_name:
+            return self.backends["ollama"]
+
+        # Detect OpenAI models
+        if model_name in self.backends.get("openai_models", []):
+            return self.backends["openai"]
+
+        # If we don't recognise the model, assume Ollama rather than OpenAI
+        return self.backends["ollama"]
+
     def _backend_for_model(self, model: ModelDescriptor | None):
-        backend_type = self.backend_type
-        if model:
-            backend_type = model.provider
-        backend = self._create_backend(backend_type)
+        ai_settings = self.config.get("ai", {}) if self.config else {}
+        model_name = (
+            model.id
+            if model
+            else (self.active_model.id if self.active_model else ai_settings.get("model", ""))
+        )
+        backend = self._get_backend_for_model(model_name)
+        backend_type = getattr(backend, "name", self.backend_type)
         if model and hasattr(backend, "model"):
             backend.model = model.id  # type: ignore[attr-defined]
         return backend, backend_type
@@ -285,6 +314,8 @@ class AIClient:
             return
         backend, backend_type = self._backend_for_model(model)
         self.active_model = model or self.active_model
+        if backend.name == "openai" and not self.settings.allow_openai:
+            raise RuntimeError("OpenAI backend disabled, refusing to send API requests.")
         try:
             if hasattr(backend, "stream"):
                 yield from backend.stream(prompt, context)
