@@ -1,6 +1,7 @@
 """Theme helpers for Ghostline Studio."""
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -16,7 +17,7 @@ class ThemeManager:
 
     def __init__(self) -> None:
         self._palette = self._build_dark_palette()
-        self._syntax_colors = self._default_syntax_colors()
+        self._syntax_colors = self._load_syntax_colors()
 
     def apply(self, app: QApplication) -> None:
         """Apply the dark theme, fonts, and stylesheet to the application."""
@@ -27,7 +28,7 @@ class ThemeManager:
         stylesheet = self._load_stylesheet()
         if stylesheet:
             app.setStyleSheet(stylesheet)
-        self._syntax_colors = self._default_syntax_colors()
+        self._syntax_colors = self._load_syntax_colors()
 
     def color(self, role: QPalette.ColorRole) -> QColor:
         return self._palette.color(role)
@@ -86,12 +87,29 @@ class ThemeManager:
 
         return re.sub(r"url\(:/icons/([^\)]+)\)", _replace_icon, stylesheet)
 
+    def _load_syntax_colors(self) -> dict[str, QColor]:
+        theme_path = Path(__file__).resolve().parent.parent / "settings" / "default_theme.json"
+        if theme_path.exists():
+            try:
+                data = json.loads(theme_path.read_text(encoding="utf-8"))
+                syntax = data.get("syntax", {}) if isinstance(data, dict) else {}
+                return {key: QColor(value) for key, value in syntax.items()}
+            except (OSError, json.JSONDecodeError):
+                pass
+        return self._default_syntax_colors()
+
     def _default_syntax_colors(self) -> dict[str, QColor]:
         return {
-            "keyword": QColor(189, 147, 249),
-            "string": QColor(152, 195, 121),
-            "comment": QColor(120, 120, 120),
-            "number": QColor(209, 154, 102),
-            "builtin": QColor(97, 175, 239),
+            "keyword": QColor("#bd93f9"),
+            "string": QColor("#98c379"),
+            "comment": QColor("#787878"),
+            "number": QColor("#d19a66"),
+            "builtin": QColor("#61afef"),
             "definition": self._palette.color(QPalette.Highlight),
+            "function": QColor("#5ad4e6"),
+            "class": QColor("#73e0c9"),
+            "import": QColor("#c2b560"),
+            "literal": QColor("#b89cf6"),
+            "dunder": QColor("#7a7a7a"),
+            "typehint": QColor("#7cc7ff"),
         }

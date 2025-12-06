@@ -29,6 +29,7 @@ from ghostline.editor.minimap import MiniMap
 from ghostline.ai.ai_inline import InlineCompletionController
 from ghostline.debugger.breakpoints import BreakpointStore
 from ghostline.ai.ai_client import AIClient
+from ghostline.ui.editor import SemanticToken, SemanticTokenProvider
 
 
 class LineNumberArea(QWidget):
@@ -49,11 +50,19 @@ class LineNumberArea(QWidget):
 
 
 class PythonHighlighter(QSyntaxHighlighter):
-    """Simple regex-based syntax highlighter for Python."""
+    """Simple regex-based syntax highlighter for Python with semantic tokens."""
 
-    def __init__(self, document: QTextDocument, theme: ThemeManager | None) -> None:
+    def __init__(
+        self,
+        document: QTextDocument,
+        theme: ThemeManager | None,
+        *,
+        token_provider: SemanticTokenProvider | None = None,
+    ) -> None:
         super().__init__(document)
         self.theme = theme
+        self.token_provider = token_provider
+        self._semantic_tokens: dict[int, list[SemanticToken]] = {}
         self._init_rules()
 
     def _fmt(self, color_key: str, bold: bool = False) -> QTextCharFormat:
@@ -98,11 +107,27 @@ class PythonHighlighter(QSyntaxHighlighter):
         self.rules.append((re.compile(r"'(?:[^'\\]|\\.)*'"), string_fmt))
         self.rules.append((re.compile(r'"(?:[^"\\]|\\.)*"'), string_fmt))
 
+    def set_semantic_tokens(self, tokens: List[SemanticToken]) -> None:
+        self._semantic_tokens.clear()
+        for token in tokens:
+            self._semantic_tokens.setdefault(token.line, []).append(token)
+        self.rehighlight()
+
+    def _semantic_format(self, token_type: str) -> QTextCharFormat:
+        if self.token_provider:
+            return self.token_provider.format_for(token_type)
+        return self._fmt("definition", True)
+
     def highlightBlock(self, text: str) -> None:  # type: ignore[override]
         for pattern, fmt in self.rules:
             for match in pattern.finditer(text):
                 start, end = match.span()
                 self.setFormat(start, end - start, fmt)
+
+        line_tokens = self._semantic_tokens.get(self.currentBlock().blockNumber(), [])
+        for token in line_tokens:
+            fmt = self._semantic_format(token.token_type)
+            self.setFormat(token.start, token.length, fmt)
 
 
 class CodeEditor(QPlainTextEdit):
@@ -126,6 +151,7 @@ class CodeEditor(QPlainTextEdit):
         self._extra_cursors: list[QTextCursor] = []
         self._bracket_selection: list[QTextEdit.ExtraSelection] = []
         self.breakpoints = BreakpointStore.instance()
+        self._semantic_provider = SemanticTokenProvider(self.theme)
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
@@ -140,8 +166,11 @@ class CodeEditor(QPlainTextEdit):
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.textChanged.connect(self._notify_lsp_change)
+        self.textChanged.connect(self._refresh_semantic_tokens)
 
-        self._highlighter = PythonHighlighter(self.document(), self.theme)
+        self._highlighter = PythonHighlighter(
+            self.document(), self.theme, token_provider=self._semantic_provider
+        )
         self.folding = FoldingManager(self)
         self.minimap = MiniMap(self)
         self.inline_ai = InlineCompletionController(self, self.config, ai_client)
@@ -150,6 +179,7 @@ class CodeEditor(QPlainTextEdit):
         if path and path.exists():
             self._load_file(path)
             self._open_in_lsp()
+        self._refresh_semantic_tokens()
 
     # Line number plumbing
     def line_number_area_width(self) -> int:
@@ -416,6 +446,19 @@ class CodeEditor(QPlainTextEdit):
             self.lsp_manager.change_document(
                 str(self.path), self.toPlainText(), version=self._document_version
             )
+
+    def _refresh_semantic_tokens(self) -> None:
+        if self.path and self.lsp_manager and self.lsp_manager.supports_semantic_tokens(str(self.path)):
+            if self.lsp_manager.request_semantic_tokens(str(self.path), self._apply_semantic_tokens):
+                return
+        tokens = self._semantic_provider.custom_tokens(self.toPlainText())
+        self._highlighter.set_semantic_tokens(tokens)
+
+    def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
+        tokens = SemanticTokenProvider.from_lsp(result, legend)
+        if not tokens:
+            tokens = self._semantic_provider.custom_tokens(self.toPlainText())
+        self._highlighter.set_semantic_tokens(tokens)
 
     def apply_diagnostics(self, diagnostics: Iterable[Diagnostic]) -> None:
         self._diagnostics = list(diagnostics)
