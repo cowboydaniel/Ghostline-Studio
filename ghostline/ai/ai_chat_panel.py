@@ -1036,7 +1036,16 @@ class AIChatPanel(QWidget):
         self.current_model_descriptor = model
         self.model_registry.set_last_used_model(model)
         self._refresh_model_chip()
+        # Tell the client what the active model is
         self.client.active_model = model
+        # Persist it into the main ai config so inline/background use it too
+        ai_settings = self.client.config.settings.setdefault("ai", {})
+        ai_settings["model"] = model.id
+        # Optionally keep backend in sync with provider
+        if model.provider == "ollama":
+            ai_settings["backend"] = "ollama"
+        elif model.provider == "openai":
+            ai_settings["backend"] = "openai"
         try:
             self.client.config.save()
         except Exception:  # noqa: BLE001
