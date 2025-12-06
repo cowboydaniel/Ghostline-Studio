@@ -48,6 +48,7 @@ class LSPManager(QObject):
             if isinstance(path, Path):
                 return path
 
+            # QUrl objects can provide a local file path without string parsing
             if hasattr(path, "toLocalFile"):
                 local_file = path.toLocalFile()
                 if local_file:
@@ -68,8 +69,19 @@ class LSPManager(QObject):
         normalized = self._normalize_path(path)
         if not normalized:
             return None
-        suffix = normalized.suffix.lower()
+        try:
+            suffix = normalized.suffix.lower()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.error("Failed to read suffix for %r: %s", normalized, exc)
+            return None
         return self._language_map.get(suffix)
+
+    def _uri_for_path(self, path: Path) -> str | None:
+        try:
+            return path.resolve().as_uri()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.error("Failed to resolve URI for %r: %s", path, exc)
+            return None
 
     def _build_language_map(self) -> dict[str, str]:
         """Map file extensions to configured languages."""
@@ -261,7 +273,9 @@ class LSPManager(QObject):
         language = self._language_for_file(normalized)
         if not language:
             return
-        uri = normalized.resolve().as_uri()
+        uri = self._uri_for_path(normalized)
+        if not uri:
+            return
         for client in self._clients_for_language(language):
             client.send_notification(
                 "textDocument/didOpen",
@@ -282,7 +296,9 @@ class LSPManager(QObject):
         language = self._language_for_file(normalized)
         if not language:
             return
-        uri = normalized.resolve().as_uri()
+        uri = self._uri_for_path(normalized)
+        if not uri:
+            return
         for client in self._clients_for_language(language):
             client.send_notification(
                 "textDocument/didChange",
@@ -302,7 +318,9 @@ class LSPManager(QObject):
         language = self._language_for_file(normalized)
         if not language:
             return
-        uri = normalized.resolve().as_uri()
+        uri = self._uri_for_path(normalized)
+        if not uri:
+            return
         for client in self._clients_for_language(language):
             client.send_notification(
                 "textDocument/didClose",
@@ -318,7 +336,9 @@ class LSPManager(QObject):
         client = self._get_client(language) if language else None
         if not client:
             return None
-        uri = normalized.resolve().as_uri()
+        uri = self._uri_for_path(normalized)
+        if not uri:
+            return None
         request_id = client.send_request(
             "textDocument/completion",
             {"textDocument": {"uri": uri}, "position": position},
@@ -335,7 +355,9 @@ class LSPManager(QObject):
         client = self._get_client(language) if language else None
         if not client:
             return None
-        uri = normalized.resolve().as_uri()
+        uri = self._uri_for_path(normalized)
+        if not uri:
+            return None
         request_id = client.send_request(
             "textDocument/hover",
             {"textDocument": {"uri": uri}, "position": position},
@@ -359,7 +381,9 @@ class LSPManager(QObject):
         client = self._get_client(language) if language else None
         if not (client and getattr(client, "semantic_tokens_capable", False)):
             return False
-        uri = normalized.resolve().as_uri()
+        uri = self._uri_for_path(normalized)
+        if not uri:
+            return False
         request_id = client.send_request(
             "textDocument/semanticTokens/full",
             {"textDocument": {"uri": uri}},
