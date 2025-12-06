@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex, QSize
@@ -341,7 +342,12 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self.editor_tabs = EditorTabs(
-            self, config=self.config, theme=self.theme, lsp_manager=self.lsp_manager, ai_client=self.ai_client
+            self,
+            config=self.config,
+            theme=self.theme,
+            lsp_manager=self.lsp_manager,
+            ai_client=self.ai_client,
+            command_registry=self.command_registry,
         )
         self.editor_tabs.countChanged.connect(self._show_welcome_if_empty)
 
@@ -1252,6 +1258,23 @@ class MainWindow(QMainWindow):
         else:
             self.status.show_message("Open a workspace to run tests")
 
+    def _run_current_file(self, file_path: str | None = None) -> None:
+        path = Path(file_path) if file_path else None
+        if not path:
+            editor = self.get_current_editor()
+            path = editor.path if editor and editor.path else None
+        if not path:
+            self.status.show_message("No file selected to run")
+            return
+        if path.suffix.lower() not in {".py", ".pyw"}:
+            self.status.show_message("This file type cannot be run")
+            return
+        if not path.exists():
+            self.status.show_message("File does not exist on disk")
+            return
+        command = f"{sys.executable} {path}"
+        self.task_manager.run_command("Run", command, cwd=str(path.parent))
+
     def get_current_editor(self) -> CodeEditor | None:
         return self.editor_tabs.current_editor()
 
@@ -1355,6 +1378,7 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("tasks.run", "Run Task", "Tasks", self._run_task_command))
         registry.register_command(CommandDescriptor("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
         registry.register_command(CommandDescriptor("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
+        registry.register_command(CommandDescriptor("python.runFile", "Run Current File", "Run", self._run_current_file))
 
     def _show_and_raise_dock(self, dock: QDockWidget | None, tool_id: str | None = None) -> None:
         if not dock:
