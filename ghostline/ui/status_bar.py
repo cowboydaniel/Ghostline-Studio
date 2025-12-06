@@ -26,7 +26,11 @@ class StudioStatusBar(QStatusBar):
         self.path_label.setText(path)
 
     def show_message(self, message: str) -> None:  # type: ignore[override]
-        super().showMessage(message, 3000)
+        try:
+            super().showMessage(message, 3000)
+        except RuntimeError:
+            # Internal C++ object already deleted during shutdown
+            return
 
     def update_git(self, workspace: str | None) -> None:
         branch = self.git.branch_name(workspace) if workspace else None

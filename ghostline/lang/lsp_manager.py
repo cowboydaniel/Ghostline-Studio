@@ -38,6 +38,7 @@ class LSPManager(QObject):
         self._ensure_default_servers()
         self._reported_failures: set[str] = set()
         self.self_healing = SelfHealingService(config, lambda: self.workspace_manager.current_workspace)
+        self._shutting_down = False
 
     # Client management
     def _normalize_path(self, path):
@@ -218,12 +219,24 @@ class LSPManager(QObject):
 
     def _register_client_hooks(self, language: str, workspace: str, role: str, client: LSPClient) -> None:
         def _handle_exit(_code, _status=None):
+            if getattr(self, "_shutting_down", False):
+                return
             logger.error("LSP server for %s (%s) exited unexpectedly in %s", language, role, workspace)
             self._notify_failure(language)
             self._drop_client(language, workspace, role)
 
-        client.process.finished.connect(_handle_exit)
-        client.process.errorOccurred.connect(lambda err: self._notify_failure(language, str(err)))
+        def _on_proc_error(err, lang=language):
+            if getattr(self, "_shutting_down", False):
+                return
+            self._notify_failure(lang, str(err))
+
+        def _on_proc_finished(code, status):
+            if getattr(self, "_shutting_down", False):
+                return
+            _handle_exit(code, status)
+
+        client.process.finished.connect(_on_proc_finished)
+        client.process.errorOccurred.connect(_on_proc_error)
 
     def _initialize(self, client: LSPClient, workspace: str) -> None:
         root_uri = Path(workspace).resolve().as_uri()
@@ -260,7 +273,32 @@ class LSPManager(QObject):
         self._notify_restart(language)
         self._get_client(language)
 
+    def shutdown(self):
+        """Terminate all LSP clients and stop emitting diagnostics."""
+        self._shutting_down = True
+        for workspace, languages in list(self.clients.items()):
+            for language, roles in list(languages.items()):
+                for role, client in list(roles.items()):
+                    try:
+                        client.process.errorOccurred.disconnect()
+                    except Exception:
+                        pass
+                    try:
+                        client.process.finished.disconnect()
+                    except Exception:
+                        pass
+                    try:
+                        client.stop()
+                    except Exception:
+                        try:
+                            client.process.kill()
+                        except Exception:
+                            pass
+        self.clients.clear()
+
     def _notify_failure(self, language: str, error_detail: str | None = None) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         detail_hint = f" See log for details: {LOG_FILE}" if LOG_FILE else ""
         message = f"LSP server for {language} stopped.{detail_hint}"
         if error_detail:
@@ -452,6 +490,8 @@ class LSPManager(QObject):
         client.semantic_tokens_capable = bool(legend)
 
     def _emit_failure_diagnostic(self, language: str) -> None:
+        if getattr(self, "_shutting_down", False):
+            return
         if language in self._reported_failures:
             return
         command = self._command_for_language(language) or "the configured language server"

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import configure_logging, get_logger
 from ghostline.core.theme import ThemeManager
+from ghostline.core import threads as _threads
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.ui.main_window import MainWindow
 from ghostline.ui.splash_screen import GhostlineSplash
@@ -26,6 +27,11 @@ class GhostlineApplication:
         configure_logging()
         self.logger = get_logger(__name__)
         self.qt_app = QApplication(sys.argv)
+        
+        def _on_about_to_quit() -> None:
+            _threads.SHUTTING_DOWN = True
+
+        self.qt_app.aboutToQuit.connect(_on_about_to_quit)
         self._install_exception_hook()
         self.theme = ThemeManager()
         self.theme.apply(self.qt_app)

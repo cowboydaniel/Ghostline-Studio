@@ -8,6 +8,7 @@ from typing import Iterable
 from PySide6.QtCore import QObject, Signal
 
 from ghostline.ai.ai_client import AIClient
+from ghostline.core import threads
 from ghostline.core.threads import BackgroundWorkers
 
 logger = logging.getLogger(__name__)
@@ -44,10 +45,6 @@ class AnalysisService(QObject):
         if joined:
             self._enqueue("Review diagnostics", joined)
 
-    def _enqueue(self, intent: str, context: str) -> None:
-        logger.debug("AI analysis queued: %s", intent)
-        self._workers.submit("analysis", lambda: self._run_query(intent, context))
-
     def bind_build_manager(self, build_manager) -> None:
         build_manager.state_changed.connect(lambda state: self._on_state_change("build", state))
 
@@ -63,6 +60,14 @@ class AnalysisService(QObject):
         context = "\n".join([f"{k}: {v}" for k, v in self._state_cache.items()])
         self._enqueue(f"Process state change in {domain}", context)
 
+    def shutdown(self):
+        """Stop background analysis workers safely."""
+        threads.SHUTTING_DOWN = True
+        try:
+            self._workers.shutdown(wait=False)
+        except Exception:
+            pass
+
     def _run_query(self, intent: str, context: str) -> None:
         prompt = f"Provide concise suggestions for the following event: {intent}. Limit to 3 bullet points.\n{context}"
         response = self.client.send(prompt)
@@ -75,3 +80,13 @@ class AnalysisService(QObject):
     def clear(self) -> None:
         self._suggestions.clear()
         self.suggestions_changed.emit([])
+
+    def _enqueue(self, intent: str, context: str) -> None:
+        from ghostline.core import threads as _threads
+
+        if getattr(_threads, "SHUTTING_DOWN", False):
+            return
+        logger.debug("AI analysis queued: %s", intent)
+        if not self._workers:
+            return
+        self._workers.submit("analysis", lambda: self._run_query(intent, context))
