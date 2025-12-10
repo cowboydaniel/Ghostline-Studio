@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -15,6 +14,7 @@ from PySide6.QtWidgets import (
 
 import ghostline.resources.resources_rc  # type: ignore  # noqa: F401
 from ghostline.core.events import CommandRegistry
+from ghostline.core.resources import load_icon
 from ghostline.editor.code_editor import CodeEditor
 
 
@@ -74,7 +74,7 @@ class EditorWidget(QWidget):
         # Run button
         self.run_button = QToolButton(header)
         self.run_button.setObjectName("EditorRunButton")
-        self.run_button.setIcon(QIcon(":/icons/run.svg"))
+        self.run_button.setIcon(load_icon("run.svg"))
         self.run_button.setIconSize(icon_size)
         self.run_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.run_button.setAutoRaise(True)
@@ -86,7 +86,7 @@ class EditorWidget(QWidget):
         # Debug button
         self.debug_button = QToolButton(header)
         self.debug_button.setObjectName("EditorDebugButton")
-        self.debug_button.setIcon(QIcon(":/icons/debug.svg"))
+        self.debug_button.setIcon(load_icon("debug.svg"))
         self.debug_button.setIconSize(icon_size)
         self.debug_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.debug_button.setAutoRaise(True)
@@ -97,7 +97,7 @@ class EditorWidget(QWidget):
         # Configure button
         self.configure_button = QToolButton(header)
         self.configure_button.setObjectName("EditorConfigureButton")
-        self.configure_button.setIcon(QIcon(":/icons/configure.svg"))
+        self.configure_button.setIcon(load_icon("configure.svg"))
         self.configure_button.setIconSize(icon_size)
         self.configure_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.configure_button.setAutoRaise(True)
