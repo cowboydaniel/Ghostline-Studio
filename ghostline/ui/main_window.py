@@ -844,6 +844,7 @@ class MainWindow(QMainWindow):
 
         self.action_toggle_ai_dock = QAction("Ghostline AI", self)
         self.action_toggle_ai_dock.setCheckable(True)
+        self.action_toggle_ai_dock.setChecked(True)  # AI dock is visible by default
         self.action_toggle_ai_dock.triggered.connect(self._toggle_ai_dock)
 
         self.action_settings = QAction("Settings", self)
