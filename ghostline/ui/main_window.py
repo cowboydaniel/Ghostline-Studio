@@ -563,8 +563,6 @@ class MainWindow(QMainWindow):
         self.toggle_bottom_region = build_toggle(bottom_open_icon, bottom_closed_icon, "Toggle bottom docks")
         self.toggle_right_region = build_toggle(right_open_icon, right_closed_icon, "Toggle right docks")
 
-        self.addToolBar(Qt.TopToolBarArea, self.dock_toggle_bar)
-
     def _install_title_bar(self) -> None:
         self.title_bar = GhostlineTitleBar(self)
         self.setMenuWidget(self.title_bar)
