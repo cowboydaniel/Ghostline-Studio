@@ -1,124 +1,144 @@
-"""Lightweight minimap preview for the code editor.
+"""Windsurf-style minimap for Ghostline.
 
-This version is intentionally simple and avoids any recursive signal
-chains. It draws a very compact representation of every line in the
-document and a highlighted rectangle for the visible viewport.
+This implementation draws thin color-coded bars per line and overlays a
+viewport rectangle. It is lightweight, always visible, and avoids the
+blank/minimap-less rendering issue.
 """
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QAbstractTextDocumentLayout, QPainter
-from PySide6.QtWidgets import QPlainTextEdit, QWidget
+from PySide6.QtGui import QPainter, QColor
+from PySide6.QtWidgets import QWidget, QPlainTextEdit
 
 
 class MiniMap(QWidget):
-    """A small vertical overview of the document."""
-
     def __init__(self, editor: QPlainTextEdit) -> None:
         super().__init__(editor)
         self.editor = editor
-        self._content_height: int = 1
+        self._content_height = 1
 
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
 
+        # Update when document or scrollbar changes
         doc = self.editor.document()
-        doc.contentsChanged.connect(self._on_editor_changed)
-        self.editor.verticalScrollBar().valueChanged.connect(self._on_editor_changed)
-        self.editor.updateRequest.connect(self._on_editor_update)
+        doc.contentsChanged.connect(self.update)
+        self.editor.verticalScrollBar().valueChanged.connect(self.update)
+        self.editor.updateRequest.connect(self.update)
 
+    # ------------------------------------------------------------
     # Sizing
+    # ------------------------------------------------------------
     def sizeHint(self) -> QSize:  # type: ignore[override]
         fm = self.editor.fontMetrics()
-        # Slightly wider strip so the tiny text is visible
-        width = fm.horizontalAdvance("0" * 8)
+        width = fm.horizontalAdvance("0" * 6)
         height = self.editor.viewport().height()
         return QSize(width, height)
 
-    # Update triggers
-    def _on_editor_changed(self, *args) -> None:
-        self.update()
-
-    def _on_editor_update(self, *args) -> None:
-        self.update()
-
+    # ------------------------------------------------------------
     # Painting
+    # ------------------------------------------------------------
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
         rect = self.rect()
 
-        # Background to match the editor
+        # Background
         painter.fillRect(rect, self.palette().base())
-        painter.setRenderHint(QPainter.Antialiasing, False)
 
         doc = self.editor.document()
-        layout = doc.documentLayout()
-        if layout is None:
+        block = doc.firstBlock()
+
+        fm = self.editor.fontMetrics()
+        line_height = max(1, fm.height())
+        line_count = max(1, doc.blockCount())
+        self._content_height = line_count * line_height
+
+        if rect.height() <= 0:
             return
 
-        # Total document size in layout coordinates
-        doc_size = layout.documentSize()
-        doc_width = max(1.0, doc_size.width())
-        doc_height = max(1.0, doc_size.height())
-        self._content_height = int(doc_height)
+        scale = rect.height() / float(self._content_height)
+        width = rect.width()
 
-        # Compute scale factors so the whole document fits inside the minimap rect
-        if rect.width() <= 0 or rect.height() <= 0:
-            return
+        # Colors
+        base = self.palette().base().color()
+        mid = self.palette().mid().color()
+        midlight = self.palette().midlight().color()
+        alt = self.palette().alternateBase().color()
 
-        scale_x = rect.width() / doc_width
-        scale_y = rect.height() / doc_height
+        def tint(c: QColor, a: int) -> QColor:
+            c = QColor(c)
+            c.setAlpha(a)
+            return c
 
-        painter.save()
-        painter.translate(rect.left(), rect.top())
-        painter.scale(scale_x, scale_y)
+        text_color = tint(mid, 160)
+        comment_color = tint(midlight, 150)
+        string_color = tint(alt, 150)
+        empty_color = tint(base.lighter(115), 110)
 
-        # Draw the full document with syntax highlighting into the minimap
-        ctx = QAbstractTextDocumentLayout.PaintContext()
-        layout.draw(painter, ctx)
-        painter.restore()
+        # Render line bars
+        y_px = 0
+        while block.isValid():
+            text = block.text().lstrip()
 
-        # Draw the viewport indicator on top, in minimap coordinates
+            if not text:
+                color = empty_color
+            elif text.startswith("#"):
+                color = comment_color
+            elif text.startswith(("'", '"', "'''", '"""')):
+                color = string_color
+            else:
+                color = text_color
+
+            top = int(y_px * scale)
+            h = max(1, int(line_height * scale))
+            painter.fillRect(0, top, width, h, color)
+
+            y_px += line_height
+            block = block.next()
+
+        # ------------------------------------------------------------
+        # Viewport highlight
+        # ------------------------------------------------------------
         vsb = self.editor.verticalScrollBar()
-        viewport = self.editor.viewport()
+        maximum = vsb.maximum()
 
-        if self._content_height <= 0:
-            return
+        if maximum > 0:
+            viewport_pixel_height = self.editor.viewport().height()
+            viewport_lines = max(1, viewport_pixel_height / line_height)
 
-        # Map scroll position and viewport height into minimap space
-        content_height = doc_height
-        scale_y_minimap = rect.height() / content_height
+            viewport_start_px = (vsb.value() / maximum) * self._content_height
+            viewport_height_px = viewport_lines * line_height
 
-        top = int(vsb.value() * scale_y_minimap)
-        height = max(3, int(viewport.height() * scale_y_minimap))
+            top = int(viewport_start_px * scale)
+            h = max(3, int(viewport_height_px * scale))
 
-        # Clamp into rect
-        if top + height > rect.height():
-            height = max(3, rect.height() - top)
+            if top + h > rect.height():
+                h = rect.height() - top
 
-        # Semi-transparent fill + border like other editors
-        highlight_color = self.palette().highlight().color()
-        fill_color = highlight_color
-        fill_color.setAlpha(60)
+            highlight = self.palette().highlight().color()
+            fill = QColor(highlight)
+            fill.setAlpha(60)
 
-        painter.save()
-        painter.setPen(highlight_color)
-        painter.setBrush(fill_color)
-        painter.drawRect(rect.left(), rect.top() + top, rect.width() - 1, height)
-        painter.restore()
+            painter.setPen(highlight)
+            painter.setBrush(fill)
+            painter.drawRect(0, top, width - 1, h)
 
-    # Interaction
+    # ------------------------------------------------------------
+    # Interaction (click + drag scrolling)
+    # ------------------------------------------------------------
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        self._jump_to(event.position().y())
+        self._jump(event.position().y())
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
         if event.buttons() & Qt.LeftButton:
-            self._jump_to(event.position().y())
+            self._jump(event.position().y())
 
-    def _jump_to(self, y: float) -> None:
+    def _jump(self, y: float) -> None:
         if self._content_height <= 0:
             return
+
         scrollbar = self.editor.verticalScrollBar()
         maximum = max(1, scrollbar.maximum())
-        target_ratio = y / max(1.0, self.height())
-        scrollbar.setValue(int(target_ratio * maximum))
+        ratio = y / max(1.0, self.height())
+        scrollbar.setValue(int(ratio * maximum))
