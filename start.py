@@ -24,14 +24,51 @@ def is_stdlib_module(name: str) -> bool:
         spec = importlib.util.find_spec(name)
     except ModuleNotFoundError:
         return False
-    if spec is None or spec.origin is None:
+    if spec is None:
         return False
+
+    if spec.origin in (None, "built-in", "frozen"):
+        return True
+
     stdlib_path = Path(sysconfig.get_paths()["stdlib"]).resolve()
     try:
         origin = Path(spec.origin).resolve()
     except OSError:
+        return True
+    return origin == stdlib_path or stdlib_path in origin.parents
+
+
+def is_first_party_module(name: str, project_root: Path) -> bool:
+    """Return True if the module comes from inside ``project_root``."""
+
+    try:
+        spec = importlib.util.find_spec(name)
+    except ModuleNotFoundError:
         return False
-    return stdlib_path in origin.parents or origin == stdlib_path
+    if spec is None or spec.origin is None:
+        return False
+    try:
+        origin = Path(spec.origin).resolve()
+    except OSError:
+        return False
+    try:
+        root = project_root.resolve()
+    except OSError:
+        root = project_root
+    return root in origin.parents or origin == root
+
+
+NEVER_PIP_INSTALL = {
+    "os",
+    "sys",
+    "math",
+    "time",
+    "builtins",
+    "_ast",
+    "types",
+    "tests",
+    "test",
+}
 
 
 def _first_party_packages(root: Path) -> Set[str]:
@@ -89,11 +126,26 @@ def collect_dependencies(root: Path) -> Set[str]:
     for name in discovered:
         if not name or name in first_party:
             continue
-        if is_stdlib_module(name):
-            continue
         dependencies.add(name)
 
     return dependencies
+
+
+def filter_third_party_packages(names: set[str], project_root: Path) -> list[str]:
+    """Filter import names down to likely third-party pip packages."""
+
+    filtered: set[str] = set()
+    for name in names:
+        if not name or name.startswith("_"):
+            continue
+        if name in NEVER_PIP_INSTALL:
+            continue
+        if is_stdlib_module(name):
+            continue
+        if is_first_party_module(name, project_root):
+            continue
+        filtered.add(name)
+    return sorted(filtered)
 
 
 def pip_install_or_update(packages: Iterable[str]) -> bool:
@@ -160,19 +212,20 @@ def ensure_dependencies_installed() -> None:
         return
 
     try:
-        dependencies = collect_dependencies(root)
+        names = collect_dependencies(root)
+        packages = filter_third_party_packages(names, root)
     except Exception as exc:
         print(f"[Ghostline] Failed to collect dependencies: {exc}", file=sys.stderr)
         return
 
-    if not dependencies:
+    if not packages:
         if os.environ.get("GHOSTLINE_DEP_CHECK_ONCE"):
             mark_dep_check_done(root)
         return
 
     print("[Ghostline] Checking Python dependencies...", file=sys.stderr)
     try:
-        success = pip_install_or_update(dependencies)
+        success = pip_install_or_update(packages)
         if success:
             print("[Ghostline] Dependency check complete.", file=sys.stderr)
     except Exception as exc:  # pragma: no cover - defensive
