@@ -1,40 +1,43 @@
-"""Windsurf-style minimap for Ghostline.
-
-This implementation draws thin color-coded bars per line and overlays a
-viewport rectangle. It is lightweight, always visible, and avoids the
-blank/minimap-less rendering issue.
-"""
+"""Minimap widget that renders a tiny version of the editor contents."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPainter, QColor
+from PySide6.QtGui import QPainter, QAbstractTextDocumentLayout, QColor
 from PySide6.QtWidgets import QWidget, QPlainTextEdit
 
 
 class MiniMap(QWidget):
+    """A Windsurf-style minimap with scaled text and syntax colours."""
+
     def __init__(self, editor: QPlainTextEdit) -> None:
         super().__init__(editor)
         self.editor = editor
-        self._content_height = 1
+        self._content_height: int = 1
 
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
 
-        # Update when document or scrollbar changes
         doc = self.editor.document()
-        doc.contentsChanged.connect(self.update)
-        self.editor.verticalScrollBar().valueChanged.connect(self.update)
-        self.editor.updateRequest.connect(self.update)
+        doc.contentsChanged.connect(self._on_editor_changed)
+        self.editor.verticalScrollBar().valueChanged.connect(self._on_editor_changed)
+        self.editor.updateRequest.connect(self._on_editor_changed)
 
     # ------------------------------------------------------------
     # Sizing
     # ------------------------------------------------------------
     def sizeHint(self) -> QSize:  # type: ignore[override]
         fm = self.editor.fontMetrics()
-        width = fm.horizontalAdvance("0" * 6)
+        # Narrow enough to be a sidebar, wide enough to show tiny text.
+        width = fm.horizontalAdvance("0" * 10)
         height = self.editor.viewport().height()
         return QSize(width, height)
+
+    # ------------------------------------------------------------
+    # Update triggers
+    # ------------------------------------------------------------
+    def _on_editor_changed(self, *args) -> None:
+        self.update()
 
     # ------------------------------------------------------------
     # Painting
@@ -43,98 +46,78 @@ class MiniMap(QWidget):
         painter = QPainter(self)
         rect = self.rect()
 
-        # Background
         painter.fillRect(rect, self.palette().base())
 
         doc = self.editor.document()
-        block = doc.firstBlock()
-
-        fm = self.editor.fontMetrics()
-        line_height = max(1, fm.height())
-        line_count = max(1, doc.blockCount())
-        self._content_height = line_count * line_height
-
-        if rect.height() <= 0:
+        layout: QAbstractTextDocumentLayout | None = doc.documentLayout()
+        if layout is None or rect.width() <= 0 or rect.height() <= 0:
             return
 
-        scale = rect.height() / float(self._content_height)
-        width = rect.width()
+        doc_size = layout.documentSize()
+        doc_w = max(1.0, doc_size.width())
+        doc_h = max(1.0, doc_size.height())
+        self._content_height = int(doc_h)
 
-        # Colors
-        base = self.palette().base().color()
-        mid = self.palette().mid().color()
-        midlight = self.palette().midlight().color()
-        alt = self.palette().alternateBase().color()
+        # Compute scale so the full document fits inside the minimap.
+        scale_x = rect.width() / doc_w
+        scale_y = rect.height() / doc_h
+        scale = min(scale_x, scale_y)
 
-        def tint(c: QColor, a: int) -> QColor:
-            c = QColor(c)
-            c.setAlpha(a)
-            return c
+        painter.save()
+        painter.translate(rect.left(), rect.top())
+        painter.scale(scale, scale)
 
-        text_color = tint(mid, 160)
-        comment_color = tint(midlight, 150)
-        string_color = tint(alt, 150)
-        empty_color = tint(base.lighter(115), 110)
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        layout.draw(painter, ctx)
 
-        # Render line bars
-        y_px = 0
-        while block.isValid():
-            text = block.text().lstrip()
+        painter.restore()
 
-            if not text:
-                color = empty_color
-            elif text.startswith("#"):
-                color = comment_color
-            elif text.startswith(("'", '"', "'''", '"""')):
-                color = string_color
-            else:
-                color = text_color
-
-            top = int(y_px * scale)
-            h = max(1, int(line_height * scale))
-            painter.fillRect(0, top, width, h, color)
-
-            y_px += line_height
-            block = block.next()
-
-        # ------------------------------------------------------------
-        # Viewport highlight
-        # ------------------------------------------------------------
+        # --------------------------------------------------------
+        # Viewport highlight (drawn in minimap coordinates)
+        # --------------------------------------------------------
         vsb = self.editor.verticalScrollBar()
-        maximum = vsb.maximum()
+        viewport = self.editor.viewport()
 
-        if maximum > 0:
-            viewport_pixel_height = self.editor.viewport().height()
-            viewport_lines = max(1, viewport_pixel_height / line_height)
+        if self._content_height <= 0:
+            return
 
-            viewport_start_px = (vsb.value() / maximum) * self._content_height
-            viewport_height_px = viewport_lines * line_height
+        # Scrollbar value is in document pixels (content_height - viewport_height)
+        content_height = float(self._content_height)
+        visible_height = float(viewport.height())
 
-            top = int(viewport_start_px * scale)
-            h = max(3, int(viewport_height_px * scale))
+        # Map document coords to minimap coords
+        scale_y_minimap = rect.height() / content_height
 
-            if top + h > rect.height():
-                h = rect.height() - top
+        top_doc = float(vsb.value())
+        height_doc = visible_height
 
-            highlight = self.palette().highlight().color()
-            fill = QColor(highlight)
-            fill.setAlpha(60)
+        top = int(top_doc * scale_y_minimap)
+        height = max(3, int(height_doc * scale_y_minimap))
 
-            painter.setPen(highlight)
-            painter.setBrush(fill)
-            painter.drawRect(0, top, width - 1, h)
+        if top + height > rect.height():
+            height = rect.height() - top
+
+        highlight = self.palette().highlight().color()
+        fill = QColor(highlight)
+        fill.setAlpha(60)
+
+        painter.save()
+        painter.setPen(highlight)
+        painter.setBrush(fill)
+        painter.drawRect(rect.left(), rect.top() + top, rect.width() - 1, height)
+        painter.restore()
 
     # ------------------------------------------------------------
-    # Interaction (click + drag scrolling)
+    # Interaction (click + drag to scroll)
     # ------------------------------------------------------------
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
-        self._jump(event.position().y())
+        self._jump_to(event.position().y())
 
     def mouseMoveEvent(self, event) -> None:  # type: ignore[override]
         if event.buttons() & Qt.LeftButton:
-            self._jump(event.position().y())
+            self._jump_to(event.position().y())
 
-    def _jump(self, y: float) -> None:
+    def _jump_to(self, y: float) -> None:
         if self._content_height <= 0:
             return
 
