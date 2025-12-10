@@ -1206,6 +1206,14 @@ class MainWindow(QMainWindow):
         self.semantic_index.reindex([path])
         if hasattr(self, "doc_dock"):
             self.doc_dock.set_current_file(Path(path))
+        ai_client = getattr(self, "ai_client", None)
+        if ai_client:
+            try:
+                file_text = editor.toPlainText() if editor else Path(path).read_text(encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to capture file contents for AI backend on open: %s", path)
+                file_text = ""
+            ai_client.on_file_opened(Path(path), file_text)
 
     def _open_graph_location(self, path: str, line: int | None) -> None:
         if line is None:
