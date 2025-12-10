@@ -70,6 +70,11 @@ NEVER_PIP_INSTALL = {
     "test",
 }
 
+IMPORT_TO_PIP_PACKAGE = {
+    "yaml": "PyYAML",
+    "PIL": "Pillow",
+}
+
 
 def _first_party_packages(root: Path) -> Set[str]:
     """Detect top-level first-party package names under ``root``."""
@@ -144,7 +149,8 @@ def filter_third_party_packages(names: set[str], project_root: Path) -> list[str
             continue
         if is_first_party_module(name, project_root):
             continue
-        filtered.add(name)
+        pkg_name = IMPORT_TO_PIP_PACKAGE.get(name, name)
+        filtered.add(pkg_name)
     return sorted(filtered)
 
 
