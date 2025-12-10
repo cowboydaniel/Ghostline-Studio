@@ -406,9 +406,12 @@ QSplitter::handle:hover {
     background-color: #15161a;
 }
 
+/* Editor header (breadcrumbs + Run/Debug/Configure) */
+
 #EditorHeader {
     background-color: #15161a;
     border-bottom: 1px solid #20222a;
+    min-height: 22px;
 }
 
 #Breadcrumbs {
@@ -422,12 +425,17 @@ QSplitter::handle:hover {
 
 #Breadcrumbs QLabel#BreadcrumbLeaf {
     color: #dcdfe4;
+    font-weight: 500;
+}
+
+#Breadcrumbs QLabel#BreadcrumbEllipsis {
+    color: #7b7f8f;
 }
 
 #EditorHeader QToolButton {
     background: transparent;
     border: none;
-    padding: 0px 6px;
+    padding: 0px 8px;
     color: #c0c0c0;
     font-weight: 500;
 }
