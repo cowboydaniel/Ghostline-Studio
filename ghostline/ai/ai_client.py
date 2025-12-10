@@ -4,9 +4,11 @@ from __future__ import annotations
 import json
 import socket
 import subprocess
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Generator
 from urllib import request
@@ -36,6 +38,9 @@ class DummyBackend:
     def stream(self, prompt: str, context: str | None = None) -> Generator[str, None, None]:
         yield self.send(prompt, context).text
 
+    def on_file_opened(self, path: Path, text: str) -> None:
+        """Handle file-open events without performing network I/O."""
+
 
 class HTTPBackend:
     def __init__(self, config: ConfigManager) -> None:
@@ -61,6 +66,9 @@ class HTTPBackend:
         with request.urlopen(req, timeout=self.timeout) as resp:  # type: ignore[arg-type]
             return json.loads(resp.read().decode("utf-8"))
 
+    def on_file_opened(self, path: Path, text: str) -> None:
+        """Default hook for file-open events; subclasses may override."""
+
 
 class OllamaBackend(HTTPBackend):
     def __init__(self, config: ConfigManager) -> None:
@@ -79,6 +87,10 @@ class OllamaBackend(HTTPBackend):
 
     def stream(self, prompt: str, context: str | None = None) -> Generator[str, None, None]:
         yield self.send(prompt, context).text
+
+    def on_file_opened(self, path: Path, text: str) -> None:
+        """Hook for file-open events dispatched from the AI client."""
+        _ = (path, text)
 
 
 class OpenAICompatibleBackend(HTTPBackend):
@@ -145,6 +157,10 @@ class OpenAICompatibleBackend(HTTPBackend):
             return None
 
         return _extract(event)
+
+    def on_file_opened(self, path: Path, text: str) -> None:
+        """Hook for file-open events dispatched from the AI client."""
+        _ = (path, text)
 
 
 class AIClient:
@@ -371,4 +387,40 @@ class AIClient:
             self.logger.exception("AI streaming failure: %s", exc)
             self.disabled = True
             yield "AI backend unavailable. Check logs for details."
+
+    def on_file_opened(self, path: Path, text: str) -> None:
+        """Public entry called from the UI thread when a file is opened."""
+        if self.disabled:
+            return
+
+        backend, backend_type = self._backend_for_model(self.active_model)
+        handler = getattr(backend, "on_file_opened", None)
+        if not callable(handler):
+            return
+
+        if backend_type == "openai" and not self.settings.allow_openai:
+            self.logger.info("OpenAI backend disabled; skipping file-open job for %s", path)
+            return
+
+        self.backend = backend
+        self.logger.info(
+            "Scheduling AI file-open job for %s with backend %s", path, backend_type or backend.__class__.__name__
+        )
+        thread = threading.Thread(
+            target=self._run_file_opened_job,
+            args=(backend, Path(path), text),
+            daemon=True,
+        )
+        thread.start()
+
+    def _run_file_opened_job(self, backend: object, path: Path, text: str) -> None:
+        self.logger.info("Starting AI file-open job for %s", path)
+        try:
+            handler = getattr(backend, "on_file_opened", None)
+            if callable(handler):
+                handler(path, text)
+        except Exception:
+            self.logger.exception("Error running AI file-open job for %s", path)
+        finally:
+            self.logger.info("Completed AI file-open job for %s", path)
 
