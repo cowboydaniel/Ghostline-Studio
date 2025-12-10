@@ -1,15 +1,14 @@
-"""Minimap widget that renders a tiny version of the editor contents with
-syntax colors, like Windsurf / VS Code.
+"""Text-based minimap for Ghostline, Windsurf-style.
 
-The key difference from earlier attempts:
-We SCALE ONLY BY HEIGHT. Width is clipped. This keeps text visible.
+This minimap renders real, shrunken text for each line using a small font,
+with per-line syntax colouring and a translucent viewport rectangle.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPainter, QAbstractTextDocumentLayout, QColor
-from PySide6.QtWidgets import QWidget, QPlainTextEdit
+from PySide6.QtGui import QColor, QFontMetricsF, QPainter
+from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
 
 class MiniMap(QWidget):
@@ -36,6 +35,32 @@ class MiniMap(QWidget):
         return QSize(width, height)
 
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _line_color(self, block) -> QColor:
+        """Pick a representative syntax colour for this line."""
+        layout = block.layout()
+        if layout is None:
+            c = QColor(self.palette().mid().color())
+            c.setAlpha(140)
+            return c
+
+        formats = layout.formats()
+        if not formats:
+            c = QColor(self.palette().mid().color())
+            c.setAlpha(140)
+            return c
+
+        best = max(formats, key=lambda f: f.length)
+        fg = best.format.foreground().color()
+        if not fg.isValid():
+            fg = QColor(self.palette().mid().color())
+
+        fg = QColor(fg)
+        fg.setAlpha(190)
+        return fg
+
+    # ------------------------------------------------------------------
     # Painting
     # ------------------------------------------------------------------
     def paintEvent(self, event) -> None:  # type: ignore[override]
@@ -47,61 +72,75 @@ class MiniMap(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, False)
 
         doc = self.editor.document()
-        layout: QAbstractTextDocumentLayout | None = doc.documentLayout()
-        if not layout or rect.width() <= 0 or rect.height() <= 0:
-            return
+        block = doc.firstBlock()
+        line_count = max(1, doc.blockCount())
 
-        doc_size = layout.documentSize()
-        doc_h = max(1.0, doc_size.height())
-        doc_w = max(1.0, doc_size.width())
-        self._content_height = int(doc_h)
+        # Compute per-line height in minimap space
+        line_height_px = rect.height() / float(line_count)
+        self._content_height = int(line_height_px * line_count)
 
-        # --------------------------------------------------------------
-        # The important fix:
-        # SCALE ONLY BY HEIGHT. Width is clipped naturally.
-        # --------------------------------------------------------------
-        scale = rect.height() / doc_h
+        # Choose a tiny font that roughly fits that line height
+        base_font = self.editor.font()
+        base_fm = QFontMetricsF(base_font)
+        base_height = max(1.0, base_fm.height())
+        scale = line_height_px / base_height
 
-        painter.save()
-        painter.translate(rect.left(), rect.top())
-        painter.scale(scale, scale)
+        tiny_font = base_font
+        tiny_font.setPointSizeF(max(3.0, base_font.pointSizeF() * scale))
+        tiny_fm = QFontMetricsF(tiny_font)
+        painter.setFont(tiny_font)
 
-        # Draw the full document (syntax-highlighted)
-        ctx = QAbstractTextDocumentLayout.PaintContext()
-        layout.draw(painter, ctx)
+        # Draw one line of tiny text per block
+        y_line = 0
+        while block.isValid():
+            text = block.text()
+            color = self._line_color(block)
 
-        painter.restore()
+            top = rect.top() + int(y_line * line_height_px)
+            baseline = top + int(tiny_fm.ascent())
+
+            # Elide to fit minimap width
+            if rect.width() > 2:
+                elided = tiny_fm.elidedText(text, Qt.ElideRight, rect.width() - 2)
+            else:
+                elided = ""
+
+            painter.setPen(color)
+            painter.drawText(rect.left() + 1, baseline, elided)
+
+            y_line += 1
+            block = block.next()
 
         # ------------------------------------------------------------------
         # Viewport highlight
         # ------------------------------------------------------------------
         vsb = self.editor.verticalScrollBar()
-        viewport = self.editor.viewport()
+        maximum = vsb.maximum()
+        if maximum >= 0:
+            viewport = self.editor.viewport()
+            visible_px = viewport.height()
 
-        if self._content_height <= 0:
-            return
+            # Convert scrollbar value into line index range
+            # Approximate by using ratio of scroll range.
+            scroll_ratio = vsb.value() / max(1.0, float(maximum))
+            visible_lines = visible_px / max(1.0, base_height)
 
-        content_h = float(self._content_height)
-        view_h = float(viewport.height())
+            top_line = scroll_ratio * (line_count - visible_lines)
+            top_line = max(0.0, min(float(line_count - 1), top_line))
 
-        top_doc = float(vsb.value())
-        height_doc = view_h
+            top = rect.top() + int(top_line * line_height_px)
+            height = max(3, int(visible_lines * line_height_px))
 
-        scale_y = rect.height() / content_h
+            if top + height > rect.height():
+                height = rect.height() - top
 
-        top = int(top_doc * scale_y)
-        height = max(3, int(height_doc * scale_y))
+            highlight = self.palette().highlight().color()
+            fill = QColor(highlight)
+            fill.setAlpha(60)
 
-        if top + height > rect.height():
-            height = rect.height() - top
-
-        highlight = self.palette().highlight().color()
-        fill = QColor(highlight)
-        fill.setAlpha(60)
-
-        painter.setPen(highlight)
-        painter.setBrush(fill)
-        painter.drawRect(rect.left(), rect.top() + top, rect.width() - 1, height)
+            painter.setPen(highlight)
+            painter.setBrush(fill)
+            painter.drawRect(rect.left(), top, rect.width() - 1, height)
 
     # ------------------------------------------------------------------
     # Interaction
@@ -114,8 +153,6 @@ class MiniMap(QWidget):
             self._jump_to(event.position().y())
 
     def _jump_to(self, y: float) -> None:
-        if self._content_height <= 0:
-            return
         scrollbar = self.editor.verticalScrollBar()
         maximum = max(1, scrollbar.maximum())
         ratio = y / max(1.0, self.height())
