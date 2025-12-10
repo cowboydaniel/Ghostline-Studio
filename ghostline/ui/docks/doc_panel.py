@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QTextEdit, QVBoxLayout, QWidget, QDockWidget
 
 from ghostline.ai.doc_generator import DocGenerator
 
 
 class DocPanel(QDockWidget):
+    summary_ready = Signal(str)
+
     def __init__(self, generator: DocGenerator, parent=None) -> None:
         super().__init__("Documentation", parent)
         self.generator = generator
@@ -28,6 +32,8 @@ class DocPanel(QDockWidget):
 
         self._current_path: Path | None = None
 
+        self.summary_ready.connect(self.text.setPlainText)
+
     def set_current_file(self, path: Path) -> None:
         self._current_path = path
         self.refresh()
@@ -36,6 +42,18 @@ class DocPanel(QDockWidget):
         if not self._current_path:
             self.text.setPlainText("Open a file to see live documentation")
             return
-        summary = self.generator.summarise_module(self._current_path)
-        self.text.setPlainText(summary)
+
+        self.text.setPlainText("Generating documentation...")
+
+        def worker(path: Path) -> None:
+            try:
+                summary = self.generator.summarise_module(path)
+            except Exception as exc:  # noqa: BLE001
+                summary = f"Failed to generate documentation:\n{exc}"
+            try:
+                self.summary_ready.emit(summary)
+            except RuntimeError:
+                return
+
+        threading.Thread(target=worker, args=(self._current_path,), daemon=True).start()
 
