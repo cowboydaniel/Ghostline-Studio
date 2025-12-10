@@ -207,6 +207,11 @@ class GhostlineTitleBar(QWidget):
                 background: palette(window);
                 border-bottom: 1px solid palette(mid);
             }
+            #GhostlineTitleBar QToolBar {
+                background: transparent;
+                border: none;
+                spacing: 0;
+            }
             #GhostlineTitleBar QToolButton {
                 background: transparent;
                 border: none;
