@@ -7,7 +7,7 @@ document and a highlighted rectangle for the visible viewport.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPainter
+from PySide6.QtGui import QAbstractTextDocumentLayout, QPainter
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
 
@@ -30,8 +30,10 @@ class MiniMap(QWidget):
     # Sizing
     def sizeHint(self) -> QSize:  # type: ignore[override]
         fm = self.editor.fontMetrics()
-        # A narrow strip beside the editor.
-        return fm.boundingRect("0" * 4).size()
+        # Slightly wider strip so the tiny text is visible
+        width = fm.horizontalAdvance("0" * 8)
+        height = self.editor.viewport().height()
+        return QSize(width, height)
 
     # Update triggers
     def _on_editor_changed(self, *args) -> None:
@@ -45,48 +47,65 @@ class MiniMap(QWidget):
         painter = QPainter(self)
         rect = self.rect()
 
+        # Background to match the editor
         painter.fillRect(rect, self.palette().base())
+        painter.setRenderHint(QPainter.Antialiasing, False)
 
         doc = self.editor.document()
-        block = doc.firstBlock()
-        fm = self.editor.fontMetrics()
-        line_height = max(1, fm.height())
-        line_count = max(1, doc.blockCount())
-        self._content_height = line_count * line_height
+        layout = doc.documentLayout()
+        if layout is None:
+            return
 
-        # Map document pixel height to minimap height.
-        scale = rect.height() / float(self._content_height)
+        # Total document size in layout coordinates
+        doc_size = layout.documentSize()
+        doc_width = max(1.0, doc_size.width())
+        doc_height = max(1.0, doc_size.height())
+        self._content_height = int(doc_height)
 
-        y = 0
-        width = rect.width()
-        mid_color = self.palette().mid().color()
+        # Compute scale factors so the whole document fits inside the minimap rect
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
 
-        # Very simple representation: one thin bar per line.
-        while block.isValid():
-            painter.fillRect(
-                0,
-                int(y * scale),
-                width,
-                max(1, int(line_height * scale)),
-                mid_color,
-            )
-            y += line_height
-            block = block.next()
+        scale_x = rect.width() / doc_width
+        scale_y = rect.height() / doc_height
 
-        # Draw viewport indicator.
+        painter.save()
+        painter.translate(rect.left(), rect.top())
+        painter.scale(scale_x, scale_y)
+
+        # Draw the full document with syntax highlighting into the minimap
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        layout.draw(painter, ctx)
+        painter.restore()
+
+        # Draw the viewport indicator on top, in minimap coordinates
         vsb = self.editor.verticalScrollBar()
-        maximum = vsb.maximum()
-        if maximum > 0:
-            viewport_blocks = max(1, int(self.editor.viewport().height() / line_height))
-            viewport_start_px = (vsb.value() / maximum) * self._content_height
-            viewport_height_px = viewport_blocks * line_height
+        viewport = self.editor.viewport()
 
-            top = int(viewport_start_px * scale)
-            height = max(3, int(viewport_height_px * scale))
+        if self._content_height <= 0:
+            return
 
-            pen = self.palette().highlight().color()
-            painter.setPen(pen)
-            painter.drawRect(0, top, width - 1, height)
+        # Map scroll position and viewport height into minimap space
+        content_height = doc_height
+        scale_y_minimap = rect.height() / content_height
+
+        top = int(vsb.value() * scale_y_minimap)
+        height = max(3, int(viewport.height() * scale_y_minimap))
+
+        # Clamp into rect
+        if top + height > rect.height():
+            height = max(3, rect.height() - top)
+
+        # Semi-transparent fill + border like other editors
+        highlight_color = self.palette().highlight().color()
+        fill_color = highlight_color
+        fill_color.setAlpha(60)
+
+        painter.save()
+        painter.setPen(highlight_color)
+        painter.setBrush(fill_color)
+        painter.drawRect(rect.left(), rect.top() + top, rect.width() - 1, height)
+        painter.restore()
 
     # Interaction
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
