@@ -1,4 +1,4 @@
-"""Bootstrap script to install dependencies and launch Ghostline Studio."""
+"""Bootstrap script to ensure dependencies are available and launch Ghostline Studio."""
 from __future__ import annotations
 
 import ast
@@ -6,99 +6,198 @@ import importlib.util
 import os
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
-from typing import Iterable, Set, Tuple
-
-# Map imported module names to the pip packages that provide them.
-DEPENDENCY_PACKAGE_MAP: dict[str, str] = {
-    "PySide6": "PySide6",
-    "shiboken6": "shiboken6",
-    "yaml": "PyYAML",
-    "httpx": "httpx",
-    "openai": "openai",
-    "pytest": "pytest",
-}
-
-# Modules that should always be installed even if they are not discovered in the AST scan
-# (for example, shiboken6 ships with PySide6 but is listed explicitly for clarity).
-ESSENTIAL_MODULES: set[str] = {
-    "PySide6",
-    "shiboken6",
-    "yaml",
-    "httpx",
-    "openai",
-}
-
-PROJECT_ROOT = Path(__file__).resolve().parent
+from typing import Iterable, Set
 
 
-def _collect_imports(root: Path) -> Set[str]:
-    """Return the set of top-level import names used in Python files under ``root``."""
+def project_root() -> Path:
+    """Return the absolute path to the repository root."""
 
-    project_modules = {path.stem for path in root.rglob("*.py")}
-    stdlib = set(sys.stdlib_module_names)
+    return Path(__file__).resolve().parent
+
+
+def is_stdlib_module(name: str) -> bool:
+    """Return True if ``name`` resolves to a standard library module."""
+
+    try:
+        spec = importlib.util.find_spec(name)
+    except ModuleNotFoundError:
+        return False
+    if spec is None or spec.origin is None:
+        return False
+    stdlib_path = Path(sysconfig.get_paths()["stdlib"]).resolve()
+    try:
+        origin = Path(spec.origin).resolve()
+    except OSError:
+        return False
+    return stdlib_path in origin.parents or origin == stdlib_path
+
+
+def _first_party_packages(root: Path) -> Set[str]:
+    """Detect top-level first-party package names under ``root``."""
+
+    packages: set[str] = set()
+    for entry in root.iterdir():
+        if entry.is_dir() and (entry / "__init__.py").exists():
+            packages.add(entry.name)
+    packages.add("ghostline")
+    return packages
+
+
+def _discover_imports(py_file: Path) -> Set[str]:
+    """Parse a Python file and return discovered top-level import names."""
+
+    discovered: set[str] = set()
+    try:
+        source = py_file.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return discovered
+
+    try:
+        tree = ast.parse(source, filename=str(py_file))
+    except SyntaxError:
+        return discovered
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name.split(".")[0]
+                if name:
+                    discovered.add(name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level and node.level > 0:
+                continue
+            module = node.module
+            if module:
+                name = module.split(".")[0]
+                if name:
+                    discovered.add(name)
+    return discovered
+
+
+def collect_dependencies(root: Path) -> Set[str]:
+    """Collect third-party dependencies used in the project."""
+
+    first_party = _first_party_packages(root)
     discovered: set[str] = set()
 
     for py_file in root.rglob("*.py"):
-        with open(py_file, "r", encoding="utf-8", errors="ignore") as handle:
-            try:
-                tree = ast.parse(handle.read(), filename=str(py_file))
-            except SyntaxError:
-                continue
+        discovered.update(_discover_imports(py_file))
 
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                module = node.names[0].name if isinstance(node, ast.Import) else node.module
-                if not module:
-                    continue
-                discovered.add(module.split(".")[0])
-
-    external: set[str] = set()
+    dependencies: set[str] = set()
     for name in discovered:
-        if name in stdlib or name in project_modules or name == "ghostline":
+        if not name or name in first_party:
             continue
-        if (root / name).is_dir():
+        if is_stdlib_module(name):
             continue
-        external.add(name)
+        dependencies.add(name)
 
-    return external
-
-
-def _resolve_packages(modules: Iterable[str]) -> Set[Tuple[str, str]]:
-    """Map module names to the pip packages that should be installed."""
-
-    resolved: set[tuple[str, str]] = set()
-    for module in modules:
-        package = DEPENDENCY_PACKAGE_MAP.get(module, module)
-        resolved.add((module, package))
-    return resolved
+    return dependencies
 
 
-def install_dependencies() -> None:
-    """Install all external dependencies detected in the repository."""
+def pip_install_or_update(packages: Iterable[str]) -> bool:
+    """Install or update the given packages using pip.
 
-    imported_modules = _collect_imports(PROJECT_ROOT)
-    imported_modules.update(ESSENTIAL_MODULES)
+    Returns ``True`` when the pip command succeeds.
+    """
 
-    dependencies = _resolve_packages(imported_modules)
-    base_cmd = [sys.executable, "-m", "pip", "install", "--break-system-packages"]
+    package_list = sorted(set(packages))
+    if not package_list:
+        return True
 
-    for module, package in sorted(dependencies, key=lambda item: item[1].lower()):
-        if importlib.util.find_spec(module) is not None:
-            continue
-        subprocess.check_call(base_cmd + [package])
+    cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *package_list]
+    try:
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError as exc:
+        print(f"[Ghostline] Failed to install/update dependencies: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
-def main() -> None:
-    os.chdir(PROJECT_ROOT)
-    if str(PROJECT_ROOT) not in sys.path:
-        sys.path.insert(0, str(PROJECT_ROOT))
+def _marker_path(root: Path) -> Path:
+    """Return the marker file path used to remember dependency checks."""
 
-    install_dependencies()
+    try:
+        import platformdirs  # type: ignore
+
+        config_dir = Path(platformdirs.user_config_dir("ghostline", "ghostline"))
+        return config_dir / "dep_check_done"
+    except Exception:
+        return root / ".ghostline_dep_check_done"
+
+
+def should_run_dep_check(root: Path) -> bool:
+    """Determine whether dependency checks should run."""
+
+    if os.environ.get("GHOSTLINE_SKIP_DEP_CHECK"):
+        return False
+
+    if os.environ.get("GHOSTLINE_DEP_CHECK_ONCE"):
+        marker = _marker_path(root)
+        if marker.exists():
+            return False
+
+    return True
+
+
+def mark_dep_check_done(root: Path) -> None:
+    """Write the marker file indicating dependency checks have run."""
+
+    marker = _marker_path(root)
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch(exist_ok=True)
+    except OSError as exc:
+        print(f"[Ghostline] Unable to record dependency check marker: {exc}", file=sys.stderr)
+
+
+def ensure_dependencies_installed() -> None:
+    """Discover and install required dependencies, handling failures gracefully."""
+
+    root = project_root()
+    if not should_run_dep_check(root):
+        return
+
+    try:
+        dependencies = collect_dependencies(root)
+    except Exception as exc:
+        print(f"[Ghostline] Failed to collect dependencies: {exc}", file=sys.stderr)
+        return
+
+    if not dependencies:
+        if os.environ.get("GHOSTLINE_DEP_CHECK_ONCE"):
+            mark_dep_check_done(root)
+        return
+
+    print("[Ghostline] Checking Python dependencies...", file=sys.stderr)
+    try:
+        success = pip_install_or_update(dependencies)
+        if success:
+            print("[Ghostline] Dependency check complete.", file=sys.stderr)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[Ghostline] Dependency installation encountered an error: {exc}", file=sys.stderr)
+    finally:
+        if os.environ.get("GHOSTLINE_DEP_CHECK_ONCE"):
+            mark_dep_check_done(root)
+
+
+def launch_ghostline() -> None:
+    """Launch the Ghostline application."""
+
+    root = project_root()
+    os.chdir(root)
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
 
     from ghostline.main import main as run_main
 
     raise SystemExit(run_main())
+
+
+def main() -> None:
+    ensure_dependencies_installed()
+    launch_ghostline()
 
 
 if __name__ == "__main__":
