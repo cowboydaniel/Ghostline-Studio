@@ -405,10 +405,31 @@ class MainWindow(QMainWindow):
         self.central_stack.setMinimumWidth(400)
         self.right_region_container.setMinimumWidth(260)
 
+        # Create bottom dock container first (before adding to splitter)
+        self.bottom_dock_container = QWidget(self)
+        bottom_layout = QVBoxLayout(self.bottom_dock_container)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(0)
+        self.bottom_dock_stack = QStackedWidget(self.bottom_dock_container)
+        bottom_layout.addWidget(self.bottom_dock_stack)
+        self.bottom_dock_container.setVisible(False)
+
+        # Create vertical splitter for center region (editor + bottom dock)
+        self.center_vertical_splitter = QSplitter(Qt.Vertical, self)
+        self.center_vertical_splitter.setChildrenCollapsible(False)
+        self.center_vertical_splitter.addWidget(self.central_stack)
+        self.center_vertical_splitter.addWidget(self.bottom_dock_container)
+        self.center_vertical_splitter.setStretchFactor(0, 1)  # Editor expands
+        self.center_vertical_splitter.setStretchFactor(1, 0)  # Bottom dock fixed height
+
+        # Set initial sizes for center vertical splitter (70% editor, 30% terminal when shown)
+        total_height = self.height() or 800
+        self.center_vertical_splitter.setSizes([int(total_height * 0.70), int(total_height * 0.30)])
+
         self.main_splitter = QSplitter(Qt.Horizontal, self)
         self.main_splitter.setChildrenCollapsible(False)
         self.main_splitter.addWidget(self.left_region_container)
-        self.main_splitter.addWidget(self.central_stack)
+        self.main_splitter.addWidget(self.center_vertical_splitter)
         self.main_splitter.addWidget(self.right_region_container)
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
@@ -418,14 +439,6 @@ class MainWindow(QMainWindow):
         self.main_splitter.setSizes(
             [int(total_width * 0.22), int(total_width * 0.48), int(total_width * 0.30)]
         )
-
-        self.bottom_dock_container = QWidget(self)
-        bottom_layout = QVBoxLayout(self.bottom_dock_container)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(0)
-        self.bottom_dock_stack = QStackedWidget(self.bottom_dock_container)
-        bottom_layout.addWidget(self.bottom_dock_stack)
-        self.bottom_dock_container.setVisible(False)
 
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
@@ -560,7 +573,6 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.main_splitter, 1)
-        layout.addWidget(self.bottom_dock_container, 0)
 
         self.setCentralWidget(container)
 
