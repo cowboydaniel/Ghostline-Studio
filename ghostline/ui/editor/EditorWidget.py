@@ -148,15 +148,52 @@ class EditorWidget(QWidget):
     # Actions
     # ------------------------------------------------------------------
     def _trigger_run(self) -> None:
+        print("\n=== Run button clicked! ===")  # Debug log
+        
+        # Check command registry
         if not self.command_registry:
+            print("ERROR: No command registry available!")
+            return
+        print("✓ Command registry available")
+
+        # Get the command descriptor
+        if not hasattr(self.command_registry, 'get'):
+            print(f"ERROR: command_registry is not a CommandRegistry instance. Type: {type(self.command_registry)}")
             return
 
         descriptor = self.command_registry.get("python.runFile")
+        print(f"Command descriptor: {descriptor}")
+        
+        # Get the file path
         path = self._file_path()
-        if not descriptor or not path:
+        print(f"File path: {path}")
+        
+        # Validate descriptor and path
+        if not descriptor:
+            print("ERROR: 'python.runFile' command not found in registry!")
+            if hasattr(self.command_registry, '_commands'):
+                print(f"Available commands: {list(self.command_registry._commands.keys())}")
             return
-
-        self.command_registry.execute(descriptor.with_arguments(file_path=str(path)))
+            
+        if not path:
+            print("ERROR: No file path available to run!")
+            return
+            
+        print(f"✓ Ready to execute command for file: {path}")
+        
+        try:
+            # Prepare the command with arguments
+            command = descriptor.with_arguments(file_path=str(path))
+            print(f"Executing command: {command}")
+            
+            # Execute the command
+            result = self.command_registry.execute(command)
+            print(f"Command execution result: {result}")
+            
+        except Exception as e:
+            print(f"ERROR during command execution: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _file_path(self) -> Path | None:
         return self.editor.path if isinstance(self.editor.path, Path) else None
@@ -166,10 +203,25 @@ class EditorWidget(QWidget):
         return bool(path and path.suffix.lower() in self.RUNNABLE_SUFFIXES)
 
     def _update_toolbar_visibility(self) -> None:
+        path = self._file_path()
         runnable = self._is_runnable()
+        
+        print("\n=== Updating Toolbar Visibility ===")
+        print(f"Current file: {path}")
+        print(f"Is runnable: {runnable}")
+        print(f"Run button enabled: {runnable}")
+        print(f"Run button visible: {self.run_button.isVisible()}")
+        print(f"Run button tooltip: {self.run_button.toolTip()}")
+        
         self.run_button.setEnabled(runnable)
         self.debug_button.setEnabled(runnable)
         self.configure_button.setEnabled(runnable)
+        
+        # Force update the button's appearance
+        self.run_button.update()
+        self.run_button.repaint()
+        
+        print("Toolbar visibility update complete\n")
 
     # Qt overrides ------------------------------------------------------
     def resizeEvent(self, event):  # type: ignore[override]
