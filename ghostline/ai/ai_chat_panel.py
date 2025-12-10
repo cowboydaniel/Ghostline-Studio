@@ -4,8 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import re
+import threading
 from pathlib import Path
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize, QPoint
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize, QPoint, QTimer
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -595,7 +596,7 @@ class AIChatPanel(QWidget):
         self.available_models: list[ModelDescriptor] = []
         self._has_openai_key = bool(self.model_registry._openai_settings().get("api_key"))
         self.current_model_descriptor: ModelDescriptor | None = None
-        self._refresh_models(initial=True)
+        self._refresh_models_background(initial=True)
         self.current_mode = "Code"
 
         self.setObjectName("aiChatPanel")
@@ -967,41 +968,53 @@ class AIChatPanel(QWidget):
         if self.mode_popover:
             self.mode_popover.hide()
 
-    def _refresh_models(self, initial: bool = False) -> None:
-        self.available_models = []
-        try:
-            self.available_models.extend(self.model_registry.enabled_openai_models())
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            self.available_models.extend(self.model_registry.ollama_models())
-        except Exception:  # noqa: BLE001
-            pass
+    def _refresh_models_background(self, initial: bool = False) -> None:
+        """Load model lists without blocking the UI thread."""
 
-        fallback: ModelDescriptor | None = None
-        if not self.available_models:
-            openai_candidates = self.model_registry.openai_models()
-            fallback = openai_candidates[0] if openai_candidates else None
+        def worker() -> None:
+            available_models: list[ModelDescriptor] = []
+            has_openai_key = self._has_openai_key
+            try:
+                available_models.extend(self.model_registry.enabled_openai_models())
+                has_openai_key = bool(self.model_registry._openai_settings().get("api_key"))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                available_models.extend(self.model_registry.ollama_models())
+            except Exception:  # noqa: BLE001
+                pass
 
-        chosen = self._choose_default_model(initial, fallback)
-        if chosen:
-            self.current_model_descriptor = chosen
-        self._has_openai_key = bool(self.model_registry._openai_settings().get("api_key"))
-        if hasattr(self, "model_chip"):
-            self._refresh_model_chip()
+            fallback: ModelDescriptor | None = None
+            if not available_models:
+                openai_candidates = self.model_registry.openai_models()
+                fallback = openai_candidates[0] if openai_candidates else None
+
+            chosen = self._choose_default_model(available_models, initial, fallback)
+
+            def apply_models() -> None:
+                self.available_models = available_models
+                if chosen:
+                    self.current_model_descriptor = chosen
+                self._has_openai_key = has_openai_key
+                if hasattr(self, "model_chip"):
+                    self._refresh_model_chip()
+
+            QTimer.singleShot(0, apply_models)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _choose_default_model(
-        self, initial: bool = False, fallback: ModelDescriptor | None = None
+        self, models: list[ModelDescriptor], initial: bool = False, fallback: ModelDescriptor | None = None
     ) -> ModelDescriptor | None:
         last_used = self.model_registry.last_used_model()
         if last_used:
-            for model in self.available_models:
+            for model in models:
                 if model.id == last_used.id and model.provider == last_used.provider:
                     return model
             if not initial:
                 return last_used
-        if self.available_models:
-            return self.available_models[0]
+        if models:
+            return models[0]
         return fallback
 
     def _refresh_model_chip(self) -> None:
@@ -1019,7 +1032,7 @@ class AIChatPanel(QWidget):
         if self.model_selector_panel and self.model_selector_panel.isVisible():
             self.model_selector_panel.hide()
             return
-        self._refresh_models()
+        self._refresh_models_background()
         self.model_selector_panel = ModelSelectorPanel(
             self.available_models,
             self.current_model_descriptor,

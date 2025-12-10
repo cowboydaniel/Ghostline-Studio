@@ -61,6 +61,10 @@ class HTTPBackend:
         return headers
 
     def _post(self, url: str, payload: dict) -> dict:
+        client = getattr(self, "_client", None)
+        if client:
+            return client._call_backend_sync(url, payload, headers=self._headers(), timeout=self.timeout)
+
         data = json.dumps(payload).encode("utf-8")
         req = request.Request(url, data=data, headers=self._headers())
         with request.urlopen(req, timeout=self.timeout) as resp:  # type: ignore[arg-type]
@@ -166,6 +170,30 @@ class OpenAICompatibleBackend(HTTPBackend):
 class AIClient:
     """Factory for AI backends. Currently provides dummy implementation."""
 
+    def _call_backend_sync(
+        self, url: str, payload: dict | None = None, *, headers: dict[str, str] | None = None, timeout: float | None = None
+    ) -> dict:
+        """Perform a synchronous backend call; the only place for blocking I/O."""
+
+        data = json.dumps(payload or {}).encode("utf-8") if payload is not None else None
+        req = request.Request(url, data=data, headers=headers or {})
+        with request.urlopen(req, timeout=timeout or None) as resp:  # type: ignore[arg-type]
+            return json.loads(resp.read().decode("utf-8"))
+
+    def call_backend_in_background(self, url: str, payload: dict | None, *, purpose: str = "") -> None:
+        """Fire-and-forget wrapper for backend probes that must not block UI."""
+
+        self.logger.info("Starting background AI backend warmup for %s (%s)", url, purpose)
+
+        def worker() -> None:
+            try:
+                self._call_backend_sync(url, payload)
+            except Exception:  # noqa: BLE001
+                self.logger.exception("Background AI backend call failed (%s): %s", purpose, url)
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
     def _ollama_is_running(self) -> bool:
         """Return True if Ollama is responding on the configured host."""
         try:
@@ -234,6 +262,7 @@ class AIClient:
         else:
             instance = DummyBackend(self.config)
         setattr(instance, "name", backend)
+        setattr(instance, "_client", self)
         self._backends[backend] = instance
         return instance
 
