@@ -832,6 +832,7 @@ class MainWindow(QMainWindow):
 
         self.action_toggle_project = QAction("Explorer", self)
         self.action_toggle_project.setCheckable(True)
+        self.action_toggle_project.setChecked(True)  # Explorer is visible by default
         self.action_toggle_project.triggered.connect(self._toggle_project)
 
         self.action_toggle_terminal = QAction("Terminal", self)
@@ -1559,33 +1560,29 @@ class MainWindow(QMainWindow):
     def _trigger_global_search_action(self) -> None:
         self._focus_global_search()
 
-    def _toggle_project(self) -> None:
+    def _toggle_project(self, checked: bool) -> None:
         if not hasattr(self, "project_dock"):
             return
-        currently_visible = (
-            self.left_dock_container.isVisible()
-            and self.left_dock_stack.currentWidget() is self.project_dock
-            and self.project_dock.isVisible()
-        )
-        if currently_visible:
+
+        if checked:
+            # Show the project dock
+            self.left_dock_stack.setCurrentWidget(self.project_dock)
+            self.project_dock.show()
+            self._set_left_docks_visible(True)
+            self.toggle_left_region.setChecked(True)
+        else:
+            # Hide the left dock container
             self._set_left_docks_visible(False)
             self.toggle_left_region.setChecked(False)
-            return
-        self.left_dock_stack.setCurrentWidget(self.project_dock)
-        self.project_dock.show()
-        self._set_left_docks_visible(True)
-        self.toggle_left_region.setChecked(True)
 
-    def _toggle_terminal(self) -> None:
-        # Toggle the entire bottom region container visibility
+    def _toggle_terminal(self, checked: bool) -> None:
         if not hasattr(self, "terminal_dock"):
             return
 
-        visible = not self.bottom_dock_container.isVisible()
-        self.bottom_dock_container.setVisible(visible)
+        self.bottom_dock_container.setVisible(checked)
 
-        # Also ensure the terminal dock is visible when showing the bottom region
-        if visible:
+        if checked:
+            # Ensure the terminal dock is visible when showing the bottom region
             self.bottom_dock_stack.setCurrentWidget(self.terminal_dock)
             self.terminal_dock.show()
             self.toggle_bottom_region.setChecked(True)
@@ -1594,17 +1591,21 @@ class MainWindow(QMainWindow):
 
         self._update_view_action_states()
 
-    def _toggle_architecture_map(self) -> None:
+    def _toggle_architecture_map(self, checked: bool) -> None:
         dock = getattr(self, "architecture_dock", None)
         if not dock:
             return
-        if dock.isVisible():
-            dock.hide()
-        else:
+
+        if checked:
+            # Show the architecture dock
             self.left_dock_stack.setCurrentWidget(dock)
             dock.show()
             self._set_left_docks_visible(True)
             self.toggle_left_region.setChecked(True)
+        else:
+            # Hide the architecture dock
+            dock.hide()
+
         self._update_view_action_states()
 
     def _toggle_ai_dock(self, checked: bool) -> None:
