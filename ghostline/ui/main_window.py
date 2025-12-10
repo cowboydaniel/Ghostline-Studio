@@ -120,6 +120,13 @@ class GhostlineTitleBar(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
 
+        icon_button = QToolButton(left_container)
+        icon_button.setObjectName("TitleIconButton")
+        icon_button.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+        icon_button.setAutoRaise(True)
+        icon_button.setToolTip("Ghostline Studio")
+        left_layout.addWidget(icon_button)
+
         menubar: QMenuBar = self.window.menuBar()
         menubar.setNativeMenuBar(False)
         menubar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
