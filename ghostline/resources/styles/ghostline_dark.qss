@@ -14,8 +14,8 @@ QMainWindow {
 QDockWidget {
     background-color: #1e1f24;
     border: 1px solid #2b2d34;
-    titlebar-close-icon: url(:/icons/close.svg);
-    titlebar-normal-icon: url(:/icons/undock.svg);
+    titlebar-close-icon: url(:/icons/close_small.svg);
+    titlebar-normal-icon: none;
 }
 
 QDockWidget::title {
@@ -377,8 +377,6 @@ QHeaderView::section {
     background-color: #1b1c22;
     border-bottom: 1px solid #2b2d34;
 }
-
-/* Run/Debug toolbar buttons could be styled here if needed */
 
 /* Minimap */
 
