@@ -26,6 +26,8 @@ class EditorWidget(QWidget):
     ) -> None:
         super().__init__(parent)
         self.command_registry = command_registry
+
+        # The actual editor
         self.editor = CodeEditor(
             path,
             config=config,
@@ -34,27 +36,35 @@ class EditorWidget(QWidget):
             ai_client=ai_client,
         )
 
+        # Top-right toolbar, Windsurf / VS Code style
         self.toolbar = QFrame(self)
         self.toolbar.setObjectName("EditorToolbar")
+        self.toolbar.setFrameShape(QFrame.NoFrame)
+
         toolbar_layout = QHBoxLayout(self.toolbar)
-        toolbar_layout.setContentsMargins(8, 6, 8, 6)
-        toolbar_layout.setSpacing(8)
+        toolbar_layout.setContentsMargins(8, 2, 8, 0)
+        toolbar_layout.setSpacing(4)
+
+        # Stretch first so buttons hug the right edge instead of the left
+        toolbar_layout.addStretch(1)
 
         self.run_button = QToolButton(self.toolbar)
         self.run_button.setText("Run")
+        self.run_button.setAutoRaise(True)
         self.run_button.clicked.connect(self._trigger_run)
         toolbar_layout.addWidget(self.run_button)
 
         self.debug_button = QToolButton(self.toolbar)
         self.debug_button.setText("Debug")
+        self.debug_button.setAutoRaise(True)
         toolbar_layout.addWidget(self.debug_button)
 
         self.configure_button = QToolButton(self.toolbar)
         self.configure_button.setText("Configure")
+        self.configure_button.setAutoRaise(True)
         toolbar_layout.addWidget(self.configure_button)
 
-        toolbar_layout.addStretch(1)
-
+        # Stack toolbar above the editor
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -63,6 +73,8 @@ class EditorWidget(QWidget):
 
         self._update_toolbar_visibility()
 
+    # ------------------------------------------------------------------
+    # Actions
     # ------------------------------------------------------------------
     def _trigger_run(self) -> None:
         descriptor = self.command_registry.get("python.runFile") if self.command_registry else None
@@ -79,14 +91,14 @@ class EditorWidget(QWidget):
         return bool(path and path.suffix.lower() in self.RUNNABLE_SUFFIXES)
 
     def _update_toolbar_visibility(self) -> None:
-        self.toolbar.setVisible(self._is_runnable())
-        self.run_button.setEnabled(self._is_runnable())
-        self.debug_button.setEnabled(self._is_runnable())
-        self.configure_button.setEnabled(self._is_runnable())
+        runnable = self._is_runnable()
+        self.toolbar.setVisible(runnable)
+        self.run_button.setEnabled(runnable)
+        self.debug_button.setEnabled(runnable)
+        self.configure_button.setEnabled(runnable)
 
     # Qt overrides ------------------------------------------------------
     def resizeEvent(self, event):  # type: ignore[override]
         super().resizeEvent(event)
         self.toolbar.setMaximumWidth(self.width())
         self.toolbar.setMinimumWidth(self.width())
-
