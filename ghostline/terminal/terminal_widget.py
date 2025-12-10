@@ -53,6 +53,22 @@ class TerminalWidget(QWidget):
             self.process.write((command + "\n").encode())
             self.input.clear()
 
+    def run_command(self, command: str) -> None:
+        """Run a command programmatically in the embedded shell.
+
+        This echoes the command into the output pane, then sends it to the
+        running shell process, so you see both the command and its output.
+        """
+        command = command.strip()
+        if not command:
+            return
+        if self.process.state() != QProcess.Running:
+            # Try to restart the shell if it died for some reason
+            self._start_shell()
+        prompt = ">" if sys.platform.startswith("win") else "$"
+        self.output.appendPlainText(f"{prompt} {command}")
+        self.process.write((command + "\n").encode())
+
     def _open_external_terminal(self) -> None:
         cwd = Path(self.workspace_manager.current_workspace or Path.home())
         self._launch_external_terminal(cwd)
