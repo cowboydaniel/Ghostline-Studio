@@ -445,3 +445,36 @@ QSplitter::handle:hover {
     color: #ffffff;
     border-radius: 4px;
 }
+
+/* Editor header (breadcrumbs + icon buttons) */
+
+#EditorHeader {
+    background-color: #15161a;
+    border-bottom: 1px solid #20222a;
+    min-height: 22px;
+}
+
+#Breadcrumbs QLabel {
+    color: #9a9daf;
+    font-size: 11px;
+}
+
+#Breadcrumbs QLabel#BreadcrumbLeaf {
+    color: #dcdfe4;
+    font-weight: 500;
+}
+
+#Breadcrumbs QLabel#BreadcrumbEllipsis {
+    color: #7b7f8f;
+}
+
+#EditorHeader QToolButton {
+    background: transparent;
+    border: none;
+    padding: 0px 4px;
+}
+
+#EditorHeader QToolButton:hover {
+    background-color: #22242e;
+    border-radius: 4px;
+}
