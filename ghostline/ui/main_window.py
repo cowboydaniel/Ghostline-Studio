@@ -502,7 +502,6 @@ class MainWindow(QMainWindow):
         self._apply_initial_layout()
         self._collect_dock_regions()
         self._connect_dock_toggles()
-        self._update_view_action_states()
         self._update_workspace_state()
         self._show_welcome_if_empty()
 
