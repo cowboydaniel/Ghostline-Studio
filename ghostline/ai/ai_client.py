@@ -83,6 +83,18 @@ class OllamaBackend(HTTPBackend):
         self.endpoint = self.host
         self.model = self.model or ollama_cfg.get("default_model", "")
 
+    def probe_server(self, timeout: float = 0.3) -> bool:
+        """Quickly verify that the Ollama server is responding."""
+
+        url = f"{self.host.rstrip('/')}/api/tags"
+        req = request.Request(url, headers=self._headers())
+        try:
+            with request.urlopen(req, timeout=timeout) as resp:  # type: ignore[arg-type]
+                return resp.status == 200
+        except Exception:  # noqa: BLE001
+            get_logger(__name__).debug("Ollama probe failed for %s", url, exc_info=True)
+            return False
+
     def send(self, prompt: str, context: str | None = None) -> AIResponse:
         body = {"model": self.model or "codellama", "prompt": prompt, "stream": False}
         base = self.host.rstrip("/")
@@ -194,18 +206,25 @@ class AIClient:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
-    def _ollama_is_running(self) -> bool:
+    def _ollama_is_running(self, timeout: float = 0.3) -> bool:
         """Return True if Ollama is responding on the configured host."""
+
+        backend = self.backends.get("ollama")
+        probe = getattr(backend, "probe_server", None)
+        if callable(probe):
+            return bool(probe(timeout=timeout))
+
         try:
             base = self.settings.ollama_host.rstrip("/")
-            with urllib.request.urlopen(f"{base}/api/tags", timeout=0.3) as r:
+            with urllib.request.urlopen(f"{base}/api/tags", timeout=timeout) as r:
                 return r.status == 200
         except Exception:
             return False
 
-    def _ensure_ollama_running(self) -> None:
+    def _ensure_ollama_running(self, probe_timeout: float = 0.3, max_wait_seconds: float = 10.0) -> None:
         """Start Ollama only if it is not already running, and wait for readiness."""
-        if self._ollama_is_running():
+
+        if self._ollama_is_running(timeout=probe_timeout):
             return  # Already running
 
         # Try launching the Ollama server
@@ -217,8 +236,9 @@ class AIClient:
             return
 
         # Wait up to 10 seconds for Ollama to become ready
-        for _ in range(50):
-            if self._ollama_is_running():
+        deadline = time.monotonic() + max_wait_seconds
+        while time.monotonic() < deadline:
+            if self._ollama_is_running(timeout=probe_timeout):
                 self.logger.info("Ollama server is now ready.")
                 return
             time.sleep(0.2)
@@ -237,6 +257,7 @@ class AIClient:
             or ai_settings.get("endpoint")
             or "http://localhost:11434"
         ).rstrip("/")
+        self.settings.timeout_seconds = ai_settings.get("timeout_seconds", 30)
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
         self.disabled = self.backend_type in {"none", "disabled"}
         self._backends: dict[str, object] = {}
@@ -294,6 +315,28 @@ class AIClient:
             backend.model = model.id  # type: ignore[attr-defined]
         return backend, backend_type
 
+    def _ensure_backend_sync(self, backend_type: str | None, probe_timeout: float) -> None:
+        if backend_type == "ollama":
+            self._ensure_ollama_running(probe_timeout=probe_timeout)
+
+    def ensure_backend_for_user_action(self, backend_type: str | None = None) -> None:
+        """Allow explicit user actions to perform a blocking backend warmup."""
+
+        target = backend_type or getattr(self.backend, "name", self.backend_type)
+        probe_timeout = min(self.settings.timeout_seconds, 1.0)
+        self._ensure_backend_sync(target, probe_timeout=probe_timeout)
+
+    def ensure_backend_in_background(self, backend_type: str | None = None, probe_timeout: float = 0.3) -> None:
+        """Warm up the backend asynchronously to avoid UI stalls."""
+
+        target = backend_type or getattr(self.backend, "name", self.backend_type)
+        thread = threading.Thread(
+            target=self._ensure_backend_sync,
+            kwargs={"backend_type": target, "probe_timeout": probe_timeout},
+            daemon=True,
+        )
+        thread.start()
+
     def _friendly_http_error(self, backend: object, status: int) -> str:
         endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
         if status == 404:
@@ -335,7 +378,7 @@ class AIClient:
 
         backend, _ = self._backend_for_model(model)
         if backend.name == "ollama":
-            self._ensure_ollama_running()
+            self.ensure_backend_for_user_action(backend_type="ollama")
         self.active_model = model or self.active_model
         try:
             return backend.send(prompt, context)
@@ -397,7 +440,7 @@ class AIClient:
         backend, _ = self._backend_for_model(model)
         self.active_model = model or self.active_model
         if backend.name == "ollama":
-            self._ensure_ollama_running()
+            self.ensure_backend_for_user_action(backend_type="ollama")
         if backend.name == "openai" and not self.settings.allow_openai:
             raise RuntimeError("OpenAI backend disabled, refusing to send API requests.")
         try:
@@ -432,6 +475,8 @@ class AIClient:
             return
 
         self.backend = backend
+        if backend_type == "ollama":
+            self.ensure_backend_in_background(backend_type="ollama", probe_timeout=0.3)
         self.logger.info(
             "Scheduling AI file-open job for %s with backend %s", path, backend_type or backend.__class__.__name__
         )
