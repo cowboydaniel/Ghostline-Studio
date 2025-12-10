@@ -720,9 +720,7 @@ class MainWindow(QMainWindow):
 
     def _connect_dock_toggles(self) -> None:
         self.toggle_left_region.toggled.connect(self._set_left_docks_visible)
-        self.toggle_bottom_region.toggled.connect(
-            lambda visible: self._toggle_region_widget(getattr(self, "bottom_dock_container", None), visible)
-        )
+        self.toggle_bottom_region.toggled.connect(self._toggle_bottom_region)
         self.toggle_right_region.toggled.connect(
             lambda visible: self._toggle_region_widget(getattr(self, "right_region_container", None), visible)
         )
@@ -731,6 +729,20 @@ class MainWindow(QMainWindow):
         if not widget:
             return
         widget.setVisible(visible)
+        self._update_view_action_states()
+
+    def _toggle_bottom_region(self, visible: bool) -> None:
+        """Toggle the bottom dock region and ensure terminal is shown when opened."""
+        if not hasattr(self, "bottom_dock_container"):
+            return
+
+        self.bottom_dock_container.setVisible(visible)
+
+        if visible and hasattr(self, "terminal_dock"):
+            # When opening bottom region, show the terminal dock by default
+            self.bottom_dock_stack.setCurrentWidget(self.terminal_dock)
+            self.terminal_dock.show()
+
         self._update_view_action_states()
 
     def _set_left_docks_visible(self, visible: bool) -> None:
