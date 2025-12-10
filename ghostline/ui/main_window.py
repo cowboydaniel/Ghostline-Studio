@@ -294,6 +294,8 @@ class MainWindow(QMainWindow):
         self.git = GitIntegration()
         self.lsp_manager = LSPManager(config, workspace_manager)
         self.command_registry = CommandRegistry()
+        # Register core commands before creating UI components
+        self._register_core_commands()
         self.ai_client = AIClient(config)
         self.workspace_indexer = WorkspaceIndexer(lambda: self.workspace_manager.current_workspace)
         self.symbols = SymbolSearcher(self.lsp_manager)
@@ -1267,6 +1269,13 @@ class MainWindow(QMainWindow):
             self.status.show_message("Open a workspace to run tests")
 
     def _run_current_file(self, file_path: str | None = None) -> None:
+        """Run the active Python file in the embedded terminal.
+
+        This is wired to the editor header Run button (python.runFile) and
+        prefers the bottom terminal dock so the user can see the command and
+        its live output. If the terminal is not available, it falls back to
+        the generic task manager runner.
+        """
         path = Path(file_path) if file_path else None
         if not path:
             editor = self.get_current_editor()
@@ -1280,7 +1289,28 @@ class MainWindow(QMainWindow):
         if not path.exists():
             self.status.show_message("File does not exist on disk")
             return
-        command = f"{sys.executable} {path}"
+
+        # Build the command we want to run. Quote the path so spaces are safe.
+        command = f'{sys.executable} "{path}"'
+
+        # Prefer the embedded terminal dock so the user sees a live stream
+        # of the command and any errors / logs.
+        terminal = getattr(self, "terminal", None)
+        terminal_dock = getattr(self, "terminal_dock", None)
+        
+        if terminal is not None and terminal_dock is not None:
+            try:
+                self._show_and_raise_dock(terminal_dock, tool_id=None)
+                terminal.run_command(command)
+                return
+            except Exception as e:
+                print(f"Error using terminal: {e}")
+                # If anything goes wrong showing the dock, fall back to tasks
+                self.task_manager.run_command("Run", command, cwd=str(path.parent))
+                return
+
+        # Final fallback: run through the generic task manager so the command
+        # still executes even if the terminal is missing.
         self.task_manager.run_command("Run", command, cwd=str(path.parent))
 
     def get_current_editor(self) -> CodeEditor | None:
