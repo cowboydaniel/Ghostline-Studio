@@ -502,6 +502,7 @@ class MainWindow(QMainWindow):
         self._apply_initial_layout()
         self._collect_dock_regions()
         self._connect_dock_toggles()
+        self._update_view_action_states()
         self._update_workspace_state()
         self._show_welcome_if_empty()
 
@@ -702,7 +703,7 @@ class MainWindow(QMainWindow):
 
     def _register_dock_action(self, dock: QDockWidget) -> None:
         if hasattr(self, "view_menu"):
-            if dock.objectName() in {"projectDock", "terminalDock", "architectureDock", "activityDock"}:
+            if dock.objectName() in {"projectDock", "terminalDock", "architectureDock", "activityDock", "aiDock"}:
                 return
             self.view_menu.addAction(dock.toggleViewAction())
 
@@ -719,6 +720,7 @@ class MainWindow(QMainWindow):
         if not widget:
             return
         widget.setVisible(visible)
+        self._update_view_action_states()
 
     def _set_left_docks_visible(self, visible: bool) -> None:
         if not hasattr(self, "left_dock_container"):
@@ -747,6 +749,46 @@ class MainWindow(QMainWindow):
             current = self.left_dock_stack.currentWidget()
             if current:
                 current.show()
+
+        self._update_view_action_states()
+
+    def _update_view_action_states(self) -> None:
+        """Synchronise View menu checkboxes with the current dock visibility state."""
+        # Explorer / project dock
+        if hasattr(self, "action_toggle_project"):
+            project_open = False
+            if hasattr(self, "project_dock") and hasattr(self, "left_dock_container") and hasattr(self, "left_dock_stack"):
+                project_open = (
+                    self.left_dock_container.isVisible()
+                    and self.left_dock_stack.currentWidget() is self.project_dock
+                    and self.project_dock.isVisible()
+                )
+            self.action_toggle_project.setChecked(project_open)
+
+        # Terminal region
+        if hasattr(self, "action_toggle_terminal"):
+            terminal_open = False
+            if hasattr(self, "bottom_dock_container"):
+                terminal_open = self.bottom_dock_container.isVisible()
+            self.action_toggle_terminal.setChecked(terminal_open)
+
+        # 3D Architecture Map
+        if hasattr(self, "action_toggle_architecture_map"):
+            arch_open = False
+            if hasattr(self, "architecture_dock") and hasattr(self, "left_dock_container") and hasattr(self, "left_dock_stack"):
+                arch_open = (
+                    self.left_dock_container.isVisible()
+                    and self.left_dock_stack.currentWidget() is self.architecture_dock
+                    and self.architecture_dock.isVisible()
+                )
+            self.action_toggle_architecture_map.setChecked(arch_open)
+
+        # Ghostline AI dock
+        if hasattr(self, "action_toggle_ai_dock"):
+            ai_open = False
+            if hasattr(self, "ai_dock"):
+                ai_open = self.ai_dock.isVisible()
+            self.action_toggle_ai_dock.setChecked(ai_open)
 
     def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
         if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
@@ -785,16 +827,24 @@ class MainWindow(QMainWindow):
         self.action_command_palette.triggered.connect(self.show_command_palette)
 
         self.action_toggle_autoflow = QAction("Toggle Autoflow Mode", self)
+        self.action_toggle_autoflow.setCheckable(True)
         self.action_toggle_autoflow.triggered.connect(self._toggle_autoflow_mode)
 
         self.action_toggle_project = QAction("Explorer", self)
+        self.action_toggle_project.setCheckable(True)
         self.action_toggle_project.triggered.connect(self._toggle_project)
 
         self.action_toggle_terminal = QAction("Terminal", self)
+        self.action_toggle_terminal.setCheckable(True)
         self.action_toggle_terminal.triggered.connect(self._toggle_terminal)
 
         self.action_toggle_architecture_map = QAction("3D Architecture Map", self)
+        self.action_toggle_architecture_map.setCheckable(True)
         self.action_toggle_architecture_map.triggered.connect(self._toggle_architecture_map)
+
+        self.action_toggle_ai_dock = QAction("Ghostline AI", self)
+        self.action_toggle_ai_dock.setCheckable(True)
+        self.action_toggle_ai_dock.triggered.connect(self._toggle_ai_dock)
 
         self.action_settings = QAction("Settings", self)
         self.action_settings.triggered.connect(self._open_settings)
@@ -925,6 +975,7 @@ class MainWindow(QMainWindow):
         self.view_menu.addAction(self.action_goto_symbol)
         self.view_menu.addAction(self.action_goto_file)
         self.view_menu.addAction(self.action_toggle_architecture_map)
+        self.view_menu.addAction(self.action_toggle_ai_dock)
         self.view_menu.addAction(self.action_restart_language)
 
         project_menu = menubar.addMenu("Project")
@@ -1528,10 +1579,10 @@ class MainWindow(QMainWindow):
         # Toggle the entire bottom region container visibility
         if not hasattr(self, "terminal_dock"):
             return
-            
+
         visible = not self.bottom_dock_container.isVisible()
         self.bottom_dock_container.setVisible(visible)
-        
+
         # Also ensure the terminal dock is visible when showing the bottom region
         if visible:
             self.bottom_dock_stack.setCurrentWidget(self.terminal_dock)
@@ -1539,6 +1590,8 @@ class MainWindow(QMainWindow):
             self.toggle_bottom_region.setChecked(True)
         else:
             self.toggle_bottom_region.setChecked(False)
+
+        self._update_view_action_states()
 
     def _toggle_architecture_map(self) -> None:
         dock = getattr(self, "architecture_dock", None)
@@ -1551,6 +1604,23 @@ class MainWindow(QMainWindow):
             dock.show()
             self._set_left_docks_visible(True)
             self.toggle_left_region.setChecked(True)
+        self._update_view_action_states()
+
+    def _toggle_ai_dock(self, checked: bool) -> None:
+        """Toggle visibility of the Ghostline AI dock from the View menu."""
+        dock = getattr(self, "ai_dock", None)
+        if not dock:
+            return
+
+        dock.setVisible(checked)
+
+        # Make sure the right region is visible when turning the AI panel on
+        if checked and hasattr(self, "right_region_container"):
+            self.right_region_container.setVisible(True)
+            if hasattr(self, "toggle_right_region"):
+                self.toggle_right_region.setChecked(True)
+
+        self._update_view_action_states()
 
     def _refresh_architecture_graph(self) -> None:
         dock = getattr(self, "architecture_dock", None)
