@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -16,7 +17,7 @@ from ghostline.editor.code_editor import CodeEditor
 
 
 class EditorWidget(QWidget):
-    """Wraps a CodeEditor with a header bar and run/debug/config actions."""
+    """Wraps a CodeEditor with a Windsurf-style header + Run/Debug/Configure."""
 
     RUNNABLE_SUFFIXES = {".py", ".pyw"}
 
@@ -45,47 +46,52 @@ class EditorWidget(QWidget):
         )
 
         # Header row: breadcrumbs on the left, actions on the right
-        self.header = QFrame(self)
-        self.header.setObjectName("EditorHeader")
-        self.header.setFrameShape(QFrame.NoFrame)
-
-        header_layout = QHBoxLayout(self.header)
+        header = QFrame(self)
+        header.setObjectName("EditorHeader")
+        header.setFrameShape(QFrame.NoFrame)
+        header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(8, 0, 8, 0)
         header_layout.setSpacing(6)
 
+        # Keep compatibility with older code that expects .toolbar
+        self.toolbar = header
+
         # Breadcrumbs container
-        self.breadcrumbs = QFrame(self.header)
+        self.breadcrumbs = QFrame(header)
         self.breadcrumbs.setObjectName("Breadcrumbs")
         crumbs_layout = QHBoxLayout(self.breadcrumbs)
         crumbs_layout.setContentsMargins(0, 0, 0, 0)
         crumbs_layout.setSpacing(4)
         header_layout.addWidget(self.breadcrumbs)
 
-        # Spacer so buttons hug the right edge
+        # Space in the middle so buttons hug the right edge
         header_layout.addStretch(1)
 
-        # Action buttons aligned to the right
-        self.run_button = QToolButton(self.header)
+        # Right-side buttons (Run / Debug / Configure)
+        self.run_button = QToolButton(header)
         self.run_button.setText("Run")
         self.run_button.setAutoRaise(True)
+        self.run_button.setCursor(Qt.PointingHandCursor)
         self.run_button.clicked.connect(self._trigger_run)
         header_layout.addWidget(self.run_button)
 
-        self.debug_button = QToolButton(self.header)
+        self.debug_button = QToolButton(header)
         self.debug_button.setText("Debug")
         self.debug_button.setAutoRaise(True)
+        self.debug_button.setCursor(Qt.PointingHandCursor)
         header_layout.addWidget(self.debug_button)
 
-        self.configure_button = QToolButton(self.header)
+        self.configure_button = QToolButton(header)
         self.configure_button.setText("Configure")
         self.configure_button.setAutoRaise(True)
+        self.configure_button.setCursor(Qt.PointingHandCursor)
         header_layout.addWidget(self.configure_button)
 
-        # Layout: header above editor
+        # Editor below the header
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.header)
+        layout.addWidget(header)
         layout.addWidget(self.editor, 1)
 
         self._rebuild_breadcrumbs()
@@ -95,8 +101,9 @@ class EditorWidget(QWidget):
     # Breadcrumbs
     # ------------------------------------------------------------------
     def _rebuild_breadcrumbs(self) -> None:
+        """Make breadcrumbs look like 'start.py  >  ...' (filename + ellipsis)."""
         layout = self.breadcrumbs.layout()
-        # Clear existing widgets
+        # Clear any existing labels
         while layout.count():
             item = layout.takeAt(0)
             w = item.widget()
@@ -107,26 +114,21 @@ class EditorWidget(QWidget):
         if not path:
             return
 
-        parts = list(path.parts)
+        filename = path.name
 
-        # Heuristic: show path from "ghostline" onward, to match the project root
-        start_index = 0
-        for i, part in enumerate(parts):
-            if part == "ghostline":
-                start_index = i
-                break
-        parts = parts[start_index:]
+        # File name (highlighted)
+        leaf = QLabel(filename, self.breadcrumbs)
+        leaf.setObjectName("BreadcrumbLeaf")
+        layout.addWidget(leaf)
 
-        for i, part in enumerate(parts):
-            label = QLabel(part, self.breadcrumbs)
-            if i == len(parts) - 1:
-                # Final segment (file name) gets a slightly different style
-                label.setObjectName("BreadcrumbLeaf")
-            layout.addWidget(label)
+        # If there is any parent path, show " > ..."
+        if path.parent != path:
+            sep = QLabel(">", self.breadcrumbs)
+            layout.addWidget(sep)
 
-            if i != len(parts) - 1:
-                sep = QLabel("›", self.breadcrumbs)
-                layout.addWidget(sep)
+            dots = QLabel("...", self.breadcrumbs)
+            dots.setObjectName("BreadcrumbEllipsis")
+            layout.addWidget(dots)
 
     # ------------------------------------------------------------------
     # Actions
@@ -151,8 +153,7 @@ class EditorWidget(QWidget):
 
     def _update_toolbar_visibility(self) -> None:
         runnable = self._is_runnable()
-        # Header always visible; buttons enabled/disabled based on file type
-        self.header.setVisible(True)
+        # Header is always visible; just toggle button enabled state
         self.run_button.setEnabled(runnable)
         self.debug_button.setEnabled(runnable)
         self.configure_button.setEnabled(runnable)
@@ -160,5 +161,6 @@ class EditorWidget(QWidget):
     # Qt overrides ------------------------------------------------------
     def resizeEvent(self, event):  # type: ignore[override]
         super().resizeEvent(event)
-        self.header.setMaximumWidth(self.width())
-        self.header.setMinimumWidth(self.width())
+        # Keep header width in sync with the editor
+        self.toolbar.setMaximumWidth(self.width())
+        self.toolbar.setMinimumWidth(self.width())
