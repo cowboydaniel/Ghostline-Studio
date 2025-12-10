@@ -979,6 +979,8 @@ class MainWindow(QMainWindow):
     def _create_terminal_dock(self) -> None:
         dock = QDockWidget("Terminal", self)
         dock.setObjectName("terminalDock")
+        # Remove close button from the dock
+        dock.setFeatures(dock.features() & ~QDockWidget.DockWidgetClosable)
         terminal = TerminalWidget(self.workspace_manager)
         dock.setWidget(terminal)
         dock.setMinimumHeight(140)
@@ -1014,6 +1016,8 @@ class MainWindow(QMainWindow):
     def _create_ai_dock(self) -> None:
         dock = QDockWidget("Ghostline AI", self)
         dock.setObjectName("aiDock")
+        # Remove close button from the dock
+        dock.setFeatures(dock.features() & ~QDockWidget.DockWidgetClosable)
         panel = AIChatPanel(self.ai_client, self.context_engine, self)
         panel.set_active_document_provider(self._active_document_payload)
         panel.set_open_documents_provider(self._open_document_payloads)
@@ -1521,21 +1525,20 @@ class MainWindow(QMainWindow):
         self.toggle_left_region.setChecked(True)
 
     def _toggle_terminal(self) -> None:
+        # Toggle the entire bottom region container visibility
         if not hasattr(self, "terminal_dock"):
             return
-        currently_visible = (
-            self.bottom_dock_container.isVisible()
-            and self.bottom_dock_stack.currentWidget() is self.terminal_dock
-            and self.terminal_dock.isVisible()
-        )
-        if currently_visible:
-            self.bottom_dock_container.setVisible(False)
+            
+        visible = not self.bottom_dock_container.isVisible()
+        self.bottom_dock_container.setVisible(visible)
+        
+        # Also ensure the terminal dock is visible when showing the bottom region
+        if visible:
+            self.bottom_dock_stack.setCurrentWidget(self.terminal_dock)
+            self.terminal_dock.show()
+            self.toggle_bottom_region.setChecked(True)
+        else:
             self.toggle_bottom_region.setChecked(False)
-            return
-        self.bottom_dock_stack.setCurrentWidget(self.terminal_dock)
-        self.terminal_dock.show()
-        self.bottom_dock_container.setVisible(True)
-        self.toggle_bottom_region.setChecked(True)
 
     def _toggle_architecture_map(self) -> None:
         dock = getattr(self, "architecture_dock", None)
@@ -1671,13 +1674,19 @@ class MainWindow(QMainWindow):
             func(editor, self.ai_client)
 
     def toggle_ai_dock(self) -> None:
-        dock = getattr(self, "ai_dock", None)
-        if not dock:
+        # Toggle the entire right region container visibility
+        right_region = getattr(self, "right_region_container", None)
+        if not right_region:
             return
-        visible = dock.isVisible()
-        dock.setVisible(not visible)
-        if not visible:
-            dock.raise_()
+        visible = not right_region.isVisible()
+        right_region.setVisible(visible)
+        
+        # Also ensure the AI dock is visible when showing the right region
+        if visible:
+            dock = getattr(self, "ai_dock", None)
+            if dock:
+                dock.show()
+                dock.raise_()
 
     def _focus_ai_dock(self) -> None:
         dock = getattr(self, "ai_dock", None)
