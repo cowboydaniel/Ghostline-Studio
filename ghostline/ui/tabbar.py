@@ -9,13 +9,15 @@ from PySide6.QtWidgets import QStyle, QStyleOptionTab, QStylePainter, QTabBar
 class EditorTabBar(QTabBar):
     """Tab bar with Windsurf-inspired appearance."""
 
-    PREVIEW_ROLE = Qt.UserRole + 1
-
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._preview_tabs = {}  # Track which tabs are in preview mode
 
     def set_tab_preview(self, index: int, is_preview: bool) -> None:
-        self.setTabData(index, self.PREVIEW_ROLE, is_preview)
+        if is_preview:
+            self._preview_tabs[index] = True
+        else:
+            self._preview_tabs.pop(index, None)
         self.update()
 
     def tabSizeHint(self, index: int):
@@ -35,7 +37,7 @@ class EditorTabBar(QTabBar):
             option.features &= ~QStyleOptionTab.HasFrame
 
             is_active = (self.currentIndex() == i)
-            is_preview = self.tabData(i, self.PREVIEW_ROLE) or False
+            is_preview = self._preview_tabs.get(i, False)
 
             if is_active:
                 option.palette.setColor(option.palette.Button, QColor("#1e1f23"))
