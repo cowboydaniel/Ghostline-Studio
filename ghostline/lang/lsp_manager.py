@@ -207,6 +207,8 @@ class LSPManager(QObject):
             self.lsp_error.emit(message)
             self._emit_failure_diagnostic(language)
             return None
+        # Tag client with language for logging
+        client.language = language
         client.semantic_tokens_capable = False
         client.language = language
         client.semantic_tokens_legend: list[str] = []
@@ -243,7 +245,11 @@ class LSPManager(QObject):
         client.process.errorOccurred.connect(_on_proc_error)
 
     def _initialize(self, client: LSPClient, workspace: str) -> None:
+        language = getattr(client, "language", "unknown")
         root_uri = Path(workspace).resolve().as_uri()
+
+        logger.info("[%s] Sending LSP initialize request with semantic token capabilities", language)
+
         request_id = client.send_request(
             "initialize",
             {
@@ -303,10 +309,12 @@ class LSPManager(QObject):
         )
 
         def _handle_initialize(message: dict) -> None:
+            logger.info("[%s] Received LSP initialize response", language)
             result = message.get("result", {}) if isinstance(message, dict) else {}
             capabilities = result.get("capabilities", {}) if isinstance(result, dict) else {}
             self._configure_capabilities(client, capabilities)
             client.send_notification("initialized", {})
+            logger.info("[%s] LSP initialization complete", language)
 
         self._pending[request_id] = _handle_initialize
 
@@ -502,46 +510,58 @@ class LSPManager(QObject):
     ) -> bool:
         normalized = self._normalize_path(path)
         if not normalized:
-            logger.debug("Bypassing semantic tokens request: invalid path %r", path)
+            logger.debug("Semantic tokens bypassed: could not normalize path %s", path)
             return False
         language = self._language_for_file(normalized)
         if not language:
-            logger.info("Semantic tokens bypassed: no language detected for %s", normalized)
+            logger.debug("Semantic tokens bypassed for %s: no language detected", normalized)
             return False
+
         client = self._get_client(language)
-        if not (client and getattr(client, "semantic_tokens_capable", False)):
-            logger.info("Semantic tokens unsupported for language %s", language)
+        if not client:
+            logger.debug("[%s] Semantic tokens bypassed for %s: no LSP client", language, normalized)
             return False
+
+        capable = getattr(client, "semantic_tokens_capable", False)
+        if not capable:
+            logger.warning("[%s] Semantic tokens bypassed for %s: client not capable", language, normalized)
+            return False
+
         uri = self._uri_for_path(normalized)
         if not uri:
-            logger.info("Semantic tokens bypassed for %s: missing URI for %s", language, normalized)
+            logger.debug("[%s] Semantic tokens bypassed for %s: could not create URI", language, normalized)
             return False
 
         legend = getattr(client, "semantic_tokens_legend", [])
         supports_range = getattr(client, "semantic_tokens_supports_range", False)
         supports_full = getattr(client, "semantic_tokens_supports_full", False)
-        requested_mode = "range" if range_params else "full"
+
         if range_params and supports_range:
             method = "textDocument/semanticTokens/range"
             params = {"textDocument": {"uri": uri}, "range": range_params}
+            logger.info("[%s] Requesting semantic tokens (range) for %s", language, Path(normalized).name)
         elif supports_full:
             method = "textDocument/semanticTokens/full"
             params = {"textDocument": {"uri": uri}}
+            logger.info("[%s] Requesting semantic tokens (full) for %s", language, Path(normalized).name)
         else:
-            logger.info(
-                "Semantic tokens capabilities do not include requested %s mode for %s (range=%s, full=%s)",
-                requested_mode,
-                language,
-                supports_range,
-                supports_full,
-            )
+            logger.warning("[%s] Semantic tokens bypassed for %s: no supported request mode", language, normalized)
             return False
 
         request_id = client.send_request(method, params)
-        self._semantic_request_meta[request_id] = {"method": method, "language": language or "", "uri": uri}
-        logger.info("Requesting semantic tokens for %s via %s on %s", language, method, uri)
+        logger.debug("[%s] Semantic tokens request ID: %s", language, request_id)
+
         if callback:
-            self._pending[request_id] = lambda message: callback(message.get("result", {}), legend)
+            def _wrap_callback(message: dict) -> None:
+                result = message.get("result", {})
+                if not result or not result.get("data"):
+                    logger.warning("[%s] Semantic tokens response empty for %s", language, Path(normalized).name)
+                else:
+                    token_count = len(result.get("data", [])) // 5  # Each token is 5 integers
+                    logger.info("[%s] Received %d semantic tokens for %s", language, token_count, Path(normalized).name)
+                callback(result, legend)
+
+            self._pending[request_id] = _wrap_callback
         return True
 
     # Diagnostics
@@ -606,7 +626,17 @@ class LSPManager(QObject):
             callback(message)
 
     def _configure_capabilities(self, client: LSPClient, capabilities: dict[str, Any]) -> None:
+        language = getattr(client, "language", "unknown")
+        logger.info("[%s] Configuring LSP server capabilities", language)
+
         semantic_provider = capabilities.get("semanticTokensProvider") if isinstance(capabilities, dict) else None
+
+        if not semantic_provider:
+            logger.warning("[%s] Server did not advertise semanticTokensProvider capability", language)
+            logger.debug("[%s] Available server capabilities: %s", language, list(capabilities.keys()) if isinstance(capabilities, dict) else "none")
+        else:
+            logger.info("[%s] Server advertised semantic token support", language)
+
         legend: list[str] = []
         supports_full = False
         supports_range = False
@@ -618,7 +648,12 @@ class LSPManager(QObject):
             full_capability = semantic_provider.get("full")
             supports_full = bool(full_capability)
             supports_range = bool(semantic_provider.get("range"))
-        language = getattr(client, "language", "") or "(unknown)"
+
+            logger.info("[%s] Semantic token legend size: %d types", language, len(legend))
+            logger.debug("[%s] Token types: %s", language, legend)
+            logger.info("[%s] Supports full document tokens: %s", language, supports_full)
+            logger.info("[%s] Supports range tokens: %s", language, supports_range)
+
         client.semantic_tokens_legend = legend
         client.semantic_tokens_supports_full = supports_full and bool(legend)
         client.semantic_tokens_supports_range = supports_range and bool(legend)
@@ -638,6 +673,11 @@ class LSPManager(QObject):
                 bool(semantic_provider),
                 len(legend),
             )
+
+        if client.semantic_tokens_capable:
+            logger.info("[%s] ✓ Semantic tokens ENABLED", language)
+        else:
+            logger.warning("[%s] ✗ Semantic tokens DISABLED (no legend or unsupported)", language)
 
     def _emit_failure_diagnostic(self, language: str) -> None:
         if getattr(self, "_shutting_down", False):
