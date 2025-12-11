@@ -18,8 +18,11 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from ghostline.core.config import ConfigManager
@@ -41,7 +44,16 @@ class AISettingsDialog(QDialog):
         self._model_checkboxes: dict[str, QCheckBox] = {}
 
         layout = QVBoxLayout(self)
-        self.backend_combo = QComboBox(self)
+        scroll_area = QScrollArea(self)
+        scroll_area.setWidgetResizable(True)
+
+        content_widget = QWidget(self)
+        content_widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
+        content_layout = QVBoxLayout(content_widget)
+
+        self.backend_combo = QComboBox(content_widget)
         self.backend_combo.addItems(["openai", "ollama", "claude", "none"])
         self.backend_combo.setCurrentText(self.config.get("ai", {}).get("backend", "none"))
         self.backend_combo.currentTextChanged.connect(self._update_enabled_state)
@@ -50,10 +62,10 @@ class AISettingsDialog(QDialog):
         backend_row.addWidget(QLabel("Backend"))
         backend_row.addWidget(self.backend_combo)
         backend_row.addStretch(1)
-        layout.addLayout(backend_row)
+        content_layout.addLayout(backend_row)
 
         # OpenAI section
-        self.openai_group = QGroupBox("OpenAI (Cloud)", self)
+        self.openai_group = QGroupBox("OpenAI (Cloud)", content_widget)
         openai_form = QFormLayout(self.openai_group)
         self.openai_key = QLineEdit(self.openai_group)
         self.openai_key.setText(self.registry._openai_settings().get("api_key", ""))
@@ -86,7 +98,7 @@ class AISettingsDialog(QDialog):
         openai_form.addRow(self.openai_models_box)
 
         # Claude (Anthropic) section
-        self.claude_group = QGroupBox("Claude (Anthropic)", self)
+        self.claude_group = QGroupBox("Claude (Anthropic)", content_widget)
         claude_form = QFormLayout(self.claude_group)
         self.claude_key = QLineEdit(self.claude_group)
         self.claude_key.setText(self.registry._claude_settings().get("api_key", ""))
@@ -116,7 +128,7 @@ class AISettingsDialog(QDialog):
         claude_form.addRow(self.claude_models_box)
 
         # Ollama section
-        self.ollama_group = QGroupBox("Local Ollama", self)
+        self.ollama_group = QGroupBox("Local Ollama", content_widget)
         ollama_layout = QVBoxLayout(self.ollama_group)
         self.ollama_status = QLabel("Checking for ollama...", self.ollama_group)
         self.ollama_models = QComboBox(self.ollama_group)
@@ -137,10 +149,13 @@ class AISettingsDialog(QDialog):
         ollama_layout.addLayout(buttons)
         ollama_layout.addWidget(self.ollama_logs)
 
-        layout.addWidget(self.openai_group)
-        layout.addWidget(self.claude_group)
-        layout.addWidget(self.ollama_group)
-        layout.addStretch(1)
+        content_layout.addWidget(self.openai_group)
+        content_layout.addWidget(self.claude_group)
+        content_layout.addWidget(self.ollama_group)
+        content_layout.addStretch(1)
+
+        scroll_area.setWidget(content_widget)
+        layout.addWidget(scroll_area)
 
         buttons_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
         buttons_box.accepted.connect(self._save)
