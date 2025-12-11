@@ -1158,9 +1158,9 @@ class MainWindow(QMainWindow):
         dock.setObjectName("tasksDock")
         panel = TaskPanel(self.task_manager, self)
         dock.setWidget(panel)
-        dock.setMinimumHeight(100)  # Reduced from 140 for small screens
+        dock.setMinimumWidth(180)  # Changed from height to width for left dock
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
-        self._place_bottom_dock(dock)
+        self._place_left_dock(dock)  # Changed from _place_bottom_dock
         self._register_dock_action(dock)
         self.task_dock = dock
 
@@ -1169,9 +1169,9 @@ class MainWindow(QMainWindow):
         dock.setObjectName("testsDock")
         panel = TestPanel(self.test_manager, self.get_current_editor, self)
         dock.setWidget(panel)
-        dock.setMinimumHeight(100)  # Reduced from 140 for small screens
+        dock.setMinimumWidth(180)  # Changed from height to width for left dock
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
-        self._place_bottom_dock(dock)
+        self._place_left_dock(dock)  # Changed from _place_bottom_dock
         self._register_dock_action(dock)
         self.test_dock = dock
 
