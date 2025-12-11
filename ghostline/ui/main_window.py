@@ -388,7 +388,7 @@ class MainWindow(QMainWindow):
         self.left_region_layout.addWidget(self.activity_bar)
         self.left_dock_container = QWidget(self.left_region_container)
         self.left_dock_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        self.left_dock_container.setMinimumWidth(220)
+        self.left_dock_container.setMinimumWidth(180)  # Reduced from 220 for small screens
         left_dock_layout = QVBoxLayout(self.left_dock_container)
         left_dock_layout.setContentsMargins(0, 0, 0, 0)
         left_dock_layout.setSpacing(0)
@@ -411,8 +411,9 @@ class MainWindow(QMainWindow):
         )
         self.right_region_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
 
-        self.central_stack.setMinimumWidth(400)
-        self.right_region_container.setMinimumWidth(260)
+        # Reduced minimums for better small-screen support (1366x768)
+        self.central_stack.setMinimumWidth(320)  # Reduced from 400
+        self.right_region_container.setMinimumWidth(200)  # Reduced from 260
 
         # Create bottom dock container first (before adding to splitter)
         self.bottom_dock_container = QWidget(self)
@@ -431,9 +432,10 @@ class MainWindow(QMainWindow):
         self.center_vertical_splitter.setStretchFactor(0, 1)  # Editor expands
         self.center_vertical_splitter.setStretchFactor(1, 0)  # Bottom dock fixed height
 
-        # Set initial sizes for center vertical splitter (70% editor, 30% terminal when shown)
+        # Set initial sizes for center vertical splitter (75% editor, 25% terminal when shown)
+        # More generous to editor on small screens
         total_height = self.height() or 800
-        self.center_vertical_splitter.setSizes([int(total_height * 0.70), int(total_height * 0.30)])
+        self.center_vertical_splitter.setSizes([int(total_height * 0.75), int(total_height * 0.25)])
 
         self.main_splitter = QSplitter(Qt.Horizontal, self)
         self.main_splitter.setChildrenCollapsible(False)
@@ -444,9 +446,11 @@ class MainWindow(QMainWindow):
         self.main_splitter.setStretchFactor(1, 1)
         self.main_splitter.setStretchFactor(2, 0)
 
+        # Better proportions for small screens: 18% left, 60% center, 22% right
+        # This gives more room to the editor area
         total_width = self.width() or 1400
         self.main_splitter.setSizes(
-            [int(total_width * 0.22), int(total_width * 0.48), int(total_width * 0.30)]
+            [int(total_width * 0.18), int(total_width * 0.60), int(total_width * 0.22)]
         )
 
         self.status = StudioStatusBar(self.git)
@@ -559,7 +563,9 @@ class MainWindow(QMainWindow):
             button.setDefaultAction(action)
             button.setAutoRaise(True)
             button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-            button.setFixedSize(26, 26)
+            # Use size hint instead of fixed size for DPI scaling
+            button.setMinimumSize(QSize(24, 24))
+            button.setMaximumSize(QSize(28, 28))
             button.setIconSize(QSize(16, 16))
             button.setStyleSheet("padding: 0; margin: 0;")
             widget_action = QWidgetAction(self.dock_toggle_bar)
@@ -1066,7 +1072,7 @@ class MainWindow(QMainWindow):
         dock.setFeatures(dock.features() & ~QDockWidget.DockWidgetClosable)
         terminal = TerminalWidget(self.workspace_manager)
         dock.setWidget(terminal)
-        dock.setMinimumHeight(140)
+        dock.setMinimumHeight(100)  # Reduced from 140 for small screens
         dock.setAllowedAreas(Qt.BottomDockWidgetArea)
         self._place_bottom_dock(dock)
         self._register_dock_action(dock)
@@ -1076,8 +1082,9 @@ class MainWindow(QMainWindow):
     def _create_project_dock(self) -> None:
         dock = QDockWidget("Explorer", self)
         dock.setObjectName("projectDock")
-        dock.setMinimumWidth(280)
-        dock.setMaximumWidth(520)
+        # Reduced minimums and removed restrictive maximum for better responsiveness
+        dock.setMinimumWidth(180)  # Reduced from 280
+        dock.setMaximumWidth(600)  # Increased from 520 for large screens
         self.project_model = ProjectModel(self)
         self.project_view = ProjectView(self)
         self.project_view.setTextElideMode(Qt.ElideRight)
@@ -1107,7 +1114,7 @@ class MainWindow(QMainWindow):
         panel.set_command_adapter(self.ai_command_adapter)
         panel.set_insert_handler(lambda code: self._with_editor(lambda e: e.insertPlainText(code)))
         dock.setWidget(panel)
-        dock.setMinimumWidth(260)
+        dock.setMinimumWidth(200)  # Reduced from 260 for small screens
         self._place_ai_dock(dock)
         self._register_dock_action(dock)
         self.ai_dock = dock
@@ -1128,7 +1135,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.diagnostics_empty)
         layout.addWidget(table)
         dock.setWidget(container)
-        dock.setMinimumHeight(140)
+        dock.setMinimumHeight(100)  # Reduced from 140 for small screens
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
         self._place_bottom_dock(dock)
         self._register_dock_action(dock)
@@ -1151,7 +1158,7 @@ class MainWindow(QMainWindow):
         dock.setObjectName("tasksDock")
         panel = TaskPanel(self.task_manager, self)
         dock.setWidget(panel)
-        dock.setMinimumHeight(140)
+        dock.setMinimumHeight(100)  # Reduced from 140 for small screens
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
         self._place_bottom_dock(dock)
         self._register_dock_action(dock)
@@ -1162,7 +1169,7 @@ class MainWindow(QMainWindow):
         dock.setObjectName("testsDock")
         panel = TestPanel(self.test_manager, self.get_current_editor, self)
         dock.setWidget(panel)
-        dock.setMinimumHeight(140)
+        dock.setMinimumHeight(100)  # Reduced from 140 for small screens
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
         self._place_bottom_dock(dock)
         self._register_dock_action(dock)
@@ -1206,7 +1213,7 @@ class MainWindow(QMainWindow):
         dock.setObjectName("gitDock")
         panel = GitPanel(self.git_service, self)
         dock.setWidget(panel)
-        dock.setMinimumWidth(240)
+        dock.setMinimumWidth(180)  # Reduced from 240 for small screens
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
         self._place_left_dock(dock)
         self._register_dock_action(dock)

@@ -226,5 +226,5 @@ class EditorWidget(QWidget):
     # Qt overrides ------------------------------------------------------
     def resizeEvent(self, event):  # type: ignore[override]
         super().resizeEvent(event)
-        self.toolbar.setMaximumWidth(self.width())
-        self.toolbar.setMinimumWidth(self.width())
+        # Use size policy instead of fixed constraints for better performance
+        # The toolbar naturally fills the width via the layout

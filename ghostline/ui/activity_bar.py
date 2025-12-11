@@ -23,7 +23,8 @@ class ActivityBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ActivityBar")
-        self.setFixedWidth(48)
+        # Reduced from 48 to save horizontal space on small screens
+        self.setFixedWidth(42)
 
         self._buttons: Dict[str, QToolButton] = {}
         self._group = QButtonGroup(self)

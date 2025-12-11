@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -35,14 +36,17 @@ class WelcomePortal(QWidget):
         layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 
         self._content_widget = QWidget(self)
-        self._content_widget.setMaximumWidth(560)
+        # Use size policy instead of fixed maximum for better responsiveness
+        self._content_widget.setMaximumWidth(640)  # Increased from 560
+        self._content_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         container_layout = QVBoxLayout(self._content_widget)
         container_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         container_layout.setSpacing(16)
 
         center_card = QWidget(self._content_widget)
-        center_card.setMaximumWidth(540)
+        # Removed fixed maximum width - will inherit from parent
+        center_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         card_layout = QVBoxLayout(center_card)
         card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(16)
