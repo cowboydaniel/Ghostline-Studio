@@ -1,16 +1,20 @@
 {
   "syntax": {
-    "keyword": "#bd93f9",
-    "string": "#98c379",
-    "comment": "#787878",
-    "number": "#d19a66",
-    "builtin": "#61afef",
-    "definition": "#4f8cff",
-    "function": "#5ad4e6",
-    "class": "#73e0c9",
-    "import": "#c2b560",
-    "literal": "#b89cf6",
-    "dunder": "#7a7a7a",
-    "typehint": "#7cc7ff"
+    "keyword": "#569CD6",
+    "string": "#CE9178",
+    "comment": "#6A9955",
+    "number": "#B5CEA8",
+    "builtin": "#4EC9B0",
+    "definition": "#9CDCFE",
+    "function": "#DCDCAA",
+    "class": "#4EC9B0",
+    "import": "#C586C0",
+    "literal": "#B5CEA8",
+    "dunder": "#4EC9B0",
+    "typehint": "#4EC9B0",
+    "decorator": "#C586C0",
+    "operator": "#D4D4D4",
+    "variable": "#9CDCFE",
+    "constant": "#4FC1FF"
   }
 }
