@@ -42,7 +42,7 @@ class AISettingsDialog(QDialog):
 
         layout = QVBoxLayout(self)
         self.backend_combo = QComboBox(self)
-        self.backend_combo.addItems(["openai", "ollama", "none"])
+        self.backend_combo.addItems(["openai", "ollama", "claude", "none"])
         self.backend_combo.setCurrentText(self.config.get("ai", {}).get("backend", "none"))
         self.backend_combo.currentTextChanged.connect(self._update_enabled_state)
 
@@ -85,6 +85,36 @@ class AISettingsDialog(QDialog):
 
         openai_form.addRow(self.openai_models_box)
 
+        # Claude (Anthropic) section
+        self.claude_group = QGroupBox("Claude (Anthropic)", self)
+        claude_form = QFormLayout(self.claude_group)
+        self.claude_key = QLineEdit(self.claude_group)
+        self.claude_key.setText(self.registry._claude_settings().get("api_key", ""))
+        self.claude_model = QComboBox(self.claude_group)
+        self._populate_claude_model_combo()
+        self.claude_status = QLabel("", self.claude_group)
+        self.test_claude_btn = QPushButton("Test connection", self.claude_group)
+        self.test_claude_btn.clicked.connect(self._test_claude)
+
+        claude_form.addRow("API Key", self.claude_key)
+        claude_form.addRow("Model", self.claude_model)
+        claude_form.addRow(self.test_claude_btn, self.claude_status)
+
+        self.claude_models_box = QGroupBox("Claude models", self.claude_group)
+        self.claude_models_layout = QVBoxLayout(self.claude_models_box)
+        claude_helper = QLabel(
+            "Only enabled models appear in the AI dock selector. Claude models require a valid API key.",
+            self.claude_models_box,
+        )
+        claude_helper.setWordWrap(True)
+        claude_helper.setStyleSheet("color: palette(dark);")
+        self.claude_models_layout.addWidget(claude_helper)
+        self.claude_model_rows_layout = QVBoxLayout()
+        self.claude_models_layout.addLayout(self.claude_model_rows_layout)
+        self._rebuild_claude_model_rows()
+
+        claude_form.addRow(self.claude_models_box)
+
         # Ollama section
         self.ollama_group = QGroupBox("Local Ollama", self)
         ollama_layout = QVBoxLayout(self.ollama_group)
@@ -108,6 +138,7 @@ class AISettingsDialog(QDialog):
         ollama_layout.addWidget(self.ollama_logs)
 
         layout.addWidget(self.openai_group)
+        layout.addWidget(self.claude_group)
         layout.addWidget(self.ollama_group)
         layout.addStretch(1)
 
@@ -130,6 +161,7 @@ class AISettingsDialog(QDialog):
     def _update_enabled_state(self) -> None:
         backend = self.backend_combo.currentText()
         self.openai_group.setEnabled(backend == "openai")
+        self.claude_group.setEnabled(backend == "claude")
         self.ollama_group.setEnabled(backend == "ollama")
 
     # OpenAI helpers
@@ -291,6 +323,136 @@ class AISettingsDialog(QDialog):
         self.test_openai_btn.setEnabled(True)
         self.openai_model.setEnabled(True)
 
+    # Claude helpers
+    def _test_claude(self) -> None:
+        """Test the Claude API connection."""
+        api_key = self.claude_key.text().strip()
+        if not api_key:
+            self.claude_status.setText("Enter an API key first.")
+            self.claude_status.setStyleSheet("color: tomato")
+            return
+
+        self.claude_status.setText("Testing connection...")
+        self.test_claude_btn.setEnabled(False)
+
+        def worker() -> None:
+            try:
+                import json
+                import urllib.request
+
+                url = "https://api.anthropic.com/v1/messages"
+                payload = {
+                    "model": "claude-3-5-sonnet-latest",
+                    "max_tokens": 10,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                }
+                data = json.dumps(payload).encode("utf-8")
+                headers = {
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                }
+                req = urllib.request.Request(url, data=data, headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        QTimer.singleShot(0, lambda: self._update_claude_status(True, "Connection successful"))
+                    else:
+                        QTimer.singleShot(0, lambda: self._update_claude_status(False, f"HTTP {resp.status}"))
+            except Exception as exc:
+                QTimer.singleShot(0, lambda: self._update_claude_status(False, str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_claude_status(self, ok: bool, message: str) -> None:
+        """Update the Claude connection status label."""
+        self.claude_status.setText(message)
+        self.claude_status.setStyleSheet(f"color: {'green' if ok else 'tomato'}")
+        self.test_claude_btn.setEnabled(True)
+
+    def _populate_claude_model_combo(self) -> None:
+        """Populate the Claude model dropdown."""
+        claude_models = [
+            "claude-3-5-sonnet-latest",
+            "claude-3-opus-latest",
+            "claude-3-haiku-latest",
+        ]
+
+        current_model = self.registry.last_used_model()
+        current_id = None
+        if current_model and current_model.provider == "claude":
+            current_id = current_model.id
+        if not current_id:
+            claude_cfg = self.registry._claude_settings()
+            current_id = claude_cfg.get("default_model", claude_models[0])
+
+        self.claude_model.clear()
+        for model_id in claude_models:
+            self.claude_model.addItem(model_id, userData=model_id)
+
+        if current_id:
+            index = self.claude_model.findData(current_id)
+            if index != -1:
+                self.claude_model.setCurrentIndex(index)
+            else:
+                self.claude_model.setCurrentIndex(0)
+        else:
+            self.claude_model.setCurrentIndex(0)
+
+    def _rebuild_claude_model_rows(self) -> None:
+        """Build the checkboxes for Claude models."""
+        claude_models = [
+            ("claude-3-5-sonnet-latest", "Claude 3.5 Sonnet", "Fast, versatile model for most tasks"),
+            ("claude-3-opus-latest", "Claude 3 Opus", "Most capable model for complex tasks"),
+            ("claude-3-haiku-latest", "Claude 3 Haiku", "Fastest model for simple tasks"),
+        ]
+
+        # Clear existing rows
+        while self.claude_model_rows_layout.count():
+            item = self.claude_model_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        # Get enabled models from settings
+        claude_cfg = self.registry._claude_settings()
+        enabled_models = claude_cfg.get("enabled_models", [claude_models[0][0]])
+
+        if not hasattr(self, "_claude_model_checkboxes"):
+            self._claude_model_checkboxes: dict[str, QCheckBox] = {}
+        self._claude_model_checkboxes.clear()
+
+        for model_id, label, description in claude_models:
+            row = QHBoxLayout()
+            checkbox = QCheckBox(label, self.claude_models_box)
+            checkbox.setChecked(model_id in enabled_models)
+            checkbox.stateChanged.connect(lambda _state, m=model_id: self._toggle_claude_model(m))
+            self._claude_model_checkboxes[model_id] = checkbox
+            row.addWidget(checkbox)
+
+            badge = QLabel("Claude", self.claude_models_box)
+            badge.setStyleSheet(
+                "padding: 2px 6px; border-radius: 8px; background: palette(midlight); font-size: 11px;"
+            )
+            row.addWidget(badge)
+
+            desc_label = QLabel(description, self.claude_models_box)
+            desc_label.setStyleSheet("color: palette(dark);")
+            row.addWidget(desc_label, 1)
+            self.claude_model_rows_layout.addLayout(row)
+
+    def _toggle_claude_model(self, model_id: str) -> None:
+        """Toggle a Claude model's enabled state."""
+        checkbox = self._claude_model_checkboxes.get(model_id)
+        if not checkbox:
+            return
+
+        enabled_ids = [
+            mid for mid, cb in self._claude_model_checkboxes.items() if cb.isChecked()
+        ]
+
+        # Save to config
+        claude_cfg = self.registry._claude_settings()
+        claude_cfg["enabled_models"] = enabled_ids
+
     # Ollama helpers
     def _check_ollama(self) -> None:
         available = shutil.which("ollama") is not None
@@ -360,6 +522,8 @@ class AISettingsDialog(QDialog):
         ai_cfg["enabled"] = backend != "none"
         ai_cfg["api_key"] = self.openai_key.text().strip()
         providers = ai_cfg.setdefault("providers", {})
+
+        # Save OpenAI settings
         openai_cfg = providers.setdefault("openai", {})
         enabled_ids = [mid for mid, cb in self._model_checkboxes.items() if cb.isChecked()]
         openai_cfg["api_key"] = self.openai_key.text().strip()
@@ -368,12 +532,32 @@ class AISettingsDialog(QDialog):
         openai_cfg["enabled_models"] = enabled_ids
         ai_cfg["openai_endpoint"] = openai_cfg["base_url"]
         ai_cfg["api_key"] = openai_cfg["api_key"]
+
+        # Save Claude settings
+        claude_cfg = providers.setdefault("claude", {})
+        claude_enabled_ids = [mid for mid, cb in self._claude_model_checkboxes.items() if cb.isChecked()]
+        claude_cfg["api_key"] = self.claude_key.text().strip()
+        claude_cfg["enabled_models"] = claude_enabled_ids
+        selected_claude = self.claude_model.currentData() or self.claude_model.currentText()
+        claude_cfg["default_model"] = selected_claude
+
         selected_openai = self.openai_model.currentData() or self.openai_model.currentText()
         selected_ollama = self.ollama_models.currentText()
-        ai_cfg["model"] = selected_openai if backend == "openai" else selected_ollama
+
+        if backend == "claude":
+            ai_cfg["model"] = selected_claude
+        elif backend == "openai":
+            ai_cfg["model"] = selected_openai
+        else:
+            ai_cfg["model"] = selected_ollama
+
         if selected_openai and backend == "openai":
             ai_cfg["last_used_model"] = ModelDescriptor(
                 selected_openai, self.openai_model.currentText(), "openai", "code", True
+            ).to_dict()
+        elif selected_claude and backend == "claude":
+            ai_cfg["last_used_model"] = ModelDescriptor(
+                selected_claude, selected_claude, "claude", "code", True
             ).to_dict()
         elif selected_ollama and backend == "ollama":
             ai_cfg["last_used_model"] = ModelDescriptor(

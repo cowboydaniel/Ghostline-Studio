@@ -179,6 +179,151 @@ class OpenAICompatibleBackend(HTTPBackend):
         _ = (path, text)
 
 
+class ClaudeBackend(HTTPBackend):
+    """Backend for Anthropic's Claude API using the Messages API format."""
+
+    def __init__(self, config: ConfigManager) -> None:
+        super().__init__(config)
+        self.logger = get_logger(__name__)
+        ai_cfg = config.get("ai", {}) if config else {}
+        claude_cfg = self._providers.get("claude", {}) if hasattr(self, "_providers") else {}
+
+        # Get API key from Claude config or fallback to ai.api_key
+        self.api_key = claude_cfg.get("api_key") or ai_cfg.get("claude_api_key") or self.api_key
+
+        # Set endpoint
+        self.endpoint = "https://api.anthropic.com"
+
+        # Get model - prefer Claude config, then last_used_model if it's a Claude model, then fallback
+        self.model = claude_cfg.get("default_model") or ai_cfg.get("model", "")
+        if not self.model or not self.model.startswith("claude"):
+            # Get enabled models
+            enabled = claude_cfg.get("enabled_models", [])
+            if enabled:
+                self.model = enabled[0]
+            else:
+                self.model = "claude-3-5-sonnet-latest"
+
+    def _headers(self) -> dict[str, str]:
+        """Return headers for Anthropic API requests."""
+        headers = {
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+        }
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+        return headers
+
+    def send(self, prompt: str, context: str | None = None) -> AIResponse:
+        """Send a non-streaming request to Claude API."""
+        content = prompt if not context else f"[context]\n{context}\n\n{prompt}"
+
+        payload = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": content}],
+        }
+
+        url = f"{self.endpoint}/v1/messages"
+
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = request.Request(url, data=data, headers=self._headers())
+
+            with request.urlopen(req, timeout=self.timeout) as resp:
+                response_data = json.loads(resp.read().decode("utf-8"))
+
+            # Extract text from response
+            text = self._extract_text_from_response(response_data)
+            return AIResponse(text=text)
+
+        except Exception as exc:
+            self.logger.error("[Claude] Error in send: %s", exc)
+            raise
+
+    def stream(self, prompt: str, context: str | None = None) -> Generator[str, None, None]:
+        """Send a streaming request to Claude API."""
+        content = prompt if not context else f"[context]\n{context}\n\n{prompt}"
+
+        payload = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": content}],
+            "stream": True,
+        }
+
+        url = f"{self.endpoint}/v1/messages"
+
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = request.Request(url, data=data, headers=self._headers())
+
+            with request.urlopen(req, timeout=self.timeout) as resp:
+                # Read streaming response line by line
+                for line in resp:
+                    line_str = line.decode("utf-8").strip()
+
+                    # Skip empty lines
+                    if not line_str:
+                        continue
+
+                    # Parse Server-Sent Events format
+                    if line_str.startswith("data: "):
+                        data_str = line_str[6:]  # Remove "data: " prefix
+
+                        # Skip event type markers
+                        if data_str in ["[DONE]", ""]:
+                            continue
+
+                        try:
+                            event_data = json.loads(data_str)
+
+                            # Handle different event types
+                            event_type = event_data.get("type")
+
+                            if event_type == "content_block_delta":
+                                # Extract delta text from content block
+                                delta = event_data.get("delta", {})
+                                if delta.get("type") == "text_delta":
+                                    text = delta.get("text", "")
+                                    if text:
+                                        yield text
+
+                            elif event_type == "message_delta":
+                                # Handle message-level deltas if needed
+                                delta = event_data.get("delta", {})
+                                # Could extract additional info here if needed
+                                pass
+
+                        except json.JSONDecodeError:
+                            self.logger.debug("[Claude] Failed to parse streaming event: %s", data_str)
+                            continue
+
+        except Exception as exc:
+            self.logger.error("[Claude] Error in stream: %s", exc)
+            raise
+
+    def _extract_text_from_response(self, response_data: dict) -> str:
+        """Extract text content from a Claude API response."""
+        content = response_data.get("content", [])
+
+        if not content:
+            return ""
+
+        # Content is a list of content blocks
+        text_parts = []
+        for block in content:
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+
+        return "".join(text_parts)
+
+    def on_file_opened(self, path: Path, text: str) -> None:
+        """Hook for file-open events dispatched from the AI client."""
+        # Could implement context management here if needed
+        _ = (path, text)
+
+
 class AIClient:
     """Factory for AI backends. Currently provides dummy implementation."""
 
@@ -267,10 +412,13 @@ class AIClient:
         self.secondary_backend = self._create_backend(self.secondary_backend_type) if self.secondary_backend_type else None
         self.active_model: ModelDescriptor | None = None
         openai_models = ai_settings.get("providers", {}).get("openai", {}).get("enabled_models", []) or []
+        claude_models = ai_settings.get("providers", {}).get("claude", {}).get("enabled_models", []) or []
         self.backends = {
             "ollama": self._create_backend("ollama"),
             "openai": self._create_backend("openai"),
+            "claude": self._create_backend("claude"),
             "openai_models": [model.lower() for model in openai_models],
+            "claude_models": [model.lower() for model in claude_models],
         }
 
     def _create_backend(self, backend_type: str | None = None):
@@ -281,6 +429,8 @@ class AIClient:
             instance = OllamaBackend(self.config)
         elif backend == "openai":
             instance = OpenAICompatibleBackend(self.config)
+        elif backend == "claude":
+            instance = ClaudeBackend(self.config)
         else:
             instance = DummyBackend(self.config)
         setattr(instance, "name", backend)
@@ -291,6 +441,10 @@ class AIClient:
     def _get_backend_for_model(self, model_name: str):
         """Return the correct backend and never fall back to OpenAI."""
         model_name = (model_name or "").lower()
+
+        # Detect Claude models
+        if model_name.startswith("claude"):
+            return self.backends["claude"]
 
         # Detect Ollama models
         if model_name.startswith("ollama:") or "ollama" in model_name:

@@ -157,6 +157,9 @@ class ModelRegistry:
     def _ollama_settings(self) -> dict[str, Any]:
         return self._provider_settings().setdefault("ollama", {})
 
+    def _claude_settings(self) -> dict[str, Any]:
+        return self._provider_settings().setdefault("claude", {})
+
     def _ensure_defaults(self) -> None:
         openai_cfg = self._openai_settings()
         if not openai_cfg.get("available_models"):
@@ -173,6 +176,14 @@ class ModelRegistry:
             ollama_cfg["host"] = self._ai_settings().get("endpoint", "http://localhost:11434")
         ollama_cfg.setdefault("enabled", True)
         ollama_cfg.setdefault("last_seen_models", [])
+
+        claude_cfg = self._claude_settings()
+        if "api_key" not in claude_cfg:
+            claude_cfg["api_key"] = self._ai_settings().get("claude_api_key", "")
+        if "enabled_models" not in claude_cfg:
+            claude_cfg["enabled_models"] = ["claude-3-5-sonnet-latest"]
+        if "default_model" not in claude_cfg:
+            claude_cfg["default_model"] = "claude-3-5-sonnet-latest"
 
     def openai_models(self) -> list[ModelDescriptor]:
         cfg = self._openai_settings()
@@ -192,8 +203,29 @@ class ModelRegistry:
         self._ollama_settings()["last_seen_models"] = [model.id for model in models]
         return models
 
+    def claude_models(self) -> list[ModelDescriptor]:
+        """Return available Claude models."""
+        cfg = self._claude_settings()
+        enabled_ids = set(cfg.get("enabled_models", []))
+
+        # Hardcoded list of Claude models
+        all_claude_models = [
+            ModelDescriptor("claude-3-5-sonnet-latest", "Claude 3.5 Sonnet", "claude", "code", True, "Fast, versatile model"),
+            ModelDescriptor("claude-3-opus-latest", "Claude 3 Opus", "claude", "code", True, "Most capable model"),
+            ModelDescriptor("claude-3-haiku-latest", "Claude 3 Haiku", "claude", "code", True, "Fastest model"),
+        ]
+
+        for model in all_claude_models:
+            model.enabled = model.id in enabled_ids
+
+        return all_claude_models
+
+    def enabled_claude_models(self) -> list[ModelDescriptor]:
+        """Return only enabled Claude models."""
+        return [model for model in self.claude_models() if model.enabled]
+
     def available_models(self) -> list[ModelDescriptor]:
-        return self.enabled_openai_models() + self.ollama_models()
+        return self.enabled_openai_models() + self.enabled_claude_models() + self.ollama_models()
 
     def set_enabled_openai_models(self, enabled_ids: list[str]) -> None:
         cfg = self._openai_settings()
