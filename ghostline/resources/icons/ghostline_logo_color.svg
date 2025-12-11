@@ -1,22 +1,23 @@
-<svg width="360" height="120" viewBox="0 0 360 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="120" height="90" viewBox="0 0 120 90" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="120" height="90" rx="12" fill="#1D1E22"/>
   <defs>
-    <linearGradient id="ghostBody" x1="6" y1="12" x2="76" y2="90" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#6FF2D9"/>
-      <stop offset="1" stop-color="#6A7CFF"/>
+    <linearGradient id="ghostBody" x1="40" y1="10" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F7F7F7"/>
+      <stop offset="1" stop-color="#E6E6E6"/>
     </linearGradient>
-    <linearGradient id="ghostGlow" x1="22" y1="6" x2="86" y2="94" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#94FFF0" stop-opacity="0.7"/>
-      <stop offset="1" stop-color="#7C8CFF" stop-opacity="0.0"/>
+    <linearGradient id="tongue" x1="58" y1="56" x2="70" y2="76" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF5AA5"/>
+      <stop offset="1" stop-color="#E2007E"/>
     </linearGradient>
   </defs>
-  <rect width="360" height="120" rx="18" fill="#0B0F1A"/>
-  <path d="M26 14C14.5 14 5 23.5 5 35v26.8c0 4.5 5 7 8.4 3.8l3.8-3.6 4.2 3.9c1.3 1.2 3.3 1.2 4.6 0l4.2-3.9 4.2 3.9c1.3 1.2 3.3 1.2 4.6 0l4.2-3.9 4.2 3.9c3.2 3 8.4 0.6 8.4-3.8V35C56.8 23.5 47.4 14 36 14H26Z" fill="url(#ghostBody)" stroke="#CFFCF7" stroke-width="1.2"/>
-  <path d="M14 26c0-6 5.4-11 12-11h12c8 0 14.8 6.8 14.8 15.2v13c0 3-2.4 5.4-5.4 5.4H24.2" stroke="url(#ghostGlow)" stroke-width="2.4" stroke-linecap="round"/>
-  <circle cx="24.5" cy="33" r="2.8" fill="#0B0F1A"/>
-  <circle cx="39.5" cy="33" r="2.8" fill="#0B0F1A"/>
-  <path d="M27 43c2 1.4 5 1.4 7 0" stroke="#0B0F1A" stroke-width="1.5" stroke-linecap="round"/>
-  <path d="M98 39c0 17.6 12.6 32.2 29.6 34.7 21.6 3.2 38.4-10.5 42.2-26.7" stroke="#6FF2D9" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="8 6"/>
-  <text x="96" y="52" fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="800">GHOSTLINE</text>
-  <text x="98" y="82" fill="#7AC5FF" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">STUDIO</text>
-  <path d="M98 88h128" stroke="#1EA7FF" stroke-width="2" stroke-linecap="round" stroke-opacity="0.6"/>
+  <path d="M56 12c-13.5 0-25 10.6-25 23.6v18.2c0 4 3.7 6.9 7.5 5.6 1.8-.6 3.5-1.6 5-3l4.3-3.9 4.9 5.4c2.7 3 7.3 3.2 10.2.4l5.1-5 5.6 5.8c2.8 2.9 7.5 2.9 10.3 0l5.6-5.8 4.4 3.8c3.2 2.8 8.1.4 8.1-3.9V35c0-12.9-10.6-23-23.7-23H56Z" fill="url(#ghostBody)"/>
+  <path d="M40.5 54.5c-4.2 0-7.7-3.4-7.7-7.7V36.2c0-11.6 9.6-21 21.3-21h15.4c12 0 21.7 9.5 21.7 21.3v5c0 4.7-3.8 8.5-8.5 8.5" stroke="#CBCBCB" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M44.5 33c2.5-2 6.1-2 8.6 0" stroke="#5B3B13" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="71" cy="33.5" r="5" fill="#3B2A16"/>
+  <circle cx="72.8" cy="31.7" r="1.4" fill="#FFFFFF" fill-opacity="0.85"/>
+  <path d="M56 42c-1.7 0-3 1.3-3 3 0 6.6 5.4 12 12 12h4c6.6 0 12-5.4 12-12 0-1.7-1.3-3-3-3H56Z" fill="#211E1E"/>
+  <path d="M59.5 52.5c0 5.5 4.5 10 10 10 3.6 0 6.5-1.8 8-4.5V43.5H59.5v9Z" fill="url(#tongue)"/>
+  <path d="M61.5 53c-1.6 0-2.9 1.3-2.9 2.9 0 2.7 1.4 5 3.5 6.4 2.6 1.7 5.9 2.5 9.1 2.5 1.5 0 3.9-.3 4.8-2 .6-1.1.2-2.5-.9-3.1-4.3-2.4-8.8-6.3-11.4-6.7H61.5Z" fill="#1C1616" opacity="0.28"/>
+  <path d="M44 60.5c9.2 7.6 26 7.6 35.2-.1" stroke="#DCDCDC" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M48 12.5c3.1-2.2 7-3.5 11.3-3.5h9.2c9 0 17 5.6 20.2 13.7" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-opacity="0.65"/>
 </svg>
