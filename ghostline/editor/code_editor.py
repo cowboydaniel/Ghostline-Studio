@@ -578,6 +578,7 @@ class CodeEditor(QPlainTextEdit):
         # is loaded, and setPlainText() may not reliably trigger the contentsChange signal
         # during initial setup.
         if hasattr(self, '_highlighter') and self._highlighter:
+            self._highlighter._token_cache_revision = -1
             self._highlighter._rebuild_token_cache()
 
     def save(self) -> None:
