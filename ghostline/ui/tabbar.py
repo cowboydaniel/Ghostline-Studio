@@ -59,7 +59,15 @@ class EditorTabBar(QTabBar):
                 font.setItalic(True)
                 painter.setFont(font)
                 painter.setPen(option.palette.color(option.palette.WindowText))
-                painter.drawText(rect, Qt.AlignCenter, saved_text)
+
+                # Leave space for the close button on the right (typically 20-24px)
+                text_rect = QRect(
+                    rect.left() + 8,
+                    rect.top(),
+                    rect.width() - 32,  # Leave room for icon and close button
+                    rect.height()
+                )
+                painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, saved_text)
 
             # Draw thin underline for active tab
             if is_active:
