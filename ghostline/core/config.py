@@ -93,13 +93,15 @@ class ConfigManager:
         return changed
 
     def _migrate_python_lsp(self, python_cfg: dict[str, Any]) -> bool:
-        desired_command = "pyright-langserver"
+        # Use basedpyright for semantic token support
+        desired_command = "basedpyright-langserver"
         desired_args = ["--stdio"]
         changed = False
 
         if python_cfg.get("command"):
             command = str(python_cfg.get("command"))
-            if "pylsp" in command:
+            # Migrate from old pylsp or pyright to basedpyright
+            if "pylsp" in command or command == "pyright-langserver":
                 python_cfg["command"] = desired_command
                 python_cfg["args"] = desired_args
                 changed = True
@@ -107,7 +109,8 @@ class ConfigManager:
         primary_cfg = python_cfg.get("primary")
         if isinstance(primary_cfg, dict):
             command = str(primary_cfg.get("command", ""))
-            if "pylsp" in command:
+            # Migrate from old pylsp or pyright to basedpyright
+            if "pylsp" in command or command == "pyright-langserver":
                 primary_cfg["command"] = desired_command
                 primary_cfg["args"] = desired_args
                 python_cfg["primary"] = primary_cfg
