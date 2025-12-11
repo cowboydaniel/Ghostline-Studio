@@ -150,6 +150,7 @@ class PythonHighlighter(QSyntaxHighlighter):
             self._regex_fallback(text)
 
         self._token_cache_revision = revision
+        self.rehighlight()
 
     def _regex_fallback(self, text: str) -> None:
         lines = text.splitlines()
