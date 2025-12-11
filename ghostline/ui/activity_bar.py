@@ -12,7 +12,6 @@ class ActivityBar(QWidget):
     """Thin vertical bar with icon-only buttons for primary tools."""
 
     explorerRequested = Signal()
-    searchRequested = Signal()
     gitRequested = Signal()
     debugRequested = Signal()
     testsRequested = Signal()
@@ -47,7 +46,6 @@ class ActivityBar(QWidget):
         style = self.style()
         buttons = [
             ("explorer", QStyle.SP_DirIcon, "Explorer", self.explorerRequested),
-            ("search", QStyle.SP_FileDialogContentsView, "Search", self.searchRequested),
             ("git", QStyle.SP_BrowserReload, "Source Control", self.gitRequested),
             ("debug", QStyle.SP_MediaPlay, "Run / Debug", self.debugRequested),
             ("tests", QStyle.SP_DriveHDIcon, "Tests", self.testsRequested),
