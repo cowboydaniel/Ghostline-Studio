@@ -44,12 +44,22 @@ class EditorTabBar(QTabBar):
                 option.palette.setColor(option.palette.Button, QColor("#191a1d"))
                 option.palette.setColor(option.palette.Window, QColor("#191a1d"))
 
+            # For preview tabs, we'll paint the text ourselves in italic
+            saved_text = ""
             if is_preview:
-                font = self.font()
-                font.setItalic(True)
-                option.font = font
+                saved_text = option.text
+                option.text = ""  # Clear text so Qt doesn't paint it
 
             painter.drawControl(QStyle.CE_TabBarTab, option)
+
+            # Paint italic text for preview tabs
+            if is_preview and saved_text:
+                rect = self.tabRect(i)
+                font = QFont(self.font())
+                font.setItalic(True)
+                painter.setFont(font)
+                painter.setPen(option.palette.color(option.palette.WindowText))
+                painter.drawText(rect, Qt.AlignCenter, saved_text)
 
             # Draw thin underline for active tab
             if is_active:
