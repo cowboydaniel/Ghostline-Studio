@@ -281,6 +281,7 @@ class CodeEditor(QPlainTextEdit):
         self.theme = theme or ThemeManager()
         self.lsp_manager = lsp_manager
         self._document_version = 0
+        self._loading_document = False
         self._lsp_document_opened = False
         self._diagnostics: list[Diagnostic] = []
         self._extra_cursors: list[QTextCursor] = []
@@ -450,8 +451,12 @@ class CodeEditor(QPlainTextEdit):
 
     # File operations
     def _load_file(self, path: Path) -> None:
-        with path.open("r", encoding="utf-8") as handle:
-            self.setPlainText(handle.read())
+        self._loading_document = True
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                self.setPlainText(handle.read())
+        finally:
+            self._loading_document = False
 
     def save(self) -> None:
         if not self.path:
@@ -689,6 +694,35 @@ class CodeEditor(QPlainTextEdit):
     # LSP integration
     def _open_in_lsp(self) -> None:
         if self.lsp_manager and self.path:
+            self.lsp_manager.open_document(str(self.path), self.toPlainText())
+            self._document_version = 1
+
+    def _notify_lsp_change(self) -> None:
+        if self._loading_document:
+            return
+        if not (self.lsp_manager and self.path):
+            return
+        self._document_version += 1
+        self.lsp_manager.change_document(str(self.path), self.toPlainText(), self._document_version)
+
+    def _refresh_semantic_tokens(self) -> None:
+        if self._loading_document:
+            return
+        text = self.toPlainText()
+        if not self.lsp_manager or not self.path:
+            self._highlighter.set_semantic_tokens(self._semantic_provider.custom_tokens(text))
+            return
+
+        def _handle_tokens(result: dict, legend: list[str]) -> None:
+            self._apply_semantic_tokens(result, legend)
+
+        range_params = self._visible_range_params()
+        requested = self.lsp_manager.request_semantic_tokens(
+            str(self.path), callback=_handle_tokens, range_params=range_params
+        )
+        if not requested:
+            tokens = self._semantic_provider.custom_tokens(text)
+            self._highlighter.set_semantic_tokens(tokens)
             try:
                 self.lsp_manager.open_document(str(self.path), self.toPlainText())
                 self._document_version = max(self._document_version, 1)
@@ -751,6 +785,31 @@ class CodeEditor(QPlainTextEdit):
             tokens = self._semantic_provider.custom_tokens(self.toPlainText())
         self._highlighter.set_semantic_tokens(tokens)
         self._highlighter.rehighlight()
+
+    def _visible_range_params(self) -> dict | None:
+        block = self.firstVisibleBlock()
+        if not block.isValid():
+            return None
+
+        start_line = block.blockNumber()
+        offset = self.contentOffset()
+        top = int(self.blockBoundingGeometry(block).translated(offset).top())
+        bottom_limit = self.viewport().rect().bottom()
+        end_line = start_line
+
+        while block.isValid() and top <= bottom_limit:
+            if block.isVisible():
+                end_line = block.blockNumber()
+            block = block.next()
+            if not block.isValid():
+                break
+            top = int(self.blockBoundingGeometry(block).translated(offset).top())
+
+        end_line = max(end_line, start_line)
+        return {
+            "start": {"line": start_line, "character": 0},
+            "end": {"line": end_line + 1, "character": 0},
+        }
 
     def apply_diagnostics(self, diagnostics: Iterable[Diagnostic]) -> None:
         self._diagnostics = list(diagnostics)
