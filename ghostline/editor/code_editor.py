@@ -285,7 +285,7 @@ class CodeEditor(QPlainTextEdit):
         self._bracket_selection: list[QTextEdit.ExtraSelection] = []
         self._bracket_scope: tuple[int, int, int] | None = None
         self.breakpoints = BreakpointStore.instance()
-        self._semantic_provider = SemanticTokenProvider(self.theme)
+        self._semantic_provider = SemanticTokenProvider("python", theme=self.theme)
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11

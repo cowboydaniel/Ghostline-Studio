@@ -14,6 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
+from PySide6.QtGui import QColor, QTextCharFormat
+
+from ghostline.core.theme import ThemeManager
+
 
 @dataclass
 class SemanticToken:
@@ -28,8 +32,62 @@ class SemanticTokenProvider:
     simple line based tokens for the syntax highlighter.
     """
 
-    def __init__(self, language: str) -> None:
+    def __init__(self, language: str, theme: ThemeManager | None = None) -> None:
         self.language = language
+        self.theme = theme
+        self._formats = self._build_formats()
+
+    def _build_formats(self) -> dict[str, QTextCharFormat]:
+        """Precompute QTextCharFormats for known token types."""
+
+        def _fmt(color: QColor, bold: bool = False) -> QTextCharFormat:
+            fmt = QTextCharFormat()
+            fmt.setForeground(color)
+            if bold:
+                fmt.setFontWeight(QTextCharFormat.Bold)
+            return fmt
+
+        if not self.theme:
+            return {}
+
+        return {
+            "namespace": _fmt(self.theme.syntax_color("import")),
+            "type": _fmt(self.theme.syntax_color("typehint"), True),
+            "class": _fmt(self.theme.syntax_color("class"), True),
+            "enum": _fmt(self.theme.syntax_color("class"), True),
+            "interface": _fmt(self.theme.syntax_color("class"), True),
+            "struct": _fmt(self.theme.syntax_color("class"), True),
+            "typeParameter": _fmt(self.theme.syntax_color("typehint")),
+            "parameter": _fmt(self.theme.syntax_color("definition")),
+            "variable": _fmt(self.theme.syntax_color("definition")),
+            "property": _fmt(self.theme.syntax_color("definition")),
+            "enumMember": _fmt(self.theme.syntax_color("literal")),
+            "event": _fmt(self.theme.syntax_color("definition")),
+            "function": _fmt(self.theme.syntax_color("function"), True),
+            "method": _fmt(self.theme.syntax_color("function"), True),
+            "macro": _fmt(self.theme.syntax_color("definition")),
+            "keyword": _fmt(self.theme.syntax_color("keyword"), True),
+            "modifier": _fmt(self.theme.syntax_color("keyword")),
+            "comment": _fmt(self.theme.syntax_color("comment")),
+            "string": _fmt(self.theme.syntax_color("string")),
+            "number": _fmt(self.theme.syntax_color("number")),
+            "regexp": _fmt(self.theme.syntax_color("string")),
+            "operator": _fmt(self.theme.syntax_color("keyword")),
+        }
+
+    def format_for(self, token_type: str) -> QTextCharFormat:
+        """Return a QTextCharFormat for a semantic token type."""
+        if token_type in self._formats:
+            return self._formats[token_type]
+        if self.theme:
+            return self._formats.setdefault("default", self._build_default_format())
+        return QTextCharFormat()
+
+    def _build_default_format(self) -> QTextCharFormat:
+        fmt = QTextCharFormat()
+        if self.theme:
+            fmt.setForeground(self.theme.syntax_color("definition"))
+        return fmt
 
     def custom_tokens(self, text: str) -> List[SemanticToken]:
         """Extra tokens beyond what LSP provides.
