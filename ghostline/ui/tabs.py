@@ -90,7 +90,7 @@ class EditorTabs(QTabWidget):
     ) -> None:
         super().__init__(parent)
         self.config = config
-        self.theme = theme
+        self.theme = theme or ThemeManager()
         self.lsp_manager = lsp_manager
         self.ai_client = ai_client
         self.command_registry = command_registry
