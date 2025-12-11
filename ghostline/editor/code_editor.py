@@ -606,3 +606,23 @@ class CodeEditor(QPlainTextEdit):
         cursor.beginEditBlock()
         self.setPlainText(updated)
         cursor.endEditBlock()
+
+    def get_state(self) -> dict:
+        """Get current editor state including cursor and scroll positions."""
+        cursor = self.textCursor()
+        return {
+            "cursor_position": cursor.position(),
+            "scroll_vertical": self.verticalScrollBar().value(),
+            "scroll_horizontal": self.horizontalScrollBar().value(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Restore editor state including cursor and scroll positions."""
+        if "cursor_position" in state:
+            cursor = self.textCursor()
+            cursor.setPosition(min(state["cursor_position"], len(self.toPlainText())))
+            self.setTextCursor(cursor)
+        if "scroll_vertical" in state:
+            self.verticalScrollBar().setValue(state["scroll_vertical"])
+        if "scroll_horizontal" in state:
+            self.horizontalScrollBar().setValue(state["scroll_horizontal"])

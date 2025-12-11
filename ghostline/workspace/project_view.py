@@ -23,6 +23,7 @@ class ProjectView(QTreeView):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.setSelectionMode(QTreeView.SingleSelection)
         self.clicked.connect(self._on_item_clicked)
+        self.doubleClicked.connect(self._on_item_double_clicked)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
         # Match Windsurf-style explorer tree: tight rows, subtle hover,
@@ -63,7 +64,13 @@ class ProjectView(QTreeView):
         if index.isValid():
             path = self._model.filePath(index)
             if Path(path).is_file() and hasattr(self.window(), "open_file"):
-                self.window().open_file(path)
+                self.window().open_file(path, preview=True)
+
+    def _on_item_double_clicked(self, index) -> None:
+        if index.isValid():
+            path = self._model.filePath(index)
+            if Path(path).is_file() and hasattr(self.window(), "open_file"):
+                self.window().open_file(path, preview=False)
 
     def mouseDoubleClickEvent(self, event) -> None:  # type: ignore[override]
         index = self.indexAt(event.pos())
@@ -71,8 +78,6 @@ class ProjectView(QTreeView):
             path = self._model.filePath(index)
             if Path(path).is_dir():  # Only handle double-click for folders
                 super().mouseDoubleClickEvent(event)
-            else:
-                self._on_item_clicked(index)
         else:
             super().mouseDoubleClickEvent(event)
 
