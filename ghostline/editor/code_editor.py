@@ -65,7 +65,7 @@ class PythonHighlighter(QSyntaxHighlighter):
         token_provider: SemanticTokenProvider | None = None,
     ) -> None:
         super().__init__(document)
-        self.theme = theme
+        self.theme = theme or ThemeManager()
         self.token_provider = token_provider
         self._token_cache: dict[int, list[tuple[int, int, QTextCharFormat]]] = {}
         self._token_cache_revision: int = -1
@@ -80,7 +80,7 @@ class PythonHighlighter(QSyntaxHighlighter):
 
     def _fmt(self, color_key: str, bold: bool = False) -> QTextCharFormat:
         fmt = QTextCharFormat()
-        fmt.setForeground(self.theme.syntax_color(color_key) if self.theme else QColor())
+        fmt.setForeground(self.theme.syntax_color(color_key))
         if bold:
             fmt.setFontWeight(QFont.Bold)
         return fmt
@@ -150,6 +150,7 @@ class PythonHighlighter(QSyntaxHighlighter):
             self._regex_fallback(text)
 
         self._token_cache_revision = revision
+        self.rehighlight()
 
     def _regex_fallback(self, text: str) -> None:
         lines = text.splitlines()
@@ -277,7 +278,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__(parent)
         self.path = path
         self.config = config
-        self.theme = theme
+        self.theme = theme or ThemeManager()
         self.lsp_manager = lsp_manager
         self._document_version = 0
         self._lsp_document_opened = False
@@ -749,6 +750,7 @@ class CodeEditor(QPlainTextEdit):
         if not tokens:
             tokens = self._semantic_provider.custom_tokens(self.toPlainText())
         self._highlighter.set_semantic_tokens(tokens)
+        self._highlighter.rehighlight()
 
     def apply_diagnostics(self, diagnostics: Iterable[Diagnostic]) -> None:
         self._diagnostics = list(diagnostics)
