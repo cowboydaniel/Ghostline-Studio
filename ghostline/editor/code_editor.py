@@ -174,28 +174,31 @@ class PythonHighlighter(QSyntaxHighlighter):
 
         self.rules: List[tuple[object, QTextCharFormat]] = []
         keywords = r"\b(" + "|".join(keyword.kwlist) + r")\b"
-        self.rules.append((re.compile(keywords), self._fmt("keyword", True)))
+        self.rules.append((re.compile(keywords), self._fmt("keyword")))
         self.rules.append((re.compile(r"#[^\n]*"), self._fmt("comment")))
         self.rules.append((re.compile(r"\b[0-9]+\b"), self._fmt("number")))
         self.rules.append((re.compile(r"\bself\b"), self._fmt("builtin")))
-        self.rules.append((re.compile(r"\bclass\s+\w+"), self._fmt("definition", True)))
+        self.rules.append((re.compile(r"\bclass\s+\w+"), self._fmt("definition")))
         string_fmt = self._fmt("string")
         self.rules.append((re.compile(r"'(?:[^'\\]|\\.)*'"), string_fmt))
         self.rules.append((re.compile(r'"(?:[^"\\]|\\.)*"'), string_fmt))
 
         # Token-based formats for richer highlighting.
-        self._format_keyword = self._fmt("keyword", True)
+        self._format_keyword = self._fmt("keyword")
         self._format_comment = self._fmt("comment")
         self._format_string = self._fmt("string")
         self._format_number = self._fmt("number")
         self._format_builtin = self._fmt("builtin")
-        self._format_definition = self._fmt("definition", True)
-        self._format_function = self._fmt("function", True)
-        self._format_class = self._fmt("class", True)
+        self._format_definition = self._fmt("definition")
+        self._format_function = self._fmt("function")
+        self._format_class = self._fmt("class")
         self._format_import = self._fmt("import")
         self._format_literal = self._fmt("literal")
         self._format_dunder = self._fmt("dunder")
         self._format_typehint = self._fmt("typehint")
+        self._format_decorator = self._fmt("decorator")
+        self._format_variable = self._fmt("variable")
+        self._format_operator = self._fmt("operator")
 
     def set_semantic_tokens(self, tokens: List[SemanticToken]) -> None:
         self._semantic_tokens.clear()
@@ -206,7 +209,7 @@ class PythonHighlighter(QSyntaxHighlighter):
     def _semantic_format(self, token_type: str) -> QTextCharFormat:
         if self.token_provider:
             return self.token_provider.format_for(token_type)
-        return self._fmt("definition", True)
+        return self._fmt("variable")
 
     def highlightBlock(self, text: str) -> None:  # type: ignore[override]
         block_number = self.currentBlock().blockNumber()
@@ -307,7 +310,7 @@ class PythonHighlighter(QSyntaxHighlighter):
             return fmt, None
 
         if decorator_next:
-            return self._format_definition, None
+            return self._format_decorator, None
 
         if name in {"True", "False", "None"}:
             return self._format_literal, pending_definition
@@ -319,7 +322,8 @@ class PythonHighlighter(QSyntaxHighlighter):
             return self._format_typehint, pending_definition
         if name in self._builtins:
             return self._format_builtin, pending_definition
-        return None, pending_definition
+        # Default to variable color for unrecognized names
+        return self._format_variable, pending_definition
 
     def _add_token_range(
         self,
