@@ -289,6 +289,7 @@ class CodeEditor(QPlainTextEdit):
         self._semantic_timer.setSingleShot(True)
         self._semantic_timer.timeout.connect(self._request_semantic_tokens)
         self._semantic_request_pending = False
+        self._last_semantic_revision = -1
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
@@ -730,8 +731,15 @@ class CodeEditor(QPlainTextEdit):
     def _request_semantic_tokens(self) -> None:
         if self._loading_document or self._semantic_request_pending:
             return
+
+        # Only request if document content has actually changed
+        current_revision = self.document().revision()
+        if current_revision == self._last_semantic_revision:
+            return
+
         if not (self.lsp_manager and self.path):
             self._highlighter.set_semantic_tokens([])
+            self._last_semantic_revision = current_revision
             return
 
         if not self._lsp_document_opened:
@@ -749,7 +757,9 @@ class CodeEditor(QPlainTextEdit):
         except RecursionError:
             return
 
+        # No semantic tokens available, but mark this revision as processed
         self._highlighter.set_semantic_tokens([])
+        self._last_semantic_revision = current_revision
 
     def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
         # Clear the pending flag
@@ -764,6 +774,9 @@ class CodeEditor(QPlainTextEdit):
             tokens = self._semantic_provider.custom_tokens(self.toPlainText())
         # set_semantic_tokens already calls rehighlight(), don't call it again
         self._highlighter.set_semantic_tokens(tokens)
+
+        # Record the revision we just processed to avoid redundant requests
+        self._last_semantic_revision = self.document().revision()
 
     def _visible_range_params(self) -> dict | None:
         block = self.firstVisibleBlock()
