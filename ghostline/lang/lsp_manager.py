@@ -433,8 +433,13 @@ class LSPManager(QObject):
         return request_id
 
     def supports_semantic_tokens(self, path: Any) -> bool:
-        """Return False to force the editor to use its local semantic token provider or none."""
-        return False
+        """Check whether the active client exposes semantic token support."""
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return False
+        language = self._language_for_file(normalized)
+        client = self._get_client(language) if language else None
+        return bool(client and getattr(client, "semantic_tokens_capable", False))
 
     def request_semantic_tokens(
         self, path: Any, callback: Callable[[dict, list[str]], None] | None = None
