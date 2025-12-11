@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QStyle, QStyleOptionTab, QStylePainter, QTabBar
 
 
@@ -40,11 +40,11 @@ class EditorTabBar(QTabBar):
             is_preview = self._preview_tabs.get(i, False)
 
             if is_active:
-                option.palette.setColor(option.palette.Button, QColor("#1e1f23"))
-                option.palette.setColor(option.palette.Window, QColor("#1e1f23"))
+                option.palette.setColor(QPalette.ColorRole.Button, QColor("#1e1f23"))
+                option.palette.setColor(QPalette.ColorRole.Window, QColor("#1e1f23"))
             else:
-                option.palette.setColor(option.palette.Button, QColor("#191a1d"))
-                option.palette.setColor(option.palette.Window, QColor("#191a1d"))
+                option.palette.setColor(QPalette.ColorRole.Button, QColor("#191a1d"))
+                option.palette.setColor(QPalette.ColorRole.Window, QColor("#191a1d"))
 
             if is_preview:
                 font = self.font()
