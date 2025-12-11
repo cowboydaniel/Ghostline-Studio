@@ -215,14 +215,18 @@ class PythonHighlighter(QSyntaxHighlighter):
         block_number = self.currentBlock().blockNumber()
         block_tokens = self._token_cache.get(block_number)
 
-        if block_tokens:
-            for start, length, fmt in block_tokens:
-                self.setFormat(start, length, fmt)
-
+        # Apply semantic tokens first
         line_tokens = self._semantic_tokens.get(block_number, [])
         for token in line_tokens:
             fmt = self._semantic_format(token.token_type)
             self.setFormat(token.start, token.length, fmt)
+
+        # Then apply token cache - this ensures strings, comments, and keywords
+        # from Python's tokenizer always get the correct color, even if LSP
+        # doesn't send proper semantic tokens for them (e.g., docstrings)
+        if block_tokens:
+            for start, length, fmt in block_tokens:
+                self.setFormat(start, length, fmt)
 
     def _rebuild_token_cache(self, *_args) -> None:
         """Re-tokenize the document when its contents change."""
@@ -634,8 +638,8 @@ class CodeEditor(QPlainTextEdit):
         extra_selections = []
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
-            # VS Code Dark+ current line highlight color
-            line_color = QColor(101, 115, 126, 85)  # #65737E55 (RGBA)
+            # VS Code Dark+ current line highlight color - subtle background overlay
+            line_color = QColor(0x2A, 0x2D, 0x2E)  # #2A2D2E
             selection.format.setBackground(line_color)
             selection.format.setProperty(QTextFormat.FullWidthSelection, True)
             selection.cursor = self.textCursor()
