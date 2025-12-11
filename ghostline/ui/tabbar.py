@@ -60,7 +60,7 @@ class EditorTabBar(QTabBar):
                 font = QFont(self.font())
                 font.setItalic(True)
                 painter.setFont(font)
-                painter.setPen(option.palette.color(option.palette.WindowText))
+                painter.setPen(option.palette.color(QPalette.ColorRole.WindowText))
 
                 # Leave space for the close button on the right (typically 20-24px)
                 text_rect = QRect(
