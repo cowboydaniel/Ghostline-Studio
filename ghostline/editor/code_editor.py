@@ -72,6 +72,11 @@ class PythonHighlighter(QSyntaxHighlighter):
         self._builtins = set(dir(builtins))
         self._semantic_tokens: dict[int, list[SemanticToken]] = {}
         self._init_rules()
+        # Precompute token cache whenever the document changes to avoid
+        # expensive parsing work from inside highlightBlock (which can
+        # otherwise re-enter Qt's painting stack and crash certain builds).
+        self.document().contentsChange.connect(self._rebuild_token_cache)
+        self._rebuild_token_cache()
 
     def _fmt(self, color_key: str, bold: bool = False) -> QTextCharFormat:
         fmt = QTextCharFormat()
@@ -120,8 +125,6 @@ class PythonHighlighter(QSyntaxHighlighter):
         return self._fmt("definition", True)
 
     def highlightBlock(self, text: str) -> None:  # type: ignore[override]
-        self._ensure_token_cache()
-
         for start, length, fmt in self._token_cache.get(self.currentBlock().blockNumber(), []):
             self.setFormat(start, length, fmt)
 
@@ -130,7 +133,8 @@ class PythonHighlighter(QSyntaxHighlighter):
             fmt = self._semantic_format(token.token_type)
             self.setFormat(token.start, token.length, fmt)
 
-    def _ensure_token_cache(self) -> None:
+    def _rebuild_token_cache(self, *_args) -> None:
+        """Re-tokenize the document when its contents change."""
         revision = self.document().revision()
         if revision == self._token_cache_revision:
             return
