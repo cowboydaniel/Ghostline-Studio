@@ -5,11 +5,12 @@ servers:
       # NOTE: Standard pyright does NOT support semantic tokens (syntax highlighting).
       # For semantic token support, use basedpyright instead:
       #   pip install basedpyright
-      # Then uncomment the following lines and comment out the pyright-langserver lines:
-      # command: "basedpyright-langserver"
-      # args: ["--stdio"]
-      command: "pyright-langserver"
+      # Using basedpyright for semantic token support:
+      command: "basedpyright-langserver"
       args: ["--stdio"]
+      # Standard pyright (no semantic tokens):
+      # command: "pyright-langserver"
+      # args: ["--stdio"]
     formatter:
       command: "black"
       args:
