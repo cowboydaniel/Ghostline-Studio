@@ -27,7 +27,7 @@ class LSPClient(QObject):
         self._buffer = b""
 
         self.process.readyReadStandardOutput.connect(self._on_ready_read)
-        self.process.started.connect(self.started)
+        self.process.started.connect(self._on_started)
         self.process.errorOccurred.connect(self._on_error)
 
     def start(self) -> None:
@@ -80,6 +80,10 @@ class LSPClient(QObject):
         self.process.write(QByteArray(message))
         logger.debug("LSP -> %s", payload)
 
+    def _on_started(self) -> None:  # pragma: no cover - Qt started callback
+        logger.info("LSP client started successfully: %r %r", self._command, self._args)
+        self.started.emit()
+
     def _on_ready_read(self) -> None:
         self._buffer += bytes(self.process.readAllStandardOutput())
         while True:
@@ -121,7 +125,10 @@ class LSPClient(QObject):
     def _on_error(self, error) -> None:  # pragma: no cover - Qt error callback
         if error == QProcess.ProcessError.FailedToStart:
             logger.error(
-                "LSP failed to start. Check that the configured command exists and is executable."
+                "LSP failed to start for %r %r. Check that the configured command exists and is executable.",
+                self._command,
+                self._args,
             )
-        logger.error("LSP client process error: %s", error)
+        else:
+            logger.error("LSP client process error: %s", error)
 
