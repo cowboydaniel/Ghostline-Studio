@@ -749,6 +749,7 @@ class CodeEditor(QPlainTextEdit):
                     callback=self._apply_semantic_tokens,
                     range_params=self._visible_range_params(),
                 ):
+                    self._lsp_document_opened = True
                     return
         except RecursionError:
             return
