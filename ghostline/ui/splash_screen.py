@@ -141,7 +141,7 @@ class GhostlineSplash(QWidget):
 
     splashFinished = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, wait_for_dependencies: bool = True) -> None:
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.SplashScreen)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -155,6 +155,8 @@ class GhostlineSplash(QWidget):
         self.services_complete = False
         self.minimum_display_ms = 2600
         self._fade_started = False
+        self._wait_for_dependencies = wait_for_dependencies
+        self._dependency_setup_complete = False
 
         self._setup_layout()
         self._setup_effects()
@@ -276,7 +278,12 @@ class GhostlineSplash(QWidget):
         self.logo_widget.update()
         self.update()
 
-        if elapsed >= self.minimum_display_ms and self.services_complete:
+        # Only close splash when both animation is done AND dependencies are ready
+        can_close = elapsed >= self.minimum_display_ms and self.services_complete
+        if self._wait_for_dependencies:
+            can_close = can_close and self._dependency_setup_complete
+
+        if can_close:
             self._start_fade_out()
 
     def _update_glitch(self) -> None:
@@ -416,3 +423,26 @@ class GhostlineSplash(QWidget):
             color = QColor(random.choice([79, 140, 255, 255, 79, 163]), random.randint(120, 255), random.randint(120, 255), 120)
             painter.fillRect(x, y, w, h, color)
         painter.restore()
+
+    # Public API for dependency setup
+    def update_status(self, message: str) -> None:
+        """Update the splash screen with a progress message.
+
+        Args:
+            message: Status message to display in the terminal
+        """
+        self.terminal.appendPlainText(f"[SETUP] {message}")
+        scroll_bar = self.terminal.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
+
+    def mark_dependency_setup_complete(self, success: bool) -> None:
+        """Mark dependency setup as complete.
+
+        Args:
+            success: Whether dependency setup completed successfully
+        """
+        self._dependency_setup_complete = True
+        if success:
+            self.terminal.appendPlainText("[SETUP] Dependencies ready")
+        else:
+            self.terminal.appendPlainText("[SETUP] Dependency setup encountered errors")
