@@ -62,11 +62,16 @@ class EditorTabBar(QTabBar):
                 painter.setFont(font)
                 painter.setPen(option.palette.color(QPalette.ColorRole.WindowText))
 
-                # Leave space for the close button on the right (typically 20-24px)
+                icon_size = self.style().pixelMetric(QStyle.PM_TabBarIconSize, option, self)
+                icon_padding = 6
+                left_padding = 8 + icon_size + icon_padding
+                right_padding = 24  # Approximate space for close button and margin
+
+                available_width = max(0, rect.width() - left_padding - right_padding)
                 text_rect = QRect(
-                    rect.left() + 8,
+                    rect.left() + left_padding,
                     rect.top(),
-                    rect.width() - 32,  # Leave room for icon and close button
+                    available_width,
                     rect.height()
                 )
                 painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, saved_text)
