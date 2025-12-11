@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
-from PySide6.QtGui import QColor, QTextCharFormat
+from PySide6.QtGui import QColor, QFont, QTextCharFormat
 
 from ghostline.core.theme import ThemeManager
 
@@ -44,7 +44,7 @@ class SemanticTokenProvider:
             fmt = QTextCharFormat()
             fmt.setForeground(color)
             if bold:
-                fmt.setFontWeight(QTextCharFormat.Bold)
+                fmt.setFontWeight(QFont.Weight.Bold)
             return fmt
 
         if not self.theme:
