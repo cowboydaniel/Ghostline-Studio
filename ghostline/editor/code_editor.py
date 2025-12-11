@@ -692,19 +692,25 @@ class CodeEditor(QPlainTextEdit):
         return
 
     def _refresh_semantic_tokens(self) -> None:
-        """Disable semantic token refresh for now.
+        if not (self.lsp_manager and self.path):
+            self._apply_semantic_tokens({}, [])
+            return
 
-        The combination of QSyntaxHighlighter and Python 3.12 is causing
-        deep RecursionError in highlightBlock. Base syntax highlighting is
-        still active, we just skip the extra semantic overlays.
-        """
-        return
+        if self.lsp_manager.supports_semantic_tokens(self.path):
+            requested = self.lsp_manager.request_semantic_tokens(
+                self.path, callback=self._apply_semantic_tokens
+            )
+            if requested:
+                return
+
+        self._apply_semantic_tokens({}, [])
 
     def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
         tokens = SemanticTokenProvider.from_lsp(result, legend)
         if not tokens:
             tokens = self._semantic_provider.custom_tokens(self.toPlainText())
         self._highlighter.set_semantic_tokens(tokens)
+        self._highlighter.rehighlight()
 
     def apply_diagnostics(self, diagnostics: Iterable[Diagnostic]) -> None:
         self._diagnostics = list(diagnostics)
