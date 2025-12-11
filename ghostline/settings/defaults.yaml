@@ -79,8 +79,9 @@ lsp:
   servers:
     python:
       primary:
-        command: "/usr/bin/pylsp"
-        args: []
+        command: "pyright-langserver"
+        args:
+          - "--stdio"
         enabled: true
       analyzers:
         - command: "ruff-lsp"

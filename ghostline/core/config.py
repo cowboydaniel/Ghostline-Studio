@@ -44,6 +44,9 @@ class ConfigManager:
         else:
             self.user_settings = {}
         self.settings = self._deep_merge(self.defaults, self.user_settings)
+        migrated = self._apply_migrations()
+        if migrated and USER_SETTINGS_PATH.exists():
+            self.save()
         self.workspace_memory_path = Path(self.settings.get("workspace_memory_path", WORKSPACE_MEMORY_PATH))
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
@@ -75,6 +78,42 @@ class ConfigManager:
             else:
                 merged[key] = value
         return merged
+
+    def _apply_migrations(self) -> bool:
+        """Update loaded settings to align with current defaults."""
+
+        changed = False
+        lsp_cfg = self.settings.get("lsp")
+        if isinstance(lsp_cfg, dict):
+            servers = lsp_cfg.get("servers")
+            if isinstance(servers, dict):
+                python_cfg = servers.get("python")
+                if isinstance(python_cfg, dict):
+                    changed |= self._migrate_python_lsp(python_cfg)
+        return changed
+
+    def _migrate_python_lsp(self, python_cfg: dict[str, Any]) -> bool:
+        desired_command = "pyright-langserver"
+        desired_args = ["--stdio"]
+        changed = False
+
+        if python_cfg.get("command"):
+            command = str(python_cfg.get("command"))
+            if "pylsp" in command:
+                python_cfg["command"] = desired_command
+                python_cfg["args"] = desired_args
+                changed = True
+
+        primary_cfg = python_cfg.get("primary")
+        if isinstance(primary_cfg, dict):
+            command = str(primary_cfg.get("command", ""))
+            if "pylsp" in command:
+                primary_cfg["command"] = desired_command
+                primary_cfg["args"] = desired_args
+                python_cfg["primary"] = primary_cfg
+                changed = True
+
+        return changed
 
     def self_healing_enabled(self) -> bool:
         """Flag for enabling the self-healing service."""

@@ -43,7 +43,7 @@ Ghostline Studio is structured as a platform: nearly every subsystem is modular,
 - Hover information
 - Formatting requests
 - Definition/navigation hooks
-- Backend-agnostic (supports pylsp, pyright, or any compliant server)
+- Backend-agnostic (supports pyright, pylsp, or any compliant server)
 
 ### Embedded Terminal
 - Cross-platform terminal widget
@@ -129,7 +129,7 @@ tests/                    – test suite
 - Python 3.10+
 - PySide6
 - Optional: `openai` Python client for the OpenAI backend
-- Optional: an LSP server (`pylsp`, `pyright`, etc.)
+- Optional: an LSP server (`pyright`, `pylsp`, etc.)
 - Optional: an AI backend (local or remote)
 
 ### Launch
@@ -140,7 +140,7 @@ python -m ghostline.main [path]
 
 `path` may be a file or directory to open on startup.
 
-> Default LSP settings expect `pylsp` on your `PATH`. Configure alternate language servers in `ghostline/settings/defaults.yaml` or your user settings file.
+> Default LSP settings expect `pyright-langserver` on your `PATH`. Configure alternate language servers in `ghostline/settings/defaults.yaml` or your user settings file.
 
 ---
 
