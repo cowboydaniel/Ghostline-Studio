@@ -99,7 +99,7 @@ class LSPClient(QObject):
             if line.lower().startswith("content-length"):
                 try:
                     content_length = int(line.split(":")[1].strip())
-                except ValueError:
+                except (ValueError, IndexError):
                     pass
         body_start = header_end + 4
         if len(data) < body_start + content_length:

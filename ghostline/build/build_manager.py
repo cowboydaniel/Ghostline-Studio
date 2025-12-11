@@ -9,6 +9,10 @@ from typing import Callable, Dict, Iterable, List
 
 from PySide6.QtCore import QObject, Signal
 
+from ghostline.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class BuildTask:
@@ -76,7 +80,14 @@ class BuildManager(QObject):
         self._emit_state()
 
     def _stream_output(self, name: str, process: subprocess.Popen) -> None:
-        assert process.stdout
+        if not process.stdout:
+            logger.error("Build task '%s' has no stdout stream available", name)
+            self.running.pop(name, None)
+            self._last_results[name] = -1
+            self.task_finished.emit(name, -1)
+            self._start_ready_tasks()
+            self._emit_state()
+            return
         for line in process.stdout:
             self.task_output.emit(name, line.rstrip())
         return_code = process.wait()

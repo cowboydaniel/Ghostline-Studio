@@ -5,6 +5,10 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 
+from ghostline.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class GitService:
     def __init__(self, workspace: str | None = None) -> None:
@@ -15,7 +19,14 @@ class GitService:
         try:
             result = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, check=True)
             return result.stdout.strip()
-        except Exception:
+        except subprocess.CalledProcessError as exc:
+            logger.debug("Git command failed: git %s (exit code %d): %s", " ".join(args), exc.returncode, exc.stderr)
+            return ""
+        except FileNotFoundError:
+            logger.error("Git executable not found. Please ensure git is installed and in PATH.")
+            return ""
+        except Exception as exc:
+            logger.error("Unexpected error running git command: %s", exc)
             return ""
 
     def set_workspace(self, workspace: Path | None) -> None:
