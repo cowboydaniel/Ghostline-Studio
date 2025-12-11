@@ -232,8 +232,7 @@ class PythonHighlighter(QSyntaxHighlighter):
             return self._format_literal, pending_definition
         if name.startswith("__") and name.endswith("__"):
             return self._format_dunder, pending_definition
-        if import_context:
-            return self._format_import, pending_definition
+        # import_context removed - module names should use variable color
         if type_hint_context and name[:1].isupper():
             return self._format_typehint, pending_definition
         if name in self._builtins:
