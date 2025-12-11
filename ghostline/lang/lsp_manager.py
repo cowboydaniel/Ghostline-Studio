@@ -1,6 +1,7 @@
 """Coordinator for language server clients."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -628,6 +629,9 @@ class LSPManager(QObject):
     def _configure_capabilities(self, client: LSPClient, capabilities: dict[str, Any]) -> None:
         language = getattr(client, "language", "unknown")
         logger.info("[%s] Configuring LSP server capabilities", language)
+
+        # Log the full capabilities for debugging
+        logger.debug("[%s] Full server capabilities: %s", language, json.dumps(capabilities, indent=2) if isinstance(capabilities, dict) else str(capabilities))
 
         semantic_provider = capabilities.get("semanticTokensProvider") if isinstance(capabilities, dict) else None
 
