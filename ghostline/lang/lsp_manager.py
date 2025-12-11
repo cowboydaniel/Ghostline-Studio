@@ -34,6 +34,7 @@ class LSPManager(QObject):
         self.clients: dict[str, dict[str, dict[str, LSPClient]]] = {}
         self._diag_callbacks: list[Callable[[list[Diagnostic]], None]] = []
         self._pending: dict[int, Callable[[dict], None]] = {}
+        self._semantic_request_meta: dict[int, dict[str, str]] = {}
         self._language_map = self._build_language_map()
         self._ensure_default_servers()
         self._reported_failures: set[str] = set()
@@ -209,6 +210,7 @@ class LSPManager(QObject):
         # Tag client with language for logging
         client.language = language
         client.semantic_tokens_capable = False
+        client.language = language
         client.semantic_tokens_legend: list[str] = []
         client.semantic_tokens_supports_full = False
         client.semantic_tokens_supports_range = False
@@ -590,6 +592,35 @@ class LSPManager(QObject):
 
     def _handle_response(self, message: Dict[str, Any]) -> None:
         request_id = message.get("id")
+        semantic_meta = self._semantic_request_meta.pop(request_id, None)
+        if semantic_meta is not None:
+            method = semantic_meta.get("method", "")
+            language = semantic_meta.get("language", "")
+            uri = semantic_meta.get("uri", "")
+            if "error" in message:
+                logger.info(
+                    "Semantic tokens response rejected for %s via %s on %s: %s",
+                    language,
+                    method,
+                    uri,
+                    message.get("error"),
+                )
+            else:
+                result = message.get("result")
+                token_count = 0
+                if isinstance(result, dict):
+                    data = result.get("data")
+                    token_count = len(data) if isinstance(data, list) else 0
+                    detail = f"{token_count} tokens" if token_count else "empty or missing data"
+                else:
+                    detail = "no result payload"
+                logger.info(
+                    "Semantic tokens response for %s via %s on %s: %s",
+                    language,
+                    method,
+                    uri,
+                    detail,
+                )
         if request_id in self._pending:
             callback = self._pending.pop(request_id)
             callback(message)
@@ -627,6 +658,21 @@ class LSPManager(QObject):
         client.semantic_tokens_supports_full = supports_full and bool(legend)
         client.semantic_tokens_supports_range = supports_range and bool(legend)
         client.semantic_tokens_capable = client.semantic_tokens_supports_full or client.semantic_tokens_supports_range
+        if client.semantic_tokens_capable:
+            logger.info(
+                "Semantic tokens supported for %s (full=%s, range=%s, legend=%d)",
+                language,
+                client.semantic_tokens_supports_full,
+                client.semantic_tokens_supports_range,
+                len(legend),
+            )
+        else:
+            logger.debug(
+                "Semantic tokens not supported for %s; provider=%s legend=%d",
+                language,
+                bool(semantic_provider),
+                len(legend),
+            )
 
         if client.semantic_tokens_capable:
             logger.info("[%s] ✓ Semantic tokens ENABLED", language)
