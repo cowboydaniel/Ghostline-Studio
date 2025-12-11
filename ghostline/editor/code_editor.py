@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Iterable, List
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QTimer, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -65,7 +65,7 @@ class PythonHighlighter(QSyntaxHighlighter):
         token_provider: SemanticTokenProvider | None = None,
     ) -> None:
         super().__init__(document)
-        self.theme = theme
+        self.theme = theme or ThemeManager()
         self.token_provider = token_provider
         self._token_cache: dict[int, list[tuple[int, int, QTextCharFormat]]] = {}
         self._token_cache_revision: int = -1
@@ -80,7 +80,7 @@ class PythonHighlighter(QSyntaxHighlighter):
 
     def _fmt(self, color_key: str, bold: bool = False) -> QTextCharFormat:
         fmt = QTextCharFormat()
-        fmt.setForeground(self.theme.syntax_color(color_key) if self.theme else QColor())
+        fmt.setForeground(self.theme.syntax_color(color_key))
         if bold:
             fmt.setFontWeight(QFont.Bold)
         return fmt
@@ -150,6 +150,7 @@ class PythonHighlighter(QSyntaxHighlighter):
             self._regex_fallback(text)
 
         self._token_cache_revision = revision
+        self.rehighlight()
 
     def _regex_fallback(self, text: str) -> None:
         lines = text.splitlines()
@@ -277,16 +278,23 @@ class CodeEditor(QPlainTextEdit):
         super().__init__(parent)
         self.path = path
         self.config = config
-        self.theme = theme
+        self.theme = theme or ThemeManager()
         self.lsp_manager = lsp_manager
         self._document_version = 0
         self._loading_document = False
+        self._lsp_document_opened = False
         self._diagnostics: list[Diagnostic] = []
         self._extra_cursors: list[QTextCursor] = []
         self._bracket_selection: list[QTextEdit.ExtraSelection] = []
         self._bracket_scope: tuple[int, int, int] | None = None
         self.breakpoints = BreakpointStore.instance()
         self._semantic_provider = SemanticTokenProvider("python", theme=self.theme)
+        self._lsp_sync_timer = QTimer(self)
+        self._lsp_sync_timer.setSingleShot(True)
+        self._lsp_sync_timer.timeout.connect(self._flush_lsp_change)
+        self._semantic_timer = QTimer(self)
+        self._semantic_timer.setSingleShot(True)
+        self._semantic_timer.timeout.connect(self._request_semantic_tokens)
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
@@ -715,12 +723,68 @@ class CodeEditor(QPlainTextEdit):
         if not requested:
             tokens = self._semantic_provider.custom_tokens(text)
             self._highlighter.set_semantic_tokens(tokens)
+            try:
+                self.lsp_manager.open_document(str(self.path), self.toPlainText())
+                self._document_version = max(self._document_version, 1)
+                self._lsp_document_opened = True
+            except RecursionError:
+                return
+
+    def _notify_lsp_change(self) -> None:
+        if not (self.lsp_manager and self.path):
+            return
+
+        # Guard against recursive logging/path handling in Python 3.12 by
+        # throttling updates through a single-shot timer.
+        if self._lsp_sync_timer.isActive():
+            self._lsp_sync_timer.stop()
+        self._lsp_sync_timer.start(120)
+
+    def _flush_lsp_change(self) -> None:
+        if not (self.lsp_manager and self.path):
+            return
+
+        try:
+            if not self._lsp_document_opened:
+                self._open_in_lsp()
+                return
+
+            self._document_version += 1
+            self.lsp_manager.change_document(
+                str(self.path), self.toPlainText(), self._document_version
+            )
+        except RecursionError:
+            return
+
+    def _refresh_semantic_tokens(self) -> None:
+        if self._semantic_timer.isActive():
+            self._semantic_timer.stop()
+        self._semantic_timer.start(150)
+
+    def _request_semantic_tokens(self) -> None:
+        if not self.lsp_manager or not self.path:
+            tokens = self._semantic_provider.custom_tokens(self.toPlainText())
+            self._highlighter.set_semantic_tokens(tokens)
+            return
+
+        try:
+            if self.lsp_manager.supports_semantic_tokens(self.path):
+                if self.lsp_manager.request_semantic_tokens(
+                    self.path, callback=self._apply_semantic_tokens
+                ):
+                    return
+        except RecursionError:
+            return
+
+        tokens = self._semantic_provider.custom_tokens(self.toPlainText())
+        self._highlighter.set_semantic_tokens(tokens)
 
     def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
         tokens = SemanticTokenProvider.from_lsp(result, legend)
         if not tokens:
             tokens = self._semantic_provider.custom_tokens(self.toPlainText())
         self._highlighter.set_semantic_tokens(tokens)
+        self._highlighter.rehighlight()
 
     def _visible_range_params(self) -> dict | None:
         block = self.firstVisibleBlock()

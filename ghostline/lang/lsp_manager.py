@@ -436,6 +436,7 @@ class LSPManager(QObject):
 
     def supports_semantic_tokens(self, path: Any) -> bool:
         """Return True when the language server advertises semantic token support."""
+        """Check whether the active client exposes semantic token support."""
         normalized = self._normalize_path(path)
         if not normalized:
             return False

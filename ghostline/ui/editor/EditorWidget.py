@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 import ghostline.resources.resources_rc  # type: ignore  # noqa: F401
 from ghostline.core.events import CommandRegistry
 from ghostline.core.resources import load_icon
+from ghostline.core.theme import ThemeManager
 from ghostline.editor.code_editor import CodeEditor
 
 
@@ -36,13 +37,14 @@ class EditorWidget(QWidget):
     ) -> None:
         super().__init__(parent)
         self.command_registry = command_registry
+        self.theme = theme or ThemeManager()
 
         # Main editor
         self.editor = CodeEditor(
             path,
             parent=self,
             config=config,
-            theme=theme,
+            theme=self.theme,
             lsp_manager=lsp_manager,
             ai_client=ai_client,
         )
