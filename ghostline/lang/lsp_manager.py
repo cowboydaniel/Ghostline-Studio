@@ -1,6 +1,7 @@
 """Coordinator for language server clients."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -629,6 +630,9 @@ class LSPManager(QObject):
         language = getattr(client, "language", "unknown")
         logger.info("[%s] Configuring LSP server capabilities", language)
 
+        # Log the full capabilities for debugging
+        logger.debug("[%s] Full server capabilities: %s", language, json.dumps(capabilities, indent=2) if isinstance(capabilities, dict) else str(capabilities))
+
         semantic_provider = capabilities.get("semanticTokensProvider") if isinstance(capabilities, dict) else None
 
         if not semantic_provider:
@@ -677,7 +681,19 @@ class LSPManager(QObject):
         if client.semantic_tokens_capable:
             logger.info("[%s] ✓ Semantic tokens ENABLED", language)
         else:
-            logger.warning("[%s] ✗ Semantic tokens DISABLED (no legend or unsupported)", language)
+            if language == "python":
+                logger.warning(
+                    "[%s] ✗ Semantic tokens DISABLED: Standard pyright does not support semantic tokens. "
+                    "Install basedpyright for semantic token support: pip install basedpyright",
+                    language
+                )
+                # Notify user about the limitation
+                self.lsp_notice.emit(
+                    "Python semantic tokens unavailable. Standard pyright does not support semantic tokens. "
+                    "Install basedpyright for enhanced syntax highlighting: pip install basedpyright"
+                )
+            else:
+                logger.warning("[%s] ✗ Semantic tokens DISABLED (no legend or unsupported)", language)
 
     def _emit_failure_diagnostic(self, language: str) -> None:
         if getattr(self, "_shutting_down", False):
