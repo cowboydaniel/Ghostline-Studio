@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from ghostline.core.config import ConfigManager
 from ghostline.core.logging import configure_logging, get_logger
 from ghostline.core.theme import ThemeManager
+from ghostline.core.resources import load_icon
 from ghostline.core import threads as _threads
 from ghostline.core.dependency_worker import DependencyWorker
 from ghostline.workspace.workspace_manager import WorkspaceManager
@@ -28,6 +29,7 @@ class GhostlineApplication:
         configure_logging()
         self.logger = get_logger(__name__)
         self.qt_app = QApplication(sys.argv)
+        self.qt_app.setWindowIcon(load_icon("ghostline_logo.svg"))
         
         def _on_about_to_quit() -> None:
             _threads.SHUTTING_DOWN = True
