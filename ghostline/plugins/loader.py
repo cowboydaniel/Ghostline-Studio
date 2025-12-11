@@ -11,6 +11,7 @@ from typing import Callable
 import yaml
 
 from ghostline.core.config import CONFIG_DIR
+from ghostline.core.logging import get_logger
 from ghostline.plugins.api import PluginContext
 
 PLUGIN_CONFIG_PATH = CONFIG_DIR / "plugins.yaml"
@@ -35,6 +36,7 @@ class PluginLoader:
         self.dock_host = dock_host
         self.plugins: list[PluginDefinition] = []
         self.event_bus: dict[str, list[Callable]] = {}
+        self.logger = get_logger(__name__)
         self._load_enabled_state()
 
     def discover(self) -> None:
@@ -74,7 +76,11 @@ class PluginLoader:
         module = importlib.util.module_from_spec(spec)
         loader = spec.loader
         assert isinstance(loader, importlib.abc.Loader)  # type: ignore[attr-defined]
-        loader.exec_module(module)  # type: ignore[arg-type]
+        try:
+            loader.exec_module(module)  # type: ignore[arg-type]
+        except Exception as exc:
+            self.logger.error("Failed to load plugin '%s' from %s: %s", plugin.name, plugin.path, exc)
+            return
         self._run_register(module, plugin)
 
     def _run_register(self, module: types.ModuleType, plugin: PluginDefinition) -> None:

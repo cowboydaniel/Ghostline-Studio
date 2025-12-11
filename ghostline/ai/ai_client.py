@@ -229,8 +229,8 @@ class AIClient:
 
         # Try launching the Ollama server
         try:
-            subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.logger.info("Started Ollama server with `ollama serve`.")
+            self._ollama_process = subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.logger.info("Started Ollama server with `ollama serve` (PID: %s).", self._ollama_process.pid)
         except Exception as exc:
             self.logger.error("Failed to start Ollama server: %s", exc)
             return
@@ -249,6 +249,7 @@ class AIClient:
         self.config = config
         self.logger = get_logger(__name__)
         self._http_error_counts: dict[str, int] = {}
+        self._ollama_process: subprocess.Popen | None = None
         ai_settings = self.config.get("ai", {}) if self.config else {}
         providers = ai_settings.get("providers", {}) if ai_settings else {}
         self.settings = SimpleNamespace(allow_openai=bool(ai_settings.get("allow_openai", True)))
