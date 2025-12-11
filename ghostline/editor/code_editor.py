@@ -414,7 +414,12 @@ class CodeEditor(QPlainTextEdit):
         if path and path.exists():
             self._load_file(path)
             self._open_in_lsp()
-        self._refresh_semantic_tokens()
+            # Request semantic tokens immediately on file open for instant highlighting
+            # instead of waiting for the delayed timer in _refresh_semantic_tokens()
+            self._request_semantic_tokens()
+        else:
+            # For new/empty files, use the delayed request
+            self._refresh_semantic_tokens()
 
     # Line number plumbing
     def line_number_area_width(self) -> int:
@@ -567,6 +572,13 @@ class CodeEditor(QPlainTextEdit):
                 self.setPlainText(handle.read())
         finally:
             self._loading_document = False
+
+        # Explicitly rebuild token cache to ensure syntax highlighting is applied immediately
+        # after loading. This is necessary because the highlighter is created before the file
+        # is loaded, and setPlainText() may not reliably trigger the contentsChange signal
+        # during initial setup.
+        if hasattr(self, '_highlighter') and self._highlighter:
+            self._highlighter._rebuild_token_cache()
 
     def save(self) -> None:
         if not self.path:
