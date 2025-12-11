@@ -108,6 +108,12 @@ class EditorTabs(QTabWidget):
         self.removeTab(index)
         self._preview_tabs.discard(index)
         self._preview_tabs = {i if i < index else i - 1 for i in self._preview_tabs}
+        tab_bar = self.tabBar()
+        if isinstance(tab_bar, EditorTabBar):
+            for i in range(tab_bar.count() + 1):
+                tab_bar.set_tab_preview(i, False)
+            for preview_index in self._preview_tabs:
+                tab_bar.set_tab_preview(preview_index, True)
         self.countChanged.emit(self.count())
 
     def _close_preview_tab(self) -> None:
@@ -118,6 +124,9 @@ class EditorTabs(QTabWidget):
     def _make_tab_permanent(self, index: int) -> None:
         if index in self._preview_tabs:
             self._preview_tabs.discard(index)
+            tab_bar = self.tabBar()
+            if isinstance(tab_bar, EditorTabBar):
+                tab_bar.set_tab_preview(index, False)
             widget = self.widget(index)
             if isinstance(widget, EditorWidget):
                 self._update_tab_text(index, widget.editor.path.name if widget.editor.path else "Untitled", preview=False)
