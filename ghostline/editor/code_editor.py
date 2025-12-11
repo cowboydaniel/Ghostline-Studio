@@ -23,7 +23,7 @@ from PySide6.QtGui import (
     QTextDocument,
     QPalette,
 )
-from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget, QToolTip
+from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget, QToolTip, QListWidget, QListWidgetItem
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.theme import ThemeManager
@@ -31,10 +31,94 @@ from ghostline.lang.diagnostics import Diagnostic
 from ghostline.lang.lsp_manager import LSPManager
 from ghostline.editor.folding import FoldingManager
 from ghostline.editor.minimap import MiniMap
-from ghostline.ai.ai_inline import InlineCompletionController
 from ghostline.debugger.breakpoints import BreakpointStore
 from ghostline.ai.ai_client import AIClient
 from ghostline.ui.editor.semantic_tokens import SemanticToken, SemanticTokenProvider
+
+
+class CompletionWidget(QListWidget):
+    """Popup widget for displaying LSP completions."""
+
+    def __init__(self, editor: "CodeEditor") -> None:
+        super().__init__(editor)
+        self.editor = editor
+        self.completion_items: list[dict] = []
+        self.completion_prefix = ""
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setMaximumHeight(200)
+        self.setMinimumWidth(300)
+        self.itemActivated.connect(self._insert_completion)
+        self.hide()
+
+    def show_completions(self, items: list[dict], prefix: str = "") -> None:
+        """Display completion items filtered by prefix."""
+        self.completion_items = items
+        self.completion_prefix = prefix
+        self.clear()
+
+        # Filter items by prefix
+        filtered_items = [
+            item for item in items
+            if prefix.lower() in item.get("label", "").lower()
+        ]
+
+        if not filtered_items:
+            self.hide()
+            return
+
+        for item in filtered_items[:20]:  # Limit to 20 items
+            label = item.get("label", "")
+            detail = item.get("detail", "")
+            display_text = f"{label}  {detail}" if detail else label
+            list_item = QListWidgetItem(display_text)
+            list_item.setData(Qt.ItemDataRole.UserRole, item)
+            self.addItem(list_item)
+
+        if self.count() > 0:
+            self.setCurrentRow(0)
+            # Position below cursor
+            cursor_rect = self.editor.cursorRect()
+            global_pos = self.editor.mapToGlobal(cursor_rect.bottomLeft())
+            self.move(global_pos)
+            self.show()
+            self.raise_()
+        else:
+            self.hide()
+
+    def _insert_completion(self, item: QListWidgetItem) -> None:
+        """Insert the selected completion item."""
+        completion_data = item.data(Qt.ItemDataRole.UserRole)
+        if not completion_data:
+            return
+
+        insert_text = completion_data.get("insertText") or completion_data.get("label", "")
+
+        # Remove the prefix that was already typed
+        cursor = self.editor.textCursor()
+        if self.completion_prefix:
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, len(self.completion_prefix))
+        cursor.insertText(insert_text)
+        self.editor.setTextCursor(cursor)
+        self.hide()
+
+    def select_next(self) -> None:
+        """Select next completion item."""
+        current = self.currentRow()
+        if current < self.count() - 1:
+            self.setCurrentRow(current + 1)
+
+    def select_previous(self) -> None:
+        """Select previous completion item."""
+        current = self.currentRow()
+        if current > 0:
+            self.setCurrentRow(current - 1)
+
+    def accept_current(self) -> None:
+        """Accept currently selected completion."""
+        current_item = self.currentItem()
+        if current_item:
+            self._insert_completion(current_item)
 
 
 class LineNumberArea(QWidget):
@@ -290,6 +374,11 @@ class CodeEditor(QPlainTextEdit):
         self._semantic_timer.timeout.connect(self._request_semantic_tokens)
         self._semantic_request_pending = False
         self._last_semantic_revision = -1
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(300)  # 300ms delay
+        self._hover_timer.timeout.connect(self._request_hover_at_mouse)
+        self._hover_position: QPoint | None = None
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
@@ -311,7 +400,8 @@ class CodeEditor(QPlainTextEdit):
         )
         self.folding = FoldingManager(self)
         self.minimap = MiniMap(self)
-        self.inline_ai = InlineCompletionController(self, self.config, ai_client)
+        self.completion_widget = CompletionWidget(self)
+        self.setMouseTracking(True)  # Enable mouse tracking for hover
 
         self._update_line_number_area_width(self.blockCount())
         if path and path.exists():
@@ -431,8 +521,6 @@ class CodeEditor(QPlainTextEdit):
     def paintEvent(self, event) -> None:  # type: ignore[override]
         super().paintEvent(event)
         self._paint_indent_guides()
-        if self.inline_ai:
-            self.inline_ai.paint_hint()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         if event.modifiers() & Qt.AltModifier:
@@ -443,6 +531,15 @@ class CodeEditor(QPlainTextEdit):
         super().mousePressEvent(event)
         self._extra_cursors.clear()
         self._highlight_current_line()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        """Track mouse position and trigger hover after 300ms delay."""
+        super().mouseMoveEvent(event)
+        self._hover_position = event.position().toPoint()
+        # Restart timer on every mouse movement
+        if self._hover_timer.isActive():
+            self._hover_timer.stop()
+        self._hover_timer.start()
 
     # File operations
     def _load_file(self, path: Path) -> None:
@@ -461,8 +558,26 @@ class CodeEditor(QPlainTextEdit):
 
     # Indentation helpers
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
-        if self.inline_ai and self.inline_ai.handle_key(event):
+        # Handle completion widget navigation
+        if self.completion_widget.isVisible():
+            if event.key() == Qt.Key_Down:
+                self.completion_widget.select_next()
+                return
+            elif event.key() == Qt.Key_Up:
+                self.completion_widget.select_previous()
+                return
+            elif event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Tab):
+                self.completion_widget.accept_current()
+                return
+            elif event.key() == Qt.Key_Escape:
+                self.completion_widget.hide()
+                return
+
+        # Trigger completions with Ctrl+Space
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key_Space:
+            self._request_completions()
             return
+
         if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_K:
             self._request_hover()
             return
@@ -824,6 +939,54 @@ class CodeEditor(QPlainTextEdit):
                 QToolTip.showText(self.mapToGlobal(self.cursorRect().bottomRight()), str(value))
 
         self.lsp_manager.request_hover(str(self.path), position, callback=_show_hover)
+
+    def _request_hover_at_mouse(self) -> None:
+        """Request hover info at the stored mouse position."""
+        if not (self.lsp_manager and self.path and self._hover_position):
+            return
+
+        cursor = self.cursorForPosition(self._hover_position)
+        position = {"line": cursor.blockNumber(), "character": cursor.columnNumber()}
+
+        def _show_hover(message: dict) -> None:
+            contents = message.get("result", {})
+            value = ""
+            if isinstance(contents, dict):
+                value = contents.get("contents", "")
+            elif isinstance(contents, str):
+                value = contents
+            if value and self._hover_position:
+                # Show tooltip at the mouse position
+                QToolTip.showText(self.mapToGlobal(self._hover_position), str(value))
+
+        self.lsp_manager.request_hover(str(self.path), position, callback=_show_hover)
+
+    def _request_completions(self) -> None:
+        """Request completions from LSP at current cursor position."""
+        if not (self.lsp_manager and self.path):
+            return
+
+        cursor = self.textCursor()
+        position = {"line": cursor.blockNumber(), "character": cursor.columnNumber()}
+
+        # Get the current word prefix for filtering
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        prefix = cursor.selectedText()
+
+        def _show_completions(message: dict) -> None:
+            result = message.get("result", {})
+            items = []
+
+            # Handle both CompletionList and list of CompletionItems
+            if isinstance(result, dict):
+                items = result.get("items", [])
+            elif isinstance(result, list):
+                items = result
+
+            if items:
+                self.completion_widget.show_completions(items, prefix)
+
+        self.lsp_manager.request_completions(str(self.path), position, callback=_show_completions)
 
     def apply_unified_patch(self, patch: str) -> None:
         """Apply a unified diff to the current buffer as a single undo step."""
