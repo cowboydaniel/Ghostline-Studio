@@ -125,10 +125,14 @@ class PythonHighlighter(QSyntaxHighlighter):
         return self._fmt("definition", True)
 
     def highlightBlock(self, text: str) -> None:  # type: ignore[override]
-        for start, length, fmt in self._token_cache.get(self.currentBlock().blockNumber(), []):
-            self.setFormat(start, length, fmt)
+        block_number = self.currentBlock().blockNumber()
+        block_tokens = self._token_cache.get(block_number)
 
-        line_tokens = self._semantic_tokens.get(self.currentBlock().blockNumber(), [])
+        if block_tokens:
+            for start, length, fmt in block_tokens:
+                self.setFormat(start, length, fmt)
+
+        line_tokens = self._semantic_tokens.get(block_number, [])
         for token in line_tokens:
             fmt = self._semantic_format(token.token_type)
             self.setFormat(token.start, token.length, fmt)
@@ -146,22 +150,11 @@ class PythonHighlighter(QSyntaxHighlighter):
             tokens = tokenize.generate_tokens(StringIO(text).readline)
             self._populate_token_cache(tokens)
         except (tokenize.TokenError, IndentationError, SyntaxError):
-            # Fall back to the simpler regex rules if tokenization breaks.
-            self._regex_fallback(text)
+            # Leave the cache empty on malformed code; semantic tokens still apply.
+            pass
 
         self._token_cache_revision = revision
         self.rehighlight()
-
-    def _regex_fallback(self, text: str) -> None:
-        lines = text.splitlines()
-        for line_no, line in enumerate(lines):
-            block_tokens: list[tuple[int, int, QTextCharFormat]] = []
-            for pattern, fmt in self.rules:
-                for match in pattern.finditer(line):
-                    start, end = match.span()
-                    block_tokens.append((start, end - start, fmt))
-            if block_tokens:
-                self._token_cache[line_no] = block_tokens
 
     def _populate_token_cache(self, tokens: Iterable[tokenize.TokenInfo]) -> None:
         pending_definition: str | None = None
@@ -736,11 +729,12 @@ class CodeEditor(QPlainTextEdit):
     def _request_semantic_tokens(self) -> None:
         if self._loading_document:
             return
-        text = self.toPlainText()
-        if not self.lsp_manager or not self.path:
-            tokens = self._semantic_provider.custom_tokens(text)
-            self._highlighter.set_semantic_tokens(tokens)
+        if not (self.lsp_manager and self.path):
+            self._highlighter.set_semantic_tokens([])
             return
+
+        if not self._lsp_document_opened:
+            self._open_in_lsp()
 
         try:
             if self.lsp_manager.supports_semantic_tokens(self.path):
@@ -749,18 +743,11 @@ class CodeEditor(QPlainTextEdit):
                     callback=self._apply_semantic_tokens,
                     range_params=self._visible_range_params(),
                 ):
-                    self._lsp_document_opened = True
                     return
         except RecursionError:
             return
 
-        tokens = self._semantic_provider.custom_tokens(text)
-        self._highlighter.set_semantic_tokens(tokens)
-        try:
-            if not self._lsp_document_opened:
-                self._open_in_lsp()
-        except RecursionError:
-            return
+        self._highlighter.set_semantic_tokens([])
 
     def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
         tokens = SemanticTokenProvider.from_lsp(result, legend)

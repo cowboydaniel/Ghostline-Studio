@@ -1,5 +1,4 @@
-"""
-Semantic token support for the code editor.
+"""Semantic token support for the code editor.
 
 This is a deliberately simple, safe implementation. It restores:
 
