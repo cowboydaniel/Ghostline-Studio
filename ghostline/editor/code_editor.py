@@ -288,6 +288,7 @@ class CodeEditor(QPlainTextEdit):
         self._semantic_timer = QTimer(self)
         self._semantic_timer.setSingleShot(True)
         self._semantic_timer.timeout.connect(self._request_semantic_tokens)
+        self._semantic_request_pending = False
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
@@ -727,7 +728,7 @@ class CodeEditor(QPlainTextEdit):
         self._semantic_timer.start(150)
 
     def _request_semantic_tokens(self) -> None:
-        if self._loading_document:
+        if self._loading_document or self._semantic_request_pending:
             return
         if not (self.lsp_manager and self.path):
             self._highlighter.set_semantic_tokens([])
@@ -743,6 +744,7 @@ class CodeEditor(QPlainTextEdit):
                     callback=self._apply_semantic_tokens,
                     range_params=self._visible_range_params(),
                 ):
+                    self._semantic_request_pending = True
                     return
         except RecursionError:
             return
@@ -750,11 +752,18 @@ class CodeEditor(QPlainTextEdit):
         self._highlighter.set_semantic_tokens([])
 
     def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
+        # Clear the pending flag
+        self._semantic_request_pending = False
+
+        # Check if highlighter still exists (may be deleted if editor closed)
+        if not hasattr(self, '_highlighter') or self._highlighter is None:
+            return
+
         tokens = SemanticTokenProvider.from_lsp(result, legend)
         if not tokens:
             tokens = self._semantic_provider.custom_tokens(self.toPlainText())
+        # set_semantic_tokens already calls rehighlight(), don't call it again
         self._highlighter.set_semantic_tokens(tokens)
-        self._highlighter.rehighlight()
 
     def _visible_range_params(self) -> dict | None:
         block = self.firstVisibleBlock()
