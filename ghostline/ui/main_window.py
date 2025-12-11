@@ -592,6 +592,8 @@ class MainWindow(QMainWindow):
     def _show_welcome_if_empty(self) -> None:
         workspace = self.workspace_manager.current_workspace
         if workspace:
+            workspace_str = str(workspace)
+            self._restore_workspace_tabs(workspace_str)
             self.central_stack.setCurrentWidget(self.editor_container)
             return
 
@@ -601,6 +603,14 @@ class MainWindow(QMainWindow):
 
         self.welcome_portal.set_recents(self.workspace_manager.recent_items)
         self.central_stack.setCurrentWidget(self.welcome_portal)
+
+    def _restore_workspace_tabs(self, workspace_str: str | None) -> None:
+        if not workspace_str:
+            return
+        workspace_sessions = self.config.settings.get("workspace_sessions", {})
+        session_state = workspace_sessions.get(workspace_str)
+        if session_state:
+            self.editor_tabs.restore_session_state(session_state)
 
     def _apply_initial_layout(self) -> None:
         optional_right = [
@@ -1282,8 +1292,8 @@ class MainWindow(QMainWindow):
         self.navigation_assistant.autoflow_enabled = new_mode == "active"
         self.status.show_message(f"Autoflow mode: {new_mode}")
 
-    def open_file(self, path: str) -> None:
-        editor = self.editor_tabs.add_editor_for_file(Path(path))
+    def open_file(self, path: str, *, preview: bool = False) -> None:
+        editor = self.editor_tabs.add_editor_for_file(Path(path), preview=preview)
         self.status.show_path(path)
         self.workspace_manager.register_recent(path)
         workspace = self.workspace_manager.current_workspace
@@ -1340,6 +1350,7 @@ class MainWindow(QMainWindow):
         self.plugin_loader.emit_event("workspace.opened", path=folder)
         self.task_manager.load_workspace_tasks()
         self.semantic_index.reindex()
+        self._restore_workspace_tabs(workspace_str)
         self.central_stack.setCurrentWidget(self.editor_container)
 
     def save_all(self) -> None:
@@ -1512,6 +1523,13 @@ class MainWindow(QMainWindow):
         geometry = self.saveGeometry()
         if isinstance(geometry, QByteArray):
             window_cfg["geometry"] = bytes(geometry.toHex()).decode("ascii")
+
+        workspace = self.workspace_manager.current_workspace
+        if workspace and hasattr(self, "editor_tabs"):
+            tab_session = self.editor_tabs.get_session_state()
+            workspace_sessions = self.config.settings.setdefault("workspace_sessions", {})
+            workspace_sessions[str(workspace)] = tab_session
+
         self.config.save()
         super().closeEvent(event)
 
