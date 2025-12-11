@@ -345,6 +345,7 @@ class MainWindow(QMainWindow):
         self.git_service = GitService(self.workspace_manager.current_workspace)
         self.first_run = not bool(self.config.get("first_run_completed", False))
         self._recent_files_by_workspace: dict[str, list[str]] = {}
+        self._restored_workspace: str | None = None
         self.left_docks: list[QDockWidget] = []
         self.bottom_docks: list[QDockWidget] = []
         self.right_docks: list[QDockWidget] = []
@@ -592,8 +593,6 @@ class MainWindow(QMainWindow):
     def _show_welcome_if_empty(self) -> None:
         workspace = self.workspace_manager.current_workspace
         if workspace:
-            workspace_str = str(workspace)
-            self._restore_workspace_tabs(workspace_str)
             self.central_stack.setCurrentWidget(self.editor_container)
             return
 
@@ -607,10 +606,13 @@ class MainWindow(QMainWindow):
     def _restore_workspace_tabs(self, workspace_str: str | None) -> None:
         if not workspace_str:
             return
+        if self._restored_workspace == workspace_str:
+            return
         workspace_sessions = self.config.settings.get("workspace_sessions", {})
         session_state = workspace_sessions.get(workspace_str)
         if session_state:
             self.editor_tabs.restore_session_state(session_state)
+        self._restored_workspace = workspace_str
 
     def _apply_initial_layout(self) -> None:
         optional_right = [
@@ -1468,6 +1470,7 @@ class MainWindow(QMainWindow):
 
     def _close_folder(self) -> None:
         self.workspace_manager.clear_workspace()
+        self._restored_workspace = None
         if hasattr(self, "project_model"):
             self.project_model.set_workspace_root(None)
         self._update_workspace_state()
