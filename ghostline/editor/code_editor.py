@@ -461,17 +461,27 @@ class CodeEditor(QPlainTextEdit):
 
     def _paint_line_numbers(self, event) -> None:
         painter = QPainter(self.line_number_area)
-        painter.fillRect(event.rect(), self.theme.color(QPalette.Base) if self.theme else QColor(40, 40, 40))
+        # VS Code Dark+ gutter background
+        gutter_bg = self.theme.editor_color("gutter_background") if self.theme else QColor(30, 30, 30)
+        painter.fillRect(event.rect(), gutter_bg)
 
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
         top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
         bottom = top + int(self.blockBoundingRect(block).height())
 
+        # Get current line number for highlighting
+        current_line = self.textCursor().blockNumber()
+
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 number = str(block_number + 1)
-                painter.setPen(self.theme.color(QPalette.Text) if self.theme else QColor(180, 180, 180))
+                # VS Code Dark+ line number colors: active vs inactive
+                if block_number == current_line:
+                    line_color = self.theme.editor_color("active_line_number") if self.theme else QColor(198, 198, 198)
+                else:
+                    line_color = self.theme.editor_color("line_number") if self.theme else QColor(133, 133, 133)
+                painter.setPen(line_color)
                 painter.drawText(
                     0,
                     top,
@@ -495,9 +505,10 @@ class CodeEditor(QPlainTextEdit):
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
 
-        # Vertical divider between gutter and code area.
+        # Vertical divider between gutter and code area - VS Code Dark+ style
         gutter_right = self.line_number_area.width() - 1
-        painter.setPen(self.theme.color(QPalette.Dark) if self.theme else QColor(55, 55, 60))
+        divider_color = self.theme.editor_color("gutter_divider") if self.theme else QColor(45, 45, 48)
+        painter.setPen(divider_color)
         painter.drawLine(gutter_right, event.rect().top(), gutter_right, event.rect().bottom())
 
     def _block_at_position(self, y: float):
@@ -620,10 +631,8 @@ class CodeEditor(QPlainTextEdit):
         extra_selections = []
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
-            line_color = self.theme.color(QPalette.AlternateBase) if self.theme else QColor(60, 65, 70)
-            # Softer, translucent band across the full width, Windsurf-style.
-            line_color = QColor(line_color)
-            line_color.setAlpha(80)
+            # VS Code Dark+ current line highlight color
+            line_color = QColor(101, 115, 126, 85)  # #65737E55 (RGBA)
             selection.format.setBackground(line_color)
             selection.format.setProperty(QTextFormat.FullWidthSelection, True)
             selection.cursor = self.textCursor()

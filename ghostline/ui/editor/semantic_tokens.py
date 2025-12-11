@@ -38,7 +38,10 @@ class SemanticTokenProvider:
         self._formats = self._build_formats()
 
     def _build_formats(self) -> dict[str, QTextCharFormat]:
-        """Precompute QTextCharFormats for known token types."""
+        """Precompute QTextCharFormats for known token types.
+
+        Maps LSP semantic tokens to VS Code Dark+ colors.
+        """
 
         def _fmt(color: QColor, bold: bool = False) -> QTextCharFormat:
             fmt = QTextCharFormat()
@@ -48,28 +51,44 @@ class SemanticTokenProvider:
             return fmt
 
         return {
+            # Types, classes, interfaces → #4EC9B0 (cyan/teal)
             "namespace": _fmt(self.theme.syntax_color("import")),
-            "type": _fmt(self.theme.syntax_color("typehint"), True),
-            "class": _fmt(self.theme.syntax_color("class"), True),
-            "enum": _fmt(self.theme.syntax_color("class"), True),
-            "interface": _fmt(self.theme.syntax_color("class"), True),
-            "struct": _fmt(self.theme.syntax_color("class"), True),
-            "typeParameter": _fmt(self.theme.syntax_color("typehint")),
-            "parameter": _fmt(self.theme.syntax_color("definition")),
-            "variable": _fmt(self.theme.syntax_color("definition")),
-            "property": _fmt(self.theme.syntax_color("definition")),
-            "enumMember": _fmt(self.theme.syntax_color("literal")),
-            "event": _fmt(self.theme.syntax_color("definition")),
-            "function": _fmt(self.theme.syntax_color("function"), True),
-            "method": _fmt(self.theme.syntax_color("function"), True),
-            "macro": _fmt(self.theme.syntax_color("definition")),
-            "keyword": _fmt(self.theme.syntax_color("keyword"), True),
+            "type": _fmt(self.theme.syntax_color("class")),
+            "class": _fmt(self.theme.syntax_color("class")),
+            "enum": _fmt(self.theme.syntax_color("class")),
+            "interface": _fmt(self.theme.syntax_color("class")),
+            "struct": _fmt(self.theme.syntax_color("class")),
+            "typeParameter": _fmt(self.theme.syntax_color("class")),
+
+            # Functions and methods → #DCDCAA (yellow)
+            "function": _fmt(self.theme.syntax_color("function")),
+            "method": _fmt(self.theme.syntax_color("function")),
+
+            # Variables, parameters, properties → #9CDCFE (light blue)
+            "parameter": _fmt(self.theme.syntax_color("variable")),
+            "variable": _fmt(self.theme.syntax_color("variable")),
+            "property": _fmt(self.theme.syntax_color("variable")),
+
+            # Constants and enum members → #4FC1FF (bright blue)
+            "enumMember": _fmt(self.theme.syntax_color("constant")),
+            "event": _fmt(self.theme.syntax_color("constant")),
+
+            # Keywords and modifiers → #569CD6 (blue) or #C586C0 (magenta)
+            "keyword": _fmt(self.theme.syntax_color("keyword")),
             "modifier": _fmt(self.theme.syntax_color("keyword")),
+            "macro": _fmt(self.theme.syntax_color("decorator")),
+
+            # Strings, numbers, comments
             "comment": _fmt(self.theme.syntax_color("comment")),
             "string": _fmt(self.theme.syntax_color("string")),
             "number": _fmt(self.theme.syntax_color("number")),
             "regexp": _fmt(self.theme.syntax_color("string")),
-            "operator": _fmt(self.theme.syntax_color("keyword")),
+
+            # Operators → #D4D4D4 (default foreground)
+            "operator": _fmt(self.theme.syntax_color("operator")),
+
+            # Decorators → #C586C0 (magenta)
+            "decorator": _fmt(self.theme.syntax_color("decorator")),
         }
 
     def format_for(self, token_type: str) -> QTextCharFormat:
@@ -81,7 +100,7 @@ class SemanticTokenProvider:
     def _build_default_format(self) -> QTextCharFormat:
         fmt = QTextCharFormat()
         if self.theme:
-            fmt.setForeground(self.theme.syntax_color("definition"))
+            fmt.setForeground(self.theme.syntax_color("variable"))
         return fmt
 
     def custom_tokens(self, text: str) -> List[SemanticToken]:

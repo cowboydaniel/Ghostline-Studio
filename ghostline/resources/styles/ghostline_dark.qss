@@ -1,14 +1,14 @@
-/* Ghostline Studio modern dark theme */
+/* Ghostline Studio - VS Code Dark+ theme */
 
 QWidget {
-    background-color: #15161a;
-    color: #e0e0e0;
-    selection-background-color: #2c3550;
+    background-color: #1E1E1E;
+    color: #D4D4D4;
+    selection-background-color: #264F78;
     selection-color: #ffffff;
 }
 
 QMainWindow {
-    background-color: #15161a;
+    background-color: #1E1E1E;
 }
 
 QDockWidget {
@@ -105,11 +105,11 @@ QTextEdit,
 QSpinBox,
 QDoubleSpinBox,
 QComboBox {
-    background-color: #1b1c24;
+    background-color: #1E1E1E;
     border-radius: 4px;
-    border: 1px solid #303342;
+    border: 1px solid #2D2D30;
     padding: 2px 4px;
-    selection-background-color: #2c3550;
+    selection-background-color: #264F78;
 }
 
 QComboBox::drop-down {
@@ -130,16 +130,16 @@ QComboBox::down-arrow {
 QTreeView,
 QListView,
 QTableView {
-    background-color: #15161a;
-    border: 1px solid #20222a;
-    alternate-background-color: #191b22;
-    selection-background-color: #27324a;
+    background-color: #1E1E1E;
+    border: 1px solid #2D2D30;
+    alternate-background-color: #252526;
+    selection-background-color: #264F78;
 }
 
 QTreeView::item:selected,
 QListView::item:selected,
 QTableView::item:selected {
-    background-color: #27324a;
+    background-color: #264F78;
     color: #ffffff;
 }
 
@@ -165,11 +165,11 @@ QTabWidget::pane {
 
 QTabBar {
     qproperty-drawBase: 0;
-    background-color: #15161a;
+    background-color: #1E1E1E;
 }
 
 QTabBar::tab {
-    background-color: #15161a;
+    background-color: #1E1E1E;
     color: #b3b3b3;
     padding: 6px 12px;  /* Increased from 4px 10px */
     margin-right: 1px;
@@ -198,7 +198,7 @@ QTabBar::tab:!selected {
 /* Scrollbars */
 
 QScrollBar:vertical {
-    background: #15161a;
+    background: #1E1E1E;
     width: 10px;
     margin: 0px;
 }
@@ -221,7 +221,7 @@ QScrollBar::sub-line:vertical {
 }
 
 QScrollBar:horizontal {
-    background: #15161a;
+    background: #1E1E1E;
     height: 10px;
     margin: 0px;
 }
@@ -243,18 +243,18 @@ QScrollBar::sub-line:horizontal {
     width: 0px;
 }
 
-/* Code editor specific */
+/* Code editor specific - Dark+ colors */
 
 CodeEditor {
-    background-color: #15161a;
+    background-color: #1E1E1E;
     border-radius: 6px;
-    border: 1px solid #20222a;
+    border: 1px solid #2D2D30;
 }
 
 #LineNumberArea {
-    background-color: #15161a;
-    color: #5c6070;
-    border-right: 1px solid #20222a;
+    background-color: #1E1E1E;
+    color: #858585;
+    border-right: 1px solid #2D2D30;
 }
 
 CodeEditor QPlainTextEdit {
@@ -281,13 +281,13 @@ CodeEditor QPlainTextEdit {
 /* Command palette */
 
 #CommandPalette {
-    background-color: #1b1c22;
+    background-color: #252526;
     border-radius: 6px;
-    border: 1px solid #2b2d34;
+    border: 1px solid #2D2D30;
 }
 
 #CommandPalette QLineEdit {
-    background-color: #15161a;
+    background-color: #1E1E1E;
 }
 
 #CommandPalette QListView {
@@ -297,13 +297,13 @@ CodeEditor QPlainTextEdit {
 /* AI dock */
 
 #AIDock {
-    background-color: #15161a;
+    background-color: #1E1E1E;
 }
 
 #AIDock QPlainTextEdit {
-    background-color: #15161a;
+    background-color: #1E1E1E;
     border-radius: 4px;
-    border: 1px solid #303342;
+    border: 1px solid #2D2D30;
 }
 
 /* Plugin manager, settings */
@@ -320,9 +320,9 @@ CodeEditor QPlainTextEdit {
 /* Inline completion popup */
 
 #InlineCompletionPopup {
-    background-color: #15161a;
+    background-color: #1E1E1E;
     border-radius: 4px;
-    border: 1px solid #303342;
+    border: 1px solid #2D2D30;
 }
 
 /* Tooltips */
@@ -337,7 +337,7 @@ QToolTip {
 /* Dialogs */
 
 QDialog {
-    background-color: #15161a;
+    background-color: #1E1E1E;
 }
 
 /* Labels inside status bar or small panels */
@@ -378,11 +378,11 @@ QHeaderView::section {
     border-bottom: 1px solid #2b2d34;
 }
 
-/* Minimap */
+/* Minimap - Dark+ colors (must match editor background) */
 
 #MiniMap {
-    background-color: #15161a;
-    border-left: 1px solid #20222a;
+    background-color: #1E1E1E;
+    border-left: 1px solid #2D2D30;
 }
 
 /* Splitter handle between editor and side panels */
@@ -400,15 +400,15 @@ QSplitter::handle:hover {
 
 #EditorArea {
     border-radius: 6px;
-    border: 1px solid #20222a;
-    background-color: #15161a;
+    border: 1px solid #2D2D30;
+    background-color: #1E1E1E;
 }
 
 /* Editor header (breadcrumbs + Run/Debug/Configure) */
 
 #EditorHeader {
-    background-color: #15161a;
-    border-bottom: 1px solid #20222a;
+    background-color: #1E1E1E;
+    border-bottom: 1px solid #2D2D30;
     min-height: 22px;
 }
 
