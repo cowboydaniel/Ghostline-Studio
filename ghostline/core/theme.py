@@ -36,25 +36,37 @@ class ThemeManager:
     def syntax_color(self, key: str) -> QColor:
         return self._syntax_colors.get(key, QColor(200, 200, 200))
 
+    def editor_color(self, key: str) -> QColor:
+        """Get editor-specific colors (line numbers, gutter, etc)."""
+        editor_colors = {
+            "line_number": QColor("#858585"),  # Inactive line numbers
+            "active_line_number": QColor("#C6C6C6"),  # Active line number
+            "gutter_background": QColor("#1E1E1E"),
+            "gutter_divider": QColor("#2D2D30"),
+        }
+        return editor_colors.get(key, QColor(200, 200, 200))
+
     def _build_dark_palette(self) -> QPalette:
         palette = QPalette()
-        palette.setColor(QPalette.Window, QColor("#15161a"))
-        palette.setColor(QPalette.WindowText, QColor("#e0e0e0"))
+        # VS Code Dark+ theme colors
+        palette.setColor(QPalette.Window, QColor("#1E1E1E"))
+        palette.setColor(QPalette.WindowText, QColor("#D4D4D4"))
         # Editor base and current line background
-        palette.setColor(QPalette.Base, QColor("#1a1b1f"))
-        palette.setColor(QPalette.AlternateBase, QColor("#22232a"))
-        palette.setColor(QPalette.ToolTipBase, QColor("#1e1f24"))
-        palette.setColor(QPalette.ToolTipText, QColor("#e0e0e0"))
-        palette.setColor(QPalette.Text, QColor("#e0e0e0"))
-        palette.setColor(QPalette.Button, QColor("#1e1f24"))
-        palette.setColor(QPalette.ButtonText, QColor("#e0e0e0"))
+        palette.setColor(QPalette.Base, QColor("#1E1E1E"))
+        # Current line highlight - using solid color, alpha applied in code_editor.py
+        palette.setColor(QPalette.AlternateBase, QColor("#282828"))  # Will have alpha applied
+        palette.setColor(QPalette.ToolTipBase, QColor("#1E1E1E"))
+        palette.setColor(QPalette.ToolTipText, QColor("#D4D4D4"))
+        palette.setColor(QPalette.Text, QColor("#D4D4D4"))
+        palette.setColor(QPalette.Button, QColor("#1E1E1E"))
+        palette.setColor(QPalette.ButtonText, QColor("#D4D4D4"))
         palette.setColor(QPalette.BrightText, QColor("#ffffff"))
-        palette.setColor(QPalette.Highlight, QColor("#4f8cff"))
+        palette.setColor(QPalette.Highlight, QColor("#264F78"))  # Selection background
         palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-        palette.setColor(QPalette.Link, QColor("#4f8cff"))
-        palette.setColor(QPalette.LinkVisited, QColor("#a68cff"))
+        palette.setColor(QPalette.Link, QColor("#569CD6"))
+        palette.setColor(QPalette.LinkVisited, QColor("#C586C0"))
         # Used for gutter divider etc
-        palette.setColor(QPalette.Dark, QColor("#111219"))
+        palette.setColor(QPalette.Dark, QColor("#1E1E1E"))
         return palette
 
     def _preferred_font(self) -> QFont:
@@ -97,17 +109,22 @@ class ThemeManager:
         return self._default_syntax_colors()
 
     def _default_syntax_colors(self) -> dict[str, QColor]:
+        # VS Code Dark+ theme syntax colors
         return {
-            "keyword": QColor("#bd93f9"),
-            "string": QColor("#98c379"),
-            "comment": QColor("#787878"),
-            "number": QColor("#d19a66"),
-            "builtin": QColor("#61afef"),
-            "definition": self._palette.color(QPalette.Highlight),
-            "function": QColor("#5ad4e6"),
-            "class": QColor("#73e0c9"),
-            "import": QColor("#c2b560"),
-            "literal": QColor("#b89cf6"),
-            "dunder": QColor("#7a7a7a"),
-            "typehint": QColor("#7cc7ff"),
+            "keyword": QColor("#569CD6"),  # Keywords (if, return, import, etc)
+            "string": QColor("#CE9178"),   # Strings (single, double, f-strings, docstrings)
+            "comment": QColor("#6A9955"),  # Comments
+            "number": QColor("#B5CEA8"),   # Numbers
+            "builtin": QColor("#4EC9B0"),  # Builtins / types (list, dict, type names)
+            "definition": QColor("#9CDCFE"), # Variables / identifiers
+            "function": QColor("#DCDCAA"),   # Function names
+            "class": QColor("#4EC9B0"),      # Class names
+            "import": QColor("#C586C0"),     # Import statements
+            "literal": QColor("#B5CEA8"),    # Literals (number literals, custom literals)
+            "dunder": QColor("#4EC9B0"),     # Dunder methods
+            "typehint": QColor("#4EC9B0"),   # Type hints
+            "decorator": QColor("#C586C0"),  # Decorators (@something)
+            "operator": QColor("#D4D4D4"),   # Operators (default foreground)
+            "variable": QColor("#9CDCFE"),   # Variables
+            "constant": QColor("#4FC1FF"),   # Constants / enum members
         }
