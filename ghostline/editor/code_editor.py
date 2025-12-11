@@ -696,41 +696,11 @@ class CodeEditor(QPlainTextEdit):
         if self.lsp_manager and self.path:
             self.lsp_manager.open_document(str(self.path), self.toPlainText())
             self._document_version = 1
+            self._lsp_document_opened = True
 
     def _notify_lsp_change(self) -> None:
         if self._loading_document:
             return
-        if not (self.lsp_manager and self.path):
-            return
-        self._document_version += 1
-        self.lsp_manager.change_document(str(self.path), self.toPlainText(), self._document_version)
-
-    def _refresh_semantic_tokens(self) -> None:
-        if self._loading_document:
-            return
-        text = self.toPlainText()
-        if not self.lsp_manager or not self.path:
-            self._highlighter.set_semantic_tokens(self._semantic_provider.custom_tokens(text))
-            return
-
-        def _handle_tokens(result: dict, legend: list[str]) -> None:
-            self._apply_semantic_tokens(result, legend)
-
-        range_params = self._visible_range_params()
-        requested = self.lsp_manager.request_semantic_tokens(
-            str(self.path), callback=_handle_tokens, range_params=range_params
-        )
-        if not requested:
-            tokens = self._semantic_provider.custom_tokens(text)
-            self._highlighter.set_semantic_tokens(tokens)
-            try:
-                self.lsp_manager.open_document(str(self.path), self.toPlainText())
-                self._document_version = max(self._document_version, 1)
-                self._lsp_document_opened = True
-            except RecursionError:
-                return
-
-    def _notify_lsp_change(self) -> None:
         if not (self.lsp_manager and self.path):
             return
 
@@ -741,6 +711,8 @@ class CodeEditor(QPlainTextEdit):
         self._lsp_sync_timer.start(120)
 
     def _flush_lsp_change(self) -> None:
+        if self._loading_document:
+            return
         if not (self.lsp_manager and self.path):
             return
 
@@ -762,22 +734,32 @@ class CodeEditor(QPlainTextEdit):
         self._semantic_timer.start(150)
 
     def _request_semantic_tokens(self) -> None:
+        if self._loading_document:
+            return
+        text = self.toPlainText()
         if not self.lsp_manager or not self.path:
-            tokens = self._semantic_provider.custom_tokens(self.toPlainText())
+            tokens = self._semantic_provider.custom_tokens(text)
             self._highlighter.set_semantic_tokens(tokens)
             return
 
         try:
             if self.lsp_manager.supports_semantic_tokens(self.path):
                 if self.lsp_manager.request_semantic_tokens(
-                    self.path, callback=self._apply_semantic_tokens
+                    self.path,
+                    callback=self._apply_semantic_tokens,
+                    range_params=self._visible_range_params(),
                 ):
                     return
         except RecursionError:
             return
 
-        tokens = self._semantic_provider.custom_tokens(self.toPlainText())
+        tokens = self._semantic_provider.custom_tokens(text)
         self._highlighter.set_semantic_tokens(tokens)
+        try:
+            if not self._lsp_document_opened:
+                self._open_in_lsp()
+        except RecursionError:
+            return
 
     def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
         tokens = SemanticTokenProvider.from_lsp(result, legend)
