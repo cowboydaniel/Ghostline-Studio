@@ -681,7 +681,19 @@ class LSPManager(QObject):
         if client.semantic_tokens_capable:
             logger.info("[%s] ✓ Semantic tokens ENABLED", language)
         else:
-            logger.warning("[%s] ✗ Semantic tokens DISABLED (no legend or unsupported)", language)
+            if language == "python":
+                logger.warning(
+                    "[%s] ✗ Semantic tokens DISABLED: Standard pyright does not support semantic tokens. "
+                    "Install basedpyright for semantic token support: pip install basedpyright",
+                    language
+                )
+                # Notify user about the limitation
+                self.lsp_notice.emit(
+                    "Python semantic tokens unavailable. Standard pyright does not support semantic tokens. "
+                    "Install basedpyright for enhanced syntax highlighting: pip install basedpyright"
+                )
+            else:
+                logger.warning("[%s] ✗ Semantic tokens DISABLED (no legend or unsupported)", language)
 
     def _emit_failure_diagnostic(self, language: str) -> None:
         if getattr(self, "_shutting_down", False):
