@@ -208,6 +208,7 @@ class LSPManager(QObject):
             self._emit_failure_diagnostic(language)
             return None
         client.semantic_tokens_capable = False
+        client.language = language
         client.semantic_tokens_legend: list[str] = []
         client.semantic_tokens_supports_full = False
         client.semantic_tokens_supports_range = False
@@ -504,18 +505,22 @@ class LSPManager(QObject):
             logger.debug("Bypassing semantic tokens request: invalid path %r", path)
             return False
         language = self._language_for_file(normalized)
-        client = self._get_client(language) if language else None
+        if not language:
+            logger.info("Semantic tokens bypassed: no language detected for %s", normalized)
+            return False
+        client = self._get_client(language)
         if not (client and getattr(client, "semantic_tokens_capable", False)):
             logger.info("Semantic tokens unsupported for language %s", language)
             return False
         uri = self._uri_for_path(normalized)
         if not uri:
-            logger.info("Semantic tokens bypassed for %s: missing URI", language)
+            logger.info("Semantic tokens bypassed for %s: missing URI for %s", language, normalized)
             return False
 
         legend = getattr(client, "semantic_tokens_legend", [])
         supports_range = getattr(client, "semantic_tokens_supports_range", False)
         supports_full = getattr(client, "semantic_tokens_supports_full", False)
+        requested_mode = "range" if range_params else "full"
         if range_params and supports_range:
             method = "textDocument/semanticTokens/range"
             params = {"textDocument": {"uri": uri}, "range": range_params}
@@ -524,7 +529,8 @@ class LSPManager(QObject):
             params = {"textDocument": {"uri": uri}}
         else:
             logger.info(
-                "Semantic tokens capabilities do not include requested mode for %s (range=%s, full=%s)",
+                "Semantic tokens capabilities do not include requested %s mode for %s (range=%s, full=%s)",
+                requested_mode,
                 language,
                 supports_range,
                 supports_full,
@@ -585,12 +591,15 @@ class LSPManager(QObject):
                 if isinstance(result, dict):
                     data = result.get("data")
                     token_count = len(data) if isinstance(data, list) else 0
+                    detail = f"{token_count} tokens" if token_count else "empty or missing data"
+                else:
+                    detail = "no result payload"
                 logger.info(
-                    "Semantic tokens response for %s via %s on %s: %d tokens",
+                    "Semantic tokens response for %s via %s on %s: %s",
                     language,
                     method,
                     uri,
-                    token_count,
+                    detail,
                 )
         if request_id in self._pending:
             callback = self._pending.pop(request_id)
@@ -609,20 +618,23 @@ class LSPManager(QObject):
             full_capability = semantic_provider.get("full")
             supports_full = bool(full_capability)
             supports_range = bool(semantic_provider.get("range"))
+        language = getattr(client, "language", "") or "(unknown)"
         client.semantic_tokens_legend = legend
         client.semantic_tokens_supports_full = supports_full and bool(legend)
         client.semantic_tokens_supports_range = supports_range and bool(legend)
         client.semantic_tokens_capable = client.semantic_tokens_supports_full or client.semantic_tokens_supports_range
         if client.semantic_tokens_capable:
             logger.info(
-                "Semantic tokens supported (full=%s, range=%s, legend=%d)",
+                "Semantic tokens supported for %s (full=%s, range=%s, legend=%d)",
+                language,
                 client.semantic_tokens_supports_full,
                 client.semantic_tokens_supports_range,
                 len(legend),
             )
         else:
             logger.debug(
-                "Semantic tokens not supported; provider=%s legend=%d",
+                "Semantic tokens not supported for %s; provider=%s legend=%d",
+                language,
                 bool(semantic_provider),
                 len(legend),
             )
