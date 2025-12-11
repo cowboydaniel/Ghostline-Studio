@@ -13,6 +13,7 @@ from ghostline.core.config import ConfigManager
 from ghostline.core.logging import configure_logging, get_logger
 from ghostline.core.theme import ThemeManager
 from ghostline.core import threads as _threads
+from ghostline.core.dependency_worker import DependencyWorker
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.ui.main_window import MainWindow
 from ghostline.ui.splash_screen import GhostlineSplash
@@ -39,6 +40,8 @@ class GhostlineApplication:
         self.workspace_manager = WorkspaceManager()
         self.main_window = MainWindow(self.config, self.theme, self.workspace_manager)
         self.splash: GhostlineSplash | None = None
+        self.dependency_worker: DependencyWorker | None = None
+        self._dependency_setup_success = True
 
     def _parse_args(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(description="Ghostline Studio")
@@ -46,12 +49,46 @@ class GhostlineApplication:
         return parser.parse_args()
 
     def _show_splash(self) -> None:
-        self.splash = GhostlineSplash()
+        self.splash = GhostlineSplash(wait_for_dependencies=True)
         self.splash.splashFinished.connect(self._on_splash_finished)
         self.splash.show()
         self.qt_app.processEvents()
 
+        # Start dependency installation in background
+        self._start_dependency_worker()
+
+    def _start_dependency_worker(self) -> None:
+        """Create and start the dependency worker thread."""
+        self.dependency_worker = DependencyWorker()
+        self.dependency_worker.progress.connect(self._on_dependency_progress)
+        self.dependency_worker.finished.connect(self._on_dependency_finished)
+        self.dependency_worker.start()
+
+    def _on_dependency_progress(self, message: str) -> None:
+        """Handle progress updates from dependency worker."""
+        if self.splash:
+            self.splash.update_status(message)
+
+    def _on_dependency_finished(self, success: bool) -> None:
+        """Handle completion of dependency setup."""
+        self._dependency_setup_success = success
+        if self.splash:
+            self.splash.mark_dependency_setup_complete(success)
+
+        if not success:
+            self.logger.warning("Dependency setup completed with errors")
+
     def _on_splash_finished(self) -> None:
+        # Show error dialog if dependency setup failed
+        if not self._dependency_setup_success:
+            QMessageBox.warning(
+                None,
+                "Dependency Setup Warning",
+                "Some dependencies could not be installed. "
+                "Ghostline Studio may not function correctly.\n\n"
+                "Check the log for details or run 'pip install --upgrade -r requirements.txt' manually.",
+            )
+
         initial_first_run = not bool(self.config.get("first_run_completed", False))
 
         if initial_first_run:
@@ -86,6 +123,13 @@ class GhostlineApplication:
     def cleanup(self) -> None:
         """Clean up resources in the correct order."""
         try:
+            # Stop dependency worker if still running
+            if hasattr(self, 'dependency_worker') and self.dependency_worker:
+                if self.dependency_worker.isRunning():
+                    self.dependency_worker.terminate()
+                    self.dependency_worker.wait(1000)
+                self.dependency_worker = None
+
             # Close main window first to trigger any pending operations
             if hasattr(self, 'main_window') and self.main_window:
                 self.main_window.close()

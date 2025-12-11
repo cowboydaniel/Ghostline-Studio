@@ -1,4 +1,4 @@
-"""Bootstrap script to ensure dependencies are available and launch Ghostline Studio."""
+"""Dependency installation module with progress reporting."""
 from __future__ import annotations
 
 import ast
@@ -8,18 +8,16 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path
-from typing import Iterable, Set
+from typing import Callable, Iterable, Set
 
 
 def project_root() -> Path:
     """Return the absolute path to the repository root."""
-
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def is_stdlib_module(name: str) -> bool:
     """Return True if ``name`` resolves to a standard library module."""
-
     try:
         spec = importlib.util.find_spec(name)
     except ModuleNotFoundError:
@@ -40,7 +38,6 @@ def is_stdlib_module(name: str) -> bool:
 
 def is_first_party_module(name: str, project_root: Path) -> bool:
     """Return True if the module comes from inside ``project_root``."""
-
     try:
         spec = importlib.util.find_spec(name)
     except ModuleNotFoundError:
@@ -78,7 +75,6 @@ IMPORT_TO_PIP_PACKAGE = {
 
 def _first_party_packages(root: Path) -> Set[str]:
     """Detect top-level first-party package names under ``root``."""
-
     packages: set[str] = set()
     for entry in root.iterdir():
         if entry.is_dir() and (entry / "__init__.py").exists():
@@ -89,7 +85,6 @@ def _first_party_packages(root: Path) -> Set[str]:
 
 def _discover_imports(py_file: Path) -> Set[str]:
     """Parse a Python file and return discovered top-level import names."""
-
     discovered: set[str] = set()
     try:
         source = py_file.read_text(encoding="utf-8", errors="ignore")
@@ -120,7 +115,6 @@ def _discover_imports(py_file: Path) -> Set[str]:
 
 def collect_dependencies(root: Path) -> Set[str]:
     """Collect third-party dependencies used in the project."""
-
     first_party = _first_party_packages(root)
     discovered: set[str] = set()
 
@@ -138,7 +132,6 @@ def collect_dependencies(root: Path) -> Set[str]:
 
 def filter_third_party_packages(names: set[str], project_root: Path) -> list[str]:
     """Filter import names down to likely third-party pip packages."""
-
     filtered: set[str] = set()
     for name in names:
         if not name or name.startswith("_"):
@@ -154,28 +147,37 @@ def filter_third_party_packages(names: set[str], project_root: Path) -> list[str
     return sorted(filtered)
 
 
-def pip_install_or_update(packages: Iterable[str]) -> bool:
+def pip_install_or_update(packages: Iterable[str], progress_callback: Callable[[str], None] | None = None) -> bool:
     """Install or update the given packages using pip.
 
-    Returns ``True`` when the pip command succeeds.
-    """
+    Args:
+        packages: Package names to install or update
+        progress_callback: Optional callback to report progress messages
 
+    Returns:
+        True when the pip command succeeds.
+    """
     package_list = sorted(set(packages))
     if not package_list:
         return True
 
+    if progress_callback:
+        progress_callback(f"Installing {len(package_list)} package(s)...")
+
     cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *package_list]
     try:
-        subprocess.check_call(cmd)
+        subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if progress_callback:
+            progress_callback("Dependencies installed successfully")
+        return True
     except subprocess.CalledProcessError as exc:
-        print(f"[Ghostline] Failed to install/update dependencies: {exc}", file=sys.stderr)
+        if progress_callback:
+            progress_callback(f"Failed to install dependencies: {exc}")
         return False
-    return True
 
 
 def _marker_path(root: Path) -> Path:
     """Return the marker file path used to remember dependency checks."""
-
     try:
         import platformdirs  # type: ignore
 
@@ -187,7 +189,6 @@ def _marker_path(root: Path) -> Path:
 
 def should_run_dep_check(root: Path) -> bool:
     """Determine whether dependency checks should run."""
-
     if os.environ.get("GHOSTLINE_SKIP_DEP_CHECK"):
         return False
 
@@ -201,64 +202,57 @@ def should_run_dep_check(root: Path) -> bool:
 
 def mark_dep_check_done(root: Path) -> None:
     """Write the marker file indicating dependency checks have run."""
-
     marker = _marker_path(root)
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.touch(exist_ok=True)
-    except OSError as exc:
-        print(f"[Ghostline] Unable to record dependency check marker: {exc}", file=sys.stderr)
+    except OSError:
+        pass
 
 
-def ensure_dependencies_installed() -> None:
-    """Discover and install required dependencies, handling failures gracefully."""
+def run_dependency_setup(progress_callback: Callable[[str], None] | None = None) -> bool:
+    """Main entry point for dependency setup with progress reporting.
 
+    Args:
+        progress_callback: Optional callback that receives progress messages
+
+    Returns:
+        True on success, False on failure
+    """
     root = project_root()
+
     if not should_run_dep_check(root):
-        return
+        if progress_callback:
+            progress_callback("Dependency check skipped")
+        return True
 
     try:
+        if progress_callback:
+            progress_callback("Scanning project for dependencies...")
+
         names = collect_dependencies(root)
         packages = filter_third_party_packages(names, root)
     except Exception as exc:
-        print(f"[Ghostline] Failed to collect dependencies: {exc}", file=sys.stderr)
-        return
+        if progress_callback:
+            progress_callback(f"Failed to collect dependencies: {exc}")
+        return False
 
     if not packages:
+        if progress_callback:
+            progress_callback("No dependencies to install")
         if os.environ.get("GHOSTLINE_DEP_CHECK_ONCE"):
             mark_dep_check_done(root)
-        return
+        return True
 
-    print("[Ghostline] Checking Python dependencies...", file=sys.stderr)
+    if progress_callback:
+        progress_callback(f"Found {len(packages)} package(s) to check...")
+
     try:
-        success = pip_install_or_update(packages)
-        if success:
-            print("[Ghostline] Dependency check complete.", file=sys.stderr)
-    except Exception as exc:  # pragma: no cover - defensive
-        print(f"[Ghostline] Dependency installation encountered an error: {exc}", file=sys.stderr)
-    finally:
-        if os.environ.get("GHOSTLINE_DEP_CHECK_ONCE"):
+        success = pip_install_or_update(packages, progress_callback)
+        if success and os.environ.get("GHOSTLINE_DEP_CHECK_ONCE"):
             mark_dep_check_done(root)
-
-
-def launch_ghostline() -> None:
-    """Launch the Ghostline application."""
-
-    root = project_root()
-    os.chdir(root)
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-
-    from ghostline.main import main as run_main
-
-    raise SystemExit(run_main())
-
-
-def main() -> None:
-    # Dependency installation now happens during the splash screen phase
-    # See ghostline.app.GhostlineApplication._start_dependency_worker()
-    launch_ghostline()
-
-
-if __name__ == "__main__":
-    main()
+        return success
+    except Exception as exc:
+        if progress_callback:
+            progress_callback(f"Dependency installation error: {exc}")
+        return False
