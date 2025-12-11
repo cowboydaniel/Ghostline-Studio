@@ -1566,7 +1566,6 @@ class MainWindow(QMainWindow):
         self.activity_bar.explorerRequested.connect(
             lambda: self._show_and_raise_dock(getattr(self, "project_dock", None), "explorer")
         )
-        self.activity_bar.searchRequested.connect(self._focus_global_search)
         self.activity_bar.gitRequested.connect(
             lambda: self._show_and_raise_dock(getattr(self, "git_dock", None), "git")
         )
@@ -1585,8 +1584,6 @@ class MainWindow(QMainWindow):
         self.activity_bar.settingsRequested.connect(self._open_settings)
 
     def _focus_global_search(self) -> None:
-        if hasattr(self, "activity_bar"):
-            self.activity_bar.setActiveTool("search")
         query: str | None = None
         if hasattr(self, "title_bar") and hasattr(self.title_bar, "command_input"):
             query = self.title_bar.command_input.text()
@@ -1695,8 +1692,6 @@ class MainWindow(QMainWindow):
         return result
 
     def _open_global_search(self, initial_query: str | None = None) -> None:
-        if hasattr(self, "activity_bar"):
-            self.activity_bar.setActiveTool("search")
         if not hasattr(self, "_global_search_dialog"):
             self._global_search_dialog = GlobalSearchDialog(
                 lambda: str(self.workspace_manager.current_workspace) if self.workspace_manager.current_workspace else None,
