@@ -208,6 +208,8 @@ class LSPManager(QObject):
             return None
         client.semantic_tokens_capable = False
         client.semantic_tokens_legend: list[str] = []
+        client.semantic_tokens_supports_full = False
+        client.semantic_tokens_supports_range = False
         self._register_client_hooks(language, workspace, role, client)
         client.notification_received.connect(self._handle_notification)
         client.response_received.connect(self._handle_response)
@@ -433,11 +435,19 @@ class LSPManager(QObject):
         return request_id
 
     def supports_semantic_tokens(self, path: Any) -> bool:
-        """Return False to force the editor to use its local semantic token provider or none."""
-        return False
+        """Return True when the language server advertises semantic token support."""
+        normalized = self._normalize_path(path)
+        if not normalized:
+            return False
+        language = self._language_for_file(normalized)
+        client = self._get_client(language) if language else None
+        return bool(client and getattr(client, "semantic_tokens_capable", False))
 
     def request_semantic_tokens(
-        self, path: Any, callback: Callable[[dict, list[str]], None] | None = None
+        self,
+        path: Any,
+        callback: Callable[[dict, list[str]], None] | None = None,
+        range_params: dict | None = None,
     ) -> bool:
         normalized = self._normalize_path(path)
         if not normalized:
@@ -449,12 +459,21 @@ class LSPManager(QObject):
         uri = self._uri_for_path(normalized)
         if not uri:
             return False
-        request_id = client.send_request(
-            "textDocument/semanticTokens/full",
-            {"textDocument": {"uri": uri}},
-        )
+
+        legend = getattr(client, "semantic_tokens_legend", [])
+        supports_range = getattr(client, "semantic_tokens_supports_range", False)
+        supports_full = getattr(client, "semantic_tokens_supports_full", False)
+        if range_params and supports_range:
+            method = "textDocument/semanticTokens/range"
+            params = {"textDocument": {"uri": uri}, "range": range_params}
+        elif supports_full:
+            method = "textDocument/semanticTokens/full"
+            params = {"textDocument": {"uri": uri}}
+        else:
+            return False
+
+        request_id = client.send_request(method, params)
         if callback:
-            legend = getattr(client, "semantic_tokens_legend", [])
             self._pending[request_id] = lambda message: callback(message.get("result", {}), legend)
         return True
 
@@ -493,13 +512,20 @@ class LSPManager(QObject):
     def _configure_capabilities(self, client: LSPClient, capabilities: dict[str, Any]) -> None:
         semantic_provider = capabilities.get("semanticTokensProvider") if isinstance(capabilities, dict) else None
         legend: list[str] = []
+        supports_full = False
+        supports_range = False
         if isinstance(semantic_provider, dict):
             if isinstance(semantic_provider.get("legend"), dict):
                 legend = list(semantic_provider.get("legend", {}).get("tokenTypes", []))
             elif isinstance(semantic_provider.get("legend"), list):
                 legend = list(semantic_provider.get("legend", []))
+            full_capability = semantic_provider.get("full")
+            supports_full = bool(full_capability)
+            supports_range = bool(semantic_provider.get("range"))
         client.semantic_tokens_legend = legend
-        client.semantic_tokens_capable = bool(legend)
+        client.semantic_tokens_supports_full = supports_full and bool(legend)
+        client.semantic_tokens_supports_range = supports_range and bool(legend)
+        client.semantic_tokens_capable = client.semantic_tokens_supports_full or client.semantic_tokens_supports_range
 
     def _emit_failure_diagnostic(self, language: str) -> None:
         if getattr(self, "_shutting_down", False):
