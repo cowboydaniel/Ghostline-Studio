@@ -1,0 +1,22 @@
+<svg width="360" height="120" viewBox="0 0 360 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="ghostBody" x1="6" y1="12" x2="76" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6FF2D9"/>
+      <stop offset="1" stop-color="#6A7CFF"/>
+    </linearGradient>
+    <linearGradient id="ghostGlow" x1="22" y1="6" x2="86" y2="94" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#94FFF0" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#7C8CFF" stop-opacity="0.0"/>
+    </linearGradient>
+  </defs>
+  <rect width="360" height="120" rx="18" fill="#0B0F1A"/>
+  <path d="M26 14C14.5 14 5 23.5 5 35v26.8c0 4.5 5 7 8.4 3.8l3.8-3.6 4.2 3.9c1.3 1.2 3.3 1.2 4.6 0l4.2-3.9 4.2 3.9c1.3 1.2 3.3 1.2 4.6 0l4.2-3.9 4.2 3.9c3.2 3 8.4 0.6 8.4-3.8V35C56.8 23.5 47.4 14 36 14H26Z" fill="url(#ghostBody)" stroke="#CFFCF7" stroke-width="1.2"/>
+  <path d="M14 26c0-6 5.4-11 12-11h12c8 0 14.8 6.8 14.8 15.2v13c0 3-2.4 5.4-5.4 5.4H24.2" stroke="url(#ghostGlow)" stroke-width="2.4" stroke-linecap="round"/>
+  <circle cx="24.5" cy="33" r="2.8" fill="#0B0F1A"/>
+  <circle cx="39.5" cy="33" r="2.8" fill="#0B0F1A"/>
+  <path d="M27 43c2 1.4 5 1.4 7 0" stroke="#0B0F1A" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M98 39c0 17.6 12.6 32.2 29.6 34.7 21.6 3.2 38.4-10.5 42.2-26.7" stroke="#6FF2D9" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="8 6"/>
+  <text x="96" y="52" fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="800">GHOSTLINE</text>
+  <text x="98" y="82" fill="#7AC5FF" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700">STUDIO</text>
+  <path d="M98 88h128" stroke="#1EA7FF" stroke-width="2" stroke-linecap="round" stroke-opacity="0.6"/>
+</svg>

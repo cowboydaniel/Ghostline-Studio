@@ -1,0 +1,6 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M4 1.5H9.5L12.5 4.5V14.5H4V1.5Z" stroke="#A8A8A8" stroke-width="1.2" stroke-linejoin="round"/>
+  <path d="M9.5 1.5V4.5H12.5" stroke="#A8A8A8" stroke-width="1.2" stroke-linejoin="round"/>
+  <rect x="4.4" y="9.6" width="7.2" height="4" rx="0.9" fill="#FFB86C"/>
+  <text x="8" y="12.25" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="4.1" font-weight="700" fill="#1F2329">XML</text>
+</svg>
