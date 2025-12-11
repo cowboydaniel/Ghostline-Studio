@@ -65,7 +65,7 @@ class PythonHighlighter(QSyntaxHighlighter):
         token_provider: SemanticTokenProvider | None = None,
     ) -> None:
         super().__init__(document)
-        self.theme = theme
+        self.theme = theme or ThemeManager()
         self.token_provider = token_provider
         self._token_cache: dict[int, list[tuple[int, int, QTextCharFormat]]] = {}
         self._token_cache_revision: int = -1
@@ -80,7 +80,7 @@ class PythonHighlighter(QSyntaxHighlighter):
 
     def _fmt(self, color_key: str, bold: bool = False) -> QTextCharFormat:
         fmt = QTextCharFormat()
-        fmt.setForeground(self.theme.syntax_color(color_key) if self.theme else QColor())
+        fmt.setForeground(self.theme.syntax_color(color_key))
         if bold:
             fmt.setFontWeight(QFont.Bold)
         return fmt
@@ -278,7 +278,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__(parent)
         self.path = path
         self.config = config
-        self.theme = theme
+        self.theme = theme or ThemeManager()
         self.lsp_manager = lsp_manager
         self._document_version = 0
         self._diagnostics: list[Diagnostic] = []

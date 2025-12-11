@@ -34,7 +34,7 @@ class SemanticTokenProvider:
 
     def __init__(self, language: str, theme: ThemeManager | None = None) -> None:
         self.language = language
-        self.theme = theme
+        self.theme = theme or ThemeManager()
         self._formats = self._build_formats()
 
     def _build_formats(self) -> dict[str, QTextCharFormat]:
@@ -46,9 +46,6 @@ class SemanticTokenProvider:
             if bold:
                 fmt.setFontWeight(QFont.Weight.Bold)
             return fmt
-
-        if not self.theme:
-            return {}
 
         return {
             "namespace": _fmt(self.theme.syntax_color("import")),
@@ -79,9 +76,7 @@ class SemanticTokenProvider:
         """Return a QTextCharFormat for a semantic token type."""
         if token_type in self._formats:
             return self._formats[token_type]
-        if self.theme:
-            return self._formats.setdefault("default", self._build_default_format())
-        return QTextCharFormat()
+        return self._formats.setdefault("default", self._build_default_format())
 
     def _build_default_format(self) -> QTextCharFormat:
         fmt = QTextCharFormat()
