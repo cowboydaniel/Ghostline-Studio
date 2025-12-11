@@ -1,6 +1,10 @@
 """Enhanced code editor widget with line numbers and LSP integration."""
 from __future__ import annotations
 
+import builtins
+import keyword
+import tokenize
+from io import StringIO
 from pathlib import Path
 from typing import Iterable, List
 
@@ -51,7 +55,7 @@ class LineNumberArea(QWidget):
 
 
 class PythonHighlighter(QSyntaxHighlighter):
-    """Simple regex-based syntax highlighter for Python with semantic tokens."""
+    """Advanced Python syntax highlighter with semantic and token-based rules."""
 
     def __init__(
         self,
@@ -63,6 +67,9 @@ class PythonHighlighter(QSyntaxHighlighter):
         super().__init__(document)
         self.theme = theme
         self.token_provider = token_provider
+        self._token_cache: dict[int, list[tuple[int, int, QTextCharFormat]]] = {}
+        self._token_cache_revision: int = -1
+        self._builtins = set(dir(builtins))
         self._semantic_tokens: dict[int, list[SemanticToken]] = {}
         self._init_rules()
 
@@ -77,28 +84,7 @@ class PythonHighlighter(QSyntaxHighlighter):
         import re
 
         self.rules: List[tuple[object, QTextCharFormat]] = []
-        keywords = r"\b(" + "|".join(
-            [
-                "def",
-                "class",
-                "if",
-                "elif",
-                "else",
-                "while",
-                "for",
-                "try",
-                "except",
-                "finally",
-                "return",
-                "import",
-                "from",
-                "as",
-                "with",
-                "pass",
-                "yield",
-                "lambda",
-            ]
-        ) + r")\b"
+        keywords = r"\b(" + "|".join(keyword.kwlist) + r")\b"
         self.rules.append((re.compile(keywords), self._fmt("keyword", True)))
         self.rules.append((re.compile(r"#[^\n]*"), self._fmt("comment")))
         self.rules.append((re.compile(r"\b[0-9]+\b"), self._fmt("number")))
@@ -107,6 +93,20 @@ class PythonHighlighter(QSyntaxHighlighter):
         string_fmt = self._fmt("string")
         self.rules.append((re.compile(r"'(?:[^'\\]|\\.)*'"), string_fmt))
         self.rules.append((re.compile(r'"(?:[^"\\]|\\.)*"'), string_fmt))
+
+        # Token-based formats for richer highlighting.
+        self._format_keyword = self._fmt("keyword", True)
+        self._format_comment = self._fmt("comment")
+        self._format_string = self._fmt("string")
+        self._format_number = self._fmt("number")
+        self._format_builtin = self._fmt("builtin")
+        self._format_definition = self._fmt("definition", True)
+        self._format_function = self._fmt("function", True)
+        self._format_class = self._fmt("class", True)
+        self._format_import = self._fmt("import")
+        self._format_literal = self._fmt("literal")
+        self._format_dunder = self._fmt("dunder")
+        self._format_typehint = self._fmt("typehint")
 
     def set_semantic_tokens(self, tokens: List[SemanticToken]) -> None:
         self._semantic_tokens.clear()
@@ -120,15 +120,143 @@ class PythonHighlighter(QSyntaxHighlighter):
         return self._fmt("definition", True)
 
     def highlightBlock(self, text: str) -> None:  # type: ignore[override]
-        for pattern, fmt in self.rules:
-            for match in pattern.finditer(text):
-                start, end = match.span()
-                self.setFormat(start, end - start, fmt)
+        self._ensure_token_cache()
+
+        for start, length, fmt in self._token_cache.get(self.currentBlock().blockNumber(), []):
+            self.setFormat(start, length, fmt)
 
         line_tokens = self._semantic_tokens.get(self.currentBlock().blockNumber(), [])
         for token in line_tokens:
             fmt = self._semantic_format(token.token_type)
             self.setFormat(token.start, token.length, fmt)
+
+    def _ensure_token_cache(self) -> None:
+        revision = self.document().revision()
+        if revision == self._token_cache_revision:
+            return
+
+        self._token_cache.clear()
+        text = self.document().toPlainText()
+
+        try:
+            tokens = tokenize.generate_tokens(StringIO(text).readline)
+            self._populate_token_cache(tokens)
+        except (tokenize.TokenError, IndentationError, SyntaxError):
+            # Fall back to the simpler regex rules if tokenization breaks.
+            self._regex_fallback(text)
+
+        self._token_cache_revision = revision
+
+    def _regex_fallback(self, text: str) -> None:
+        lines = text.splitlines()
+        for line_no, line in enumerate(lines):
+            block_tokens: list[tuple[int, int, QTextCharFormat]] = []
+            for pattern, fmt in self.rules:
+                for match in pattern.finditer(line):
+                    start, end = match.span()
+                    block_tokens.append((start, end - start, fmt))
+            if block_tokens:
+                self._token_cache[line_no] = block_tokens
+
+    def _populate_token_cache(self, tokens: Iterable[tokenize.TokenInfo]) -> None:
+        pending_definition: str | None = None
+        decorator_next = False
+        type_hint_context = False
+        import_context = False
+
+        for token_info in tokens:
+            tok_type = token_info.type
+            tok_str = token_info.string
+
+            if tok_type in (tokenize.ENCODING, tokenize.ENDMARKER, tokenize.NL):
+                continue
+            if tok_type == tokenize.NEWLINE:
+                type_hint_context = False
+                import_context = False
+                decorator_next = False
+                continue
+
+            fmt: QTextCharFormat | None = None
+            if tok_type == tokenize.COMMENT:
+                fmt = self._format_comment
+            elif tok_type == tokenize.STRING:
+                fmt = self._format_string
+            elif tok_type == tokenize.NUMBER:
+                fmt = self._format_number
+            elif tok_type == tokenize.OP:
+                if tok_str == "@":
+                    decorator_next = True
+                if tok_str in {":", "->", "|"}:
+                    type_hint_context = True
+                elif tok_str not in {".", ",", "|"}:
+                    type_hint_context = False
+            elif tok_type == tokenize.NAME:
+                fmt, pending_definition = self._format_name(
+                    tok_str,
+                    pending_definition,
+                    decorator_next,
+                    import_context,
+                    type_hint_context,
+                )
+                decorator_next = False
+                if keyword.iskeyword(tok_str):
+                    import_context = tok_str in {"import", "from"}
+                    type_hint_context = tok_str in {"as"}
+                else:
+                    import_context = import_context and tok_str not in {"as"}
+
+            if fmt:
+                self._add_token_range(token_info.start, token_info.end, fmt)
+
+    def _format_name(
+        self,
+        name: str,
+        pending_definition: str | None,
+        decorator_next: bool,
+        import_context: bool,
+        type_hint_context: bool,
+    ) -> tuple[QTextCharFormat | None, str | None]:
+        if keyword.iskeyword(name):
+            pending = "class" if name == "class" else "def" if name == "def" else None
+            return self._format_keyword, pending
+
+        if pending_definition:
+            fmt = self._format_function if pending_definition == "def" else self._format_class
+            return fmt, None
+
+        if decorator_next:
+            return self._format_definition, None
+
+        if name in {"True", "False", "None"}:
+            return self._format_literal, pending_definition
+        if name.startswith("__") and name.endswith("__"):
+            return self._format_dunder, pending_definition
+        if import_context:
+            return self._format_import, pending_definition
+        if type_hint_context and name[:1].isupper():
+            return self._format_typehint, pending_definition
+        if name in self._builtins:
+            return self._format_builtin, pending_definition
+        return None, pending_definition
+
+    def _add_token_range(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        fmt: QTextCharFormat,
+    ) -> None:
+        start_line, start_col = start
+        end_line, end_col = end
+        for line in range(start_line - 1, end_line):
+            line_start = start_col if line == start_line - 1 else 0
+            line_end = end_col if line == end_line - 1 else self._line_length(line)
+            length = max(0, line_end - line_start)
+            if length:
+                self._token_cache.setdefault(line, []).append((line_start, length, fmt))
+
+    def _line_length(self, line: int) -> int:
+        block = self.document().findBlockByNumber(line)
+        return len(block.text()) if block.isValid() else 0
 
 
 class CodeEditor(QPlainTextEdit):
