@@ -2,8 +2,8 @@
 servers:
   python:
     primary:
-      command: "pylsp"
-      args: []
+      command: "pyright-langserver"
+      args: ["--stdio"]
     formatter:
       command: "black"
       args:
