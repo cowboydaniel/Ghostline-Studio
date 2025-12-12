@@ -204,8 +204,8 @@ class ClaudeBackend(HTTPBackend):
             if enabled:
                 self.model = enabled[0]
             else:
-                # Use the latest versioned Claude 3.5 Sonnet model (not -latest which is invalid)
-                self.model = "claude-3-5-sonnet-20241022"
+                # Always default to Haiku (fastest and most cost-effective)
+                self.model = "claude-haiku-4-5-20251001"
 
         # Log configuration for debugging
         has_api_key = bool(self.api_key)

@@ -357,7 +357,7 @@ class AISettingsDialog(QDialog):
 
                 url = "https://api.anthropic.com/v1/messages"
                 payload = {
-                    "model": "claude-3-5-sonnet-latest",
+                    "model": "claude-haiku-4-5-20251001",
                     "max_tokens": 10,
                     "messages": [{"role": "user", "content": "Hello"}],
                 }
@@ -386,10 +386,11 @@ class AISettingsDialog(QDialog):
 
     def _populate_claude_model_combo(self) -> None:
         """Populate the Claude model dropdown."""
+        # Claude 4.5 models only (Claude 3.x is deprecated)
         claude_models = [
-            "claude-3-5-sonnet-latest",
-            "claude-3-opus-latest",
-            "claude-3-haiku-latest",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-5-20250929",
+            "claude-opus-4-5-20251101",
         ]
 
         current_model = self.registry.last_used_model()
@@ -415,10 +416,11 @@ class AISettingsDialog(QDialog):
 
     def _rebuild_claude_model_rows(self) -> None:
         """Build the checkboxes for Claude models."""
+        # Claude 4.5 models only (Claude 3.x is deprecated)
         claude_models = [
-            ("claude-3-5-sonnet-latest", "Claude 3.5 Sonnet", "Fast, versatile model for most tasks"),
-            ("claude-3-opus-latest", "Claude 3 Opus", "Most capable model for complex tasks"),
-            ("claude-3-haiku-latest", "Claude 3 Haiku", "Fastest model for simple tasks"),
+            ("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "Fastest Claude model (default)"),
+            ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "Most capable Sonnet model"),
+            ("claude-opus-4-5-20251101", "Claude Opus 4.5", "Most capable Claude model"),
         ]
 
         # Clear existing rows

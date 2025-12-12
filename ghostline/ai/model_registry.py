@@ -181,9 +181,9 @@ class ModelRegistry:
         if "api_key" not in claude_cfg:
             claude_cfg["api_key"] = self._ai_settings().get("claude_api_key", "")
         if "enabled_models" not in claude_cfg:
-            claude_cfg["enabled_models"] = ["claude-3-5-sonnet-latest"]
+            claude_cfg["enabled_models"] = ["claude-haiku-4-5-20251001"]
         if "default_model" not in claude_cfg:
-            claude_cfg["default_model"] = "claude-3-5-sonnet-latest"
+            claude_cfg["default_model"] = "claude-haiku-4-5-20251001"
 
     def openai_models(self) -> list[ModelDescriptor]:
         cfg = self._openai_settings()
@@ -208,11 +208,11 @@ class ModelRegistry:
         cfg = self._claude_settings()
         enabled_ids = set(cfg.get("enabled_models", []))
 
-        # Hardcoded list of Claude models
+        # Claude 4.5 models only (Claude 3.x is deprecated)
         all_claude_models = [
-            ModelDescriptor("claude-3-5-sonnet-latest", "Claude 3.5 Sonnet", "claude", "code", True, "Fast, versatile model"),
-            ModelDescriptor("claude-3-opus-latest", "Claude 3 Opus", "claude", "code", True, "Most capable model"),
-            ModelDescriptor("claude-3-haiku-latest", "Claude 3 Haiku", "claude", "code", True, "Fastest model"),
+            ModelDescriptor("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "claude", "code", True, "Fastest Claude model (default)"),
+            ModelDescriptor("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "claude", "code", True, "Most capable Sonnet model"),
+            ModelDescriptor("claude-opus-4-5-20251101", "Claude Opus 4.5", "claude", "code", True, "Most capable Claude model"),
         ]
 
         for model in all_claude_models:
