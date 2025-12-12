@@ -153,15 +153,17 @@ class _SuggestionCard(QFrame):
         self.status_label.setObjectName("suggestionMeta")
         layout.addWidget(self.status_label)
 
-        logger.info(f"[DEBUG] About to create QTextEdit widget")
-        self.response_view = QTextEdit(self)
-        logger.info(f"[DEBUG] QTextEdit created successfully")
-        self.response_view.setReadOnly(True)
+        logger.info(f"[DEBUG] About to create response display widget")
+        # Use QLabel instead of QTextEdit to avoid QTextDocument threading issues
+        self.response_view = QLabel(self)
+        logger.info(f"[DEBUG] Response display widget created successfully")
+        self.response_view.setWordWrap(True)
+        self.response_view.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        self.response_view.setStyleSheet("QLabel { background: palette(base); border: 1px solid palette(mid); border-radius: 4px; padding: 8px; font-family: monospace; }")
         self.response_view.hide()
-        self.response_view.setPlaceholderText("AI-generated fix will appear here")
         self.response_view.setMinimumHeight(80)
         layout.addWidget(self.response_view)
-        logger.info(f"[DEBUG] QTextEdit added to layout")
+        logger.info(f"[DEBUG] Response display widget added to layout")
 
         # Actions
         actions = QHBoxLayout()
@@ -195,13 +197,13 @@ class _SuggestionCard(QFrame):
         self.accept_btn.setEnabled(False if running else self.accept_btn.isEnabled())
         if running:
             self.set_status("Sending prompt to AI…")
-        elif not self.response_view.toPlainText().strip():
+        elif not self.response_view.text().strip():
             self.set_status("")
 
     def show_response(self, text: str) -> None:
         """Display AI response text and enable acceptance."""
 
-        self.response_view.setPlainText(text)
+        self.response_view.setText(text)
         self.response_view.show()
         self.accept_btn.setEnabled(bool(text.strip()))
         self.set_status("Review the suggested fix and click Accept to apply it.")
@@ -209,7 +211,7 @@ class _SuggestionCard(QFrame):
     def show_error(self, text: str) -> None:
         """Display an error and disable acceptance."""
 
-        self.response_view.setPlainText(text)
+        self.response_view.setText(text)
         self.response_view.show()
         self.accept_btn.setEnabled(False)
         self.set_status("Could not fetch fix")
@@ -326,7 +328,7 @@ class SuggestionsPanel(QFrame):
 
         card = self._find_card(suggestion)
         if card:
-            card.response_view.setPlainText(text)
+            card.response_view.setText(text)
             card.response_view.show()
 
     def set_error(self, suggestion: ProactiveSuggestion, text: str) -> None:
