@@ -51,7 +51,9 @@ class HTTPBackend:
         self.model = ai_cfg.get("model", "")
         self.api_key = ai_cfg.get("api_key")
         self.temperature = ai_cfg.get("temperature", 0.2)
-        self.timeout = ai_cfg.get("timeout_seconds", 30)
+        # Default to None (no timeout) for AI generation which can take minutes
+        # Users can set ai.timeout_seconds in config if they want a timeout
+        self.timeout = ai_cfg.get("timeout_seconds")
         self._providers = providers
 
     def _headers(self) -> dict[str, str]:
@@ -394,7 +396,6 @@ class AIClient:
         self.config = config
         self.logger = get_logger(__name__)
         self._http_error_counts: dict[str, int] = {}
-        self._timeout_error_counts: dict[str, int] = {}
         self._ollama_process: subprocess.Popen | None = None
         ai_settings = self.config.get("ai", {}) if self.config else {}
         providers = ai_settings.get("providers", {}) if ai_settings else {}
@@ -528,28 +529,6 @@ class AIClient:
             return "Repeated authentication or routing failures detected; switched to the local echo fallback for this session."
         return None
 
-    def _record_timeout_error(self, backend: object) -> str | None:
-        """Track timeout errors and switch to DummyBackend after repeated failures."""
-        backend_name = getattr(backend, "name", None)
-        if not backend_name:
-            return None
-
-        count = self._timeout_error_counts.get(backend_name, 0) + 1
-        self._timeout_error_counts[backend_name] = count
-
-        if count > 2:
-            endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
-            dummy = DummyBackend(self.config)
-            setattr(dummy, "name", backend_name)
-            self._backends[backend_name] = dummy
-            self.logger.warning(
-                "Switching AI backend '%s' to DummyBackend after repeated timeout errors from %s.",
-                backend_name,
-                endpoint,
-            )
-            return "AI backend timed out multiple times; switched to local echo fallback for this session."
-        return None
-
     def send(self, prompt: str, context: str | None = None, model: ModelDescriptor | None = None) -> AIResponse:
         if self.disabled:
             return AIResponse(text="AI backend disabled due to previous errors.")
@@ -572,16 +551,10 @@ class AIClient:
             endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
             timeout_hint = f" after {timeout} seconds" if timeout else ""
             message = (
-                f"AI backend request to {endpoint} timed out"
-                f"{timeout_hint}. Ensure your Ollama server is running (try `ollama serve`)"
-                " and increase `ai.timeout_seconds` in settings if responses are slow."
+                f"AI backend request to {endpoint} timed out{timeout_hint}. "
+                "Set `ai.timeout_seconds` in settings to increase timeout (default: no timeout)."
             )
-            fallback_note = self._record_timeout_error(backend)
-            if fallback_note:
-                message = f"{message} {fallback_note}"
-                self.logger.warning(message)
-            else:
-                self.logger.error(message)
+            self.logger.error(message)
             return AIResponse(text=message)
         except URLError as exc:
             endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
