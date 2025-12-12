@@ -730,8 +730,8 @@ class AIClient:
         """Perform proactive analysis on file contents (backend-agnostic)."""
         self.logger.info("[Proactive] Starting analysis for %s (%d chars)", path, len(text))
 
-        # Skip if file is too large
-        if len(text) > 10000:
+        # Skip if file is too large (100k tokens ≈ 400k characters)
+        if len(text) > 400000:
             self.logger.info("[Proactive] Skipping %s - file too large (%d chars)", path, len(text))
             return
 
@@ -772,8 +772,8 @@ class AIClient:
                 return
 
             # For deeper analysis, check if backend supports it
-            # Only do expensive AI analysis for small files
-            if len(text) > 5000:
+            # Only do expensive AI analysis for files within token limit (100k tokens ≈ 400k chars)
+            if len(text) > 400000:
                 return
 
             # Check if backend can do AI analysis (has send method and API key)
@@ -802,7 +802,7 @@ LINE: Approximate line number (or 0 if file-wide)
 SEVERITY: info/warning/error
 
 Code:
-{text[:5000]}"""
+{text[:400000]}"""
 
             response = backend.send(prompt)
 
