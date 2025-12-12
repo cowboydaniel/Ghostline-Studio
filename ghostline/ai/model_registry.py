@@ -181,9 +181,9 @@ class ModelRegistry:
         if "api_key" not in claude_cfg:
             claude_cfg["api_key"] = self._ai_settings().get("claude_api_key", "")
         if "enabled_models" not in claude_cfg:
-            claude_cfg["enabled_models"] = ["claude-sonnet-4-5-20250929"]
+            claude_cfg["enabled_models"] = ["claude-haiku-4-5-20251001"]
         if "default_model" not in claude_cfg:
-            claude_cfg["default_model"] = "claude-sonnet-4-5-20250929"
+            claude_cfg["default_model"] = "claude-haiku-4-5-20251001"
 
     def openai_models(self) -> list[ModelDescriptor]:
         cfg = self._openai_settings()
@@ -208,14 +208,11 @@ class ModelRegistry:
         cfg = self._claude_settings()
         enabled_ids = set(cfg.get("enabled_models", []))
 
-        # Hardcoded list of Claude models (using versioned model IDs, not -latest)
+        # Claude 4.5 models only (Claude 3.x is deprecated)
         all_claude_models = [
-            ModelDescriptor("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "claude", "code", True, "Latest and most capable Sonnet model"),
+            ModelDescriptor("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "claude", "code", True, "Fastest Claude model (default)"),
+            ModelDescriptor("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "claude", "code", True, "Most capable Sonnet model"),
             ModelDescriptor("claude-opus-4-5-20251101", "Claude Opus 4.5", "claude", "code", True, "Most capable Claude model"),
-            ModelDescriptor("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "claude", "code", True, "Fastest Claude model"),
-            ModelDescriptor("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet", "claude", "code", True, "Previous generation Sonnet"),
-            ModelDescriptor("claude-3-opus-20240229", "Claude 3 Opus", "claude", "code", True, "Previous generation Opus"),
-            ModelDescriptor("claude-3-haiku-20240307", "Claude 3 Haiku", "claude", "code", True, "Previous generation Haiku"),
         ]
 
         for model in all_claude_models:
