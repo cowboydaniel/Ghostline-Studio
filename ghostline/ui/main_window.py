@@ -1125,6 +1125,7 @@ class MainWindow(QMainWindow):
         panel.set_open_documents_provider(self._open_document_payloads)
         panel.set_command_adapter(self.ai_command_adapter)
         panel.set_insert_handler(lambda code: self._with_editor(lambda e: e.insertPlainText(code)))
+        panel.set_patch_handler(self._apply_ai_suggestion_patch)
         dock.setWidget(panel)
         dock.setMinimumWidth(200)  # Reduced from 260 for small screens
         self._place_ai_dock(dock)
@@ -1431,6 +1432,38 @@ class MainWindow(QMainWindow):
             return None
         path: str | Path | None = editor.path if editor.path else "untitled"
         return (path, editor.toPlainText())
+
+    def _apply_ai_suggestion_patch(self, path: Path, patch: str) -> bool:
+        """Open a file and apply an AI-generated patch to the active editor."""
+
+        try:
+            self.open_file(str(path))
+        except Exception:  # noqa: BLE001
+            self.status.show_message(f"Unable to open {path} for AI fix")
+            return False
+
+        editor = self.get_current_editor()
+        if not editor:
+            self.status.show_message("No editor available to apply AI fix")
+            return False
+
+        applied = False
+        try:
+            editor.apply_unified_patch(patch)
+            applied = True
+        except Exception:  # noqa: BLE001
+            try:
+                editor.setPlainText(patch)
+                applied = True
+            except Exception:  # noqa: BLE001
+                applied = False
+
+        if applied:
+            self._sync_editor_to_index(editor)
+            self.status.show_message(f"Applied AI fix to {Path(path).name}")
+        else:
+            self.status.show_message("Could not apply AI patch; review the suggested changes")
+        return applied
 
     def _open_document_payloads(self) -> list[tuple[str | Path | None, str]]:
         payloads: list[tuple[str | Path | None, str]] = []
