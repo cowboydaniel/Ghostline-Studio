@@ -263,6 +263,7 @@ class SuggestionsPanel(QFrame):
 
     start_requested = Signal(ProactiveSuggestion)
     accept_requested = Signal(ProactiveSuggestion)
+    _response_ready = Signal(object, str)  # Internal signal for thread-safe response delivery
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -320,6 +321,9 @@ class SuggestionsPanel(QFrame):
         # Set size constraints - min height to be visible, max height to not take over the screen
         self.setMinimumHeight(60)
         self.setMaximumHeight(400)  # Allow up to 400px for suggestions panel
+
+        # Connect internal signal for thread-safe response delivery
+        self._response_ready.connect(self._set_response_ui_thread, Qt.QueuedConnection)
 
         self.hide()  # Hidden by default
 
@@ -426,14 +430,11 @@ class SuggestionsPanel(QFrame):
         logger.info(f"[PANEL_RESPONSE] Main thread: {main_thread.name} (ID: {main_thread.ident})")
         logger.info(f"[PANEL_RESPONSE] Is main thread: {current_thread == main_thread}")
 
-        # If not on main thread, queue to main thread
+        # If not on main thread, emit signal to queue to main thread
+        # Using Qt signal/slot is more reliable than QTimer from non-Qt threads
         if current_thread != main_thread:
-            logger.info("[PANEL_RESPONSE] Not on main thread, using QTimer to queue to UI thread")
-            # Capture values in default args to avoid lambda closure issues
-            def queue_response(sug=suggestion, txt=text):
-                logger.info(f"[PANEL_RESPONSE] QTimer callback executing for: {sug.title}")
-                self._set_response_ui_thread(sug, txt)
-            QTimer.singleShot(0, queue_response)
+            logger.info("[PANEL_RESPONSE] Not on main thread, emitting _response_ready signal")
+            self._response_ready.emit(suggestion, text)
             return
 
         logger.info("[PANEL_RESPONSE] Already on main thread, calling _set_response_ui_thread directly")
