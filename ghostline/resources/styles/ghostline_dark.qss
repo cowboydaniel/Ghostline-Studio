@@ -195,6 +195,17 @@ QTabBar::tab:!selected {
     margin-top: 1px;
 }
 
+/* EditorTabs uses custom painting for preview mode, so we clear the styles */
+#EditorTabs QTabBar::tab {
+    background-color: none;
+    color: none;
+    padding: none;
+    margin: none;
+    border: none;
+    border-radius: none;
+    min-width: none;
+}
+
 /* Scrollbars */
 
 QScrollBar:vertical {
