@@ -1372,7 +1372,8 @@ class AIChatPanel(QWidget):
             worker.deleteLater()
         if thread:
             thread.quit()
-            thread.wait()
+            # Don't call wait() from the main thread - let Qt handle cleanup asynchronously
+            # The thread is already connected to deleteLater() via thread.finished signal
 
     @Slot(ProactiveSuggestion)
     def _accept_suggestion_fix(self, suggestion: ProactiveSuggestion) -> None:
@@ -1793,8 +1794,11 @@ class AIChatPanel(QWidget):
     def _cleanup_thread(self, thread: QThread, worker: _AIRequestWorker) -> None:
         worker.deleteLater()
         thread.quit()
-        thread.wait()
-        thread.deleteLater()
+        # Don't call wait() from the main thread - let Qt handle cleanup asynchronously
+        if not thread.isFinished():
+            thread.finished.connect(thread.deleteLater)
+        else:
+            thread.deleteLater()
         if self._active_thread is thread:
             self._active_thread = None
         if self._active_worker is worker:
