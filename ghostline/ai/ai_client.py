@@ -379,22 +379,29 @@ class ClaudeBackend(HTTPBackend):
 
     def on_file_opened(self, path: Path, text: str) -> None:
         """Proactively analyze opened files for potential issues and suggestions."""
+        self.logger.info("[Proactive] on_file_opened called for %s (%d chars)", path, len(text))
+
         if not self.api_key:
+            self.logger.info("[Proactive] Skipping - no API key configured")
             return  # Skip if no API key configured
 
         # Skip if file is too large (>10k chars to avoid expensive API calls)
         if len(text) > 10000:
+            self.logger.info("[Proactive] Skipping %s - file too large (%d chars)", path, len(text))
             return
 
         # Only analyze code files
         code_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".go", ".rs", ".rb", ".php"}
         if path.suffix.lower() not in code_extensions:
+            self.logger.info("[Proactive] Skipping %s - not a code file (extension: %s)", path, path.suffix)
             return
 
         client = getattr(self, "_client", None)
         if not client:
+            self.logger.warning("[Proactive] No client reference found!")
             return
 
+        self.logger.info("[Proactive] Starting analysis for %s", path)
         try:
             # Quick static analysis to find potential issues
             suggestions = []
@@ -412,9 +419,13 @@ class ClaudeBackend(HTTPBackend):
                             severity="info"
                         )
                         suggestions.append(suggestion)
+                        self.logger.info("[Proactive] Found TODO/FIXME at line %d", i)
+
+            self.logger.info("[Proactive] Found %d static suggestions", len(suggestions))
 
             # Only send first few suggestions to avoid spam
             for suggestion in suggestions[:3]:
+                self.logger.info("[Proactive] Emitting suggestion: %s", suggestion.title)
                 client.signals.suggestion_ready.emit(suggestion)
 
             # If we found some low-hanging fruit, we're done
@@ -768,12 +779,19 @@ class AIClient:
 
     def on_file_opened(self, path: Path, text: str) -> None:
         """Public entry called from the UI thread when a file is opened."""
+        self.logger.info("[AIClient] on_file_opened called for %s (disabled=%s, active_model=%s)",
+                        path, self.disabled, self.active_model)
+
         if self.disabled:
+            self.logger.info("[AIClient] Skipping - client is disabled")
             return
 
         backend, backend_type = self._backend_for_model(self.active_model)
+        self.logger.info("[AIClient] Selected backend: %s (type: %s)", backend.__class__.__name__, backend_type)
+
         handler = getattr(backend, "on_file_opened", None)
         if not callable(handler):
+            self.logger.info("[AIClient] Backend has no callable on_file_opened handler")
             return
 
         if backend_type == "openai" and not self.settings.allow_openai:
