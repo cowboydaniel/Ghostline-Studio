@@ -54,7 +54,6 @@ class GhostlineApplication:
         self.splash = GhostlineSplash(wait_for_dependencies=True)
         self.splash.splashFinished.connect(self._on_splash_finished)
         self.splash.show()
-        self.qt_app.processEvents()
 
         # Start dependency installation in background
         self._start_dependency_worker()
