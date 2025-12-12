@@ -215,16 +215,34 @@ class _SuggestionCard(QFrame):
 
     def show_response(self, text: str) -> None:
         """Display AI response text and enable acceptance."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[CARD_RESPONSE] show_response called with {len(text)} chars")
+
         # Ensure we're on the UI thread
         app = QApplication.instance()
         if app and QThread.currentThread() is not app.thread():
+            logger.info("[CARD_RESPONSE] Not on UI thread, queuing to UI thread")
             QTimer.singleShot(0, lambda: self.show_response(text))
             return
 
+        logger.info(f"[CARD_RESPONSE] Setting text in response_view")
         self.response_view.setText(text)
+        logger.info(f"[CARD_RESPONSE] Calling show() on response_view")
         self.response_view.show()
+        logger.info(f"[CARD_RESPONSE] Enabling accept button")
         self.accept_btn.setEnabled(bool(text.strip()))
+        logger.info(f"[CARD_RESPONSE] Setting status message")
         self.set_status("Review the suggested fix and click Accept to apply it.")
+
+        # Force the card to update its size
+        logger.info(f"[CARD_RESPONSE] Forcing layout updates")
+        self.response_view.updateGeometry()
+        self.updateGeometry()
+        if self.parent():
+            self.parent().updateGeometry()
+
+        logger.info(f"[CARD_RESPONSE] Response display complete. Card geometry={self.geometry()}, response_view geometry={self.response_view.geometry()}, isVisible={self.response_view.isVisible()}, accept_btn enabled={self.accept_btn.isEnabled()}")
 
     def show_error(self, text: str) -> None:
         """Display an error and disable acceptance."""
@@ -397,16 +415,25 @@ class SuggestionsPanel(QFrame):
 
     def set_response(self, suggestion: ProactiveSuggestion, text: str) -> None:
         """Render AI response on the matching card."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[PANEL_RESPONSE] set_response called for: {suggestion.title}, text length: {len(text)}")
+
         # Ensure we're on the UI thread
         app = QApplication.instance()
         if app and QThread.currentThread() is not app.thread():
+            logger.info("[PANEL_RESPONSE] Not on UI thread, queuing to UI thread")
             QTimer.singleShot(0, lambda: self.set_response(suggestion, text))
             return
 
+        logger.info(f"[PANEL_RESPONSE] Looking for card with _find_card, total cards: {len(self._suggestion_cards)}")
         card = self._find_card(suggestion)
         if card:
+            logger.info(f"[PANEL_RESPONSE] Found card, calling set_running(False) and show_response")
             card.set_running(False)
             card.show_response(text)
+        else:
+            logger.error(f"[PANEL_RESPONSE] Card NOT found for suggestion: {suggestion.title}")
 
     def set_streaming_response(self, suggestion: ProactiveSuggestion, text: str) -> None:
         """Show in-progress AI output without toggling running state."""
@@ -435,9 +462,28 @@ class SuggestionsPanel(QFrame):
             card.show_error(text)
 
     def _find_card(self, suggestion: ProactiveSuggestion) -> _SuggestionCard | None:
-        for card in self._suggestion_cards:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[FIND_CARD] Looking for card matching: title={suggestion.title}, file={suggestion.file_path}, line={suggestion.line_number}")
+        logger.info(f"[FIND_CARD] Available cards: {len(self._suggestion_cards)}")
+
+        for i, card in enumerate(self._suggestion_cards):
+            logger.info(f"[FIND_CARD] Card {i}: title={card.suggestion.title}, file={card.suggestion.file_path}, line={card.suggestion.line_number}")
+            logger.info(f"[FIND_CARD] Card {i}: suggestion object id={id(card.suggestion)}, search object id={id(suggestion)}")
+            logger.info(f"[FIND_CARD] Card {i}: title match={card.suggestion.title == suggestion.title}, file match={card.suggestion.file_path == suggestion.file_path}, line match={card.suggestion.line_number == suggestion.line_number}")
+
             if card.suggestion == suggestion:
+                logger.info(f"[FIND_CARD] Found exact match at index {i}")
                 return card
+
+            # Also try matching by properties if object identity fails
+            if (card.suggestion.title == suggestion.title and
+                card.suggestion.file_path == suggestion.file_path and
+                card.suggestion.line_number == suggestion.line_number):
+                logger.info(f"[FIND_CARD] Found match by properties at index {i}")
+                return card
+
+        logger.error("[FIND_CARD] No matching card found")
         return None
 
 
