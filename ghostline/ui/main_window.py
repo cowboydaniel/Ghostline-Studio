@@ -1315,9 +1315,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, "doc_dock"):
             self.doc_dock.set_current_file(Path(path))
         ai_client = getattr(self, "ai_client", None)
+        logger.info("[MainWindow] ai_client exists: %s", ai_client is not None)
         if ai_client:
             try:
                 file_text = editor.toPlainText() if editor else Path(path).read_text(encoding="utf-8")
+                logger.info("[MainWindow] Calling ai_client.on_file_opened for %s (%d chars)", path, len(file_text))
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to capture file contents for AI backend on open: %s", path)
                 file_text = ""
