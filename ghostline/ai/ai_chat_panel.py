@@ -948,13 +948,28 @@ class _AIRequestWorker(QObject):
 
     @Slot()
     def run(self) -> None:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("[AI_WORKER] Worker.run() started")
+        logger.info(f"[AI_WORKER] Client: {self.client}")
+        logger.info(f"[AI_WORKER] Model: {self.model}")
+        logger.info(f"[AI_WORKER] Prompt length: {len(self.prompt)} chars")
+
         try:
             text = ""
+            logger.info("[AI_WORKER] Starting to stream from AI client")
+            chunk_count = 0
             for chunk in self.client.stream(self.prompt, context=self.context, model=self.model):
+                chunk_count += 1
+                logger.info(f"[AI_WORKER] Received chunk #{chunk_count}: {len(chunk)} chars")
                 text += chunk
                 self.partial.emit(chunk)
+            logger.info(f"[AI_WORKER] Stream complete. Total chunks: {chunk_count}, total length: {len(text)}")
             self.finished.emit(self.prompt, text)
         except Exception as exc:  # noqa: BLE001
+            logger.error(f"[AI_WORKER] Exception occurred: {type(exc).__name__}: {exc}")
+            import traceback
+            logger.error(f"[AI_WORKER] Traceback: {traceback.format_exc()}")
             self.failed.emit(str(exc))
 
 
@@ -1349,8 +1364,13 @@ class AIChatPanel(QWidget):
 
     @Slot(ProactiveSuggestion)
     def _start_suggestion_fix(self, suggestion: ProactiveSuggestion) -> None:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[AI_REQUEST] Starting fix for suggestion: {suggestion.title}")
+
         file_text = self._resolve_file_text(suggestion)
         if not file_text:
+            logger.error(f"[AI_REQUEST] Failed to load file content for {suggestion.file_path}")
             self.suggestions_panel.set_error(
                 suggestion, "Could not load file content for this suggestion."
             )
@@ -1358,6 +1378,13 @@ class AIChatPanel(QWidget):
 
         key = self._suggestion_key(suggestion)
         prompt = self._build_suggestion_prompt(suggestion, file_text)
+
+        # Log the full prompt being sent to AI
+        logger.info("[AI_REQUEST] ============ PROMPT START ============")
+        logger.info(f"[AI_REQUEST] {prompt}")
+        logger.info("[AI_REQUEST] ============ PROMPT END ============")
+        logger.info(f"[AI_REQUEST] Model: {self.current_model_descriptor}")
+
         self._suggestion_results[key] = ""
         self.suggestions_panel.set_status(suggestion, "Generating fix with AI…", running=True)
 
@@ -1378,12 +1405,19 @@ class AIChatPanel(QWidget):
             Qt.QueuedConnection,
         )
         thread.finished.connect(thread.deleteLater)
+
+        logger.info("[AI_REQUEST] Starting worker thread")
         thread.start()
+        logger.info("[AI_REQUEST] Worker thread started")
 
         self._suggestion_threads[key] = thread
         self._suggestion_workers[key] = worker
 
     def _on_suggestion_partial(self, suggestion: ProactiveSuggestion, chunk: str) -> None:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[AI_RESPONSE] Received chunk ({len(chunk)} chars): {chunk[:100]}...")
+
         key = self._suggestion_key(suggestion)
         current = self._suggestion_results.get(key, "") + chunk
         self._suggestion_results[key] = current
@@ -1391,12 +1425,23 @@ class AIChatPanel(QWidget):
         self.suggestions_panel.set_status(suggestion, "AI is preparing a fix…", running=True)
 
     def _on_suggestion_finished(self, suggestion: ProactiveSuggestion, text: str) -> None:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("[AI_RESPONSE] ============ FINAL RESPONSE START ============")
+        logger.info(f"[AI_RESPONSE] Total length: {len(text)} chars")
+        logger.info(f"[AI_RESPONSE] {text}")
+        logger.info("[AI_RESPONSE] ============ FINAL RESPONSE END ============")
+
         key = self._suggestion_key(suggestion)
         self._suggestion_results[key] = text
         self.suggestions_panel.set_response(suggestion, text)
         self._cleanup_suggestion_thread(key)
 
     def _on_suggestion_failed(self, suggestion: ProactiveSuggestion, error: str) -> None:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[AI_ERROR] Request failed: {error}")
+
         key = self._suggestion_key(suggestion)
         self.suggestions_panel.set_error(suggestion, f"AI error: {error}")
         self._cleanup_suggestion_thread(key)
