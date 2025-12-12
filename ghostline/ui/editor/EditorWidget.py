@@ -207,22 +207,22 @@ class EditorWidget(QWidget):
     def _update_toolbar_visibility(self) -> None:
         path = self._file_path()
         runnable = self._is_runnable()
-        
+
         print("\n=== Updating Toolbar Visibility ===")
         print(f"Current file: {path}")
         print(f"Is runnable: {runnable}")
         print(f"Run button enabled: {runnable}")
         print(f"Run button visible: {self.run_button.isVisible()}")
         print(f"Run button tooltip: {self.run_button.toolTip()}")
-        
+
+        # Set both visibility and enabled state
+        self.run_button.setVisible(runnable)
         self.run_button.setEnabled(runnable)
+        self.debug_button.setVisible(runnable)
         self.debug_button.setEnabled(runnable)
+        self.configure_button.setVisible(runnable)
         self.configure_button.setEnabled(runnable)
-        
-        # Force update the button's appearance
-        self.run_button.update()
-        self.run_button.repaint()
-        
+
         print("Toolbar visibility update complete\n")
 
     # Qt overrides ------------------------------------------------------
