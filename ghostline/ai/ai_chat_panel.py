@@ -416,24 +416,43 @@ class SuggestionsPanel(QFrame):
     def set_response(self, suggestion: ProactiveSuggestion, text: str) -> None:
         """Render AI response on the matching card."""
         import logging
+        import threading
         logger = logging.getLogger(__name__)
         logger.info(f"[PANEL_RESPONSE] set_response called for: {suggestion.title}, text length: {len(text)}")
 
-        # Ensure we're on the UI thread
-        app = QApplication.instance()
-        if app and QThread.currentThread() is not app.thread():
-            logger.info("[PANEL_RESPONSE] Not on UI thread, queuing to UI thread")
-            QTimer.singleShot(0, lambda: self.set_response(suggestion, text))
+        current_thread = threading.current_thread()
+        main_thread = threading.main_thread()
+        logger.info(f"[PANEL_RESPONSE] Current thread: {current_thread.name} (ID: {current_thread.ident})")
+        logger.info(f"[PANEL_RESPONSE] Main thread: {main_thread.name} (ID: {main_thread.ident})")
+        logger.info(f"[PANEL_RESPONSE] Is main thread: {current_thread == main_thread}")
+
+        # If not on main thread, queue to main thread
+        if current_thread != main_thread:
+            logger.info("[PANEL_RESPONSE] Not on main thread, using QTimer to queue to UI thread")
+            # Capture values in default args to avoid lambda closure issues
+            def queue_response(sug=suggestion, txt=text):
+                logger.info(f"[PANEL_RESPONSE] QTimer callback executing for: {sug.title}")
+                self._set_response_ui_thread(sug, txt)
+            QTimer.singleShot(0, queue_response)
             return
 
-        logger.info(f"[PANEL_RESPONSE] Looking for card with _find_card, total cards: {len(self._suggestion_cards)}")
+        logger.info("[PANEL_RESPONSE] Already on main thread, calling _set_response_ui_thread directly")
+        self._set_response_ui_thread(suggestion, text)
+
+    def _set_response_ui_thread(self, suggestion: ProactiveSuggestion, text: str) -> None:
+        """Actually set the response - guaranteed to be on UI thread."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[PANEL_RESPONSE_UI] _set_response_ui_thread called for: {suggestion.title}")
+        logger.info(f"[PANEL_RESPONSE_UI] Looking for card with _find_card, total cards: {len(self._suggestion_cards)}")
+
         card = self._find_card(suggestion)
         if card:
-            logger.info(f"[PANEL_RESPONSE] Found card, calling set_running(False) and show_response")
+            logger.info(f"[PANEL_RESPONSE_UI] Found card, calling set_running(False) and show_response")
             card.set_running(False)
             card.show_response(text)
         else:
-            logger.error(f"[PANEL_RESPONSE] Card NOT found for suggestion: {suggestion.title}")
+            logger.error(f"[PANEL_RESPONSE_UI] Card NOT found for suggestion: {suggestion.title}")
 
     def set_streaming_response(self, suggestion: ProactiveSuggestion, text: str) -> None:
         """Show in-progress AI output without toggling running state."""
