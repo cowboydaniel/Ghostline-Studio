@@ -62,9 +62,15 @@ class _SuggestionCard(QFrame):
     accept_requested = Signal(object)  # Emitted when user accepts the suggested fix
 
     def __init__(self, suggestion: ProactiveSuggestion, parent: QWidget | None = None) -> None:
+        import logging
+        import threading
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG] _SuggestionCard.__init__ called from thread {threading.current_thread().name} (ID: {threading.get_ident()})")
+
         super().__init__(parent)
         self.suggestion = suggestion
         self.setObjectName("suggestionCard")
+        logger.info(f"[DEBUG] _SuggestionCard basic setup complete")
 
         # Style based on severity
         border_colors = {
@@ -147,12 +153,15 @@ class _SuggestionCard(QFrame):
         self.status_label.setObjectName("suggestionMeta")
         layout.addWidget(self.status_label)
 
+        logger.info(f"[DEBUG] About to create QTextEdit widget")
         self.response_view = QTextEdit(self)
+        logger.info(f"[DEBUG] QTextEdit created successfully")
         self.response_view.setReadOnly(True)
         self.response_view.hide()
         self.response_view.setPlaceholderText("AI-generated fix will appear here")
         self.response_view.setMinimumHeight(80)
         layout.addWidget(self.response_view)
+        logger.info(f"[DEBUG] QTextEdit added to layout")
 
         # Actions
         actions = QHBoxLayout()
@@ -171,6 +180,8 @@ class _SuggestionCard(QFrame):
 
         actions.addStretch()
         layout.addLayout(actions)
+
+        logger.info(f"[DEBUG] _SuggestionCard.__init__ completed successfully")
 
     def set_status(self, text: str) -> None:
         """Update the status line below the meta info."""
@@ -249,20 +260,29 @@ class SuggestionsPanel(QFrame):
 
     def add_suggestion(self, suggestion: ProactiveSuggestion) -> None:
         """Add a new suggestion card."""
+        import logging
+        import threading
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG] add_suggestion called from thread {threading.current_thread().name} (ID: {threading.get_ident()})")
+
         # Don't add duplicates
         for card in self._suggestion_cards:
             if (card.suggestion.title == suggestion.title and
                 card.suggestion.file_path == suggestion.file_path and
                 card.suggestion.line_number == suggestion.line_number):
+                logger.info(f"[DEBUG] Duplicate suggestion found, skipping: {suggestion.title}")
                 return
 
+        logger.info(f"[DEBUG] Creating _SuggestionCard for: {suggestion.title}")
         card = _SuggestionCard(suggestion, self)
+        logger.info(f"[DEBUG] _SuggestionCard created successfully")
         card.dismissed.connect(self._on_card_dismissed)
         card.start_requested.connect(self.start_requested)
         card.accept_requested.connect(self.accept_requested)
         self.cards_layout.addWidget(card)
         self._suggestion_cards.append(card)
         self.show()
+        logger.info(f"[DEBUG] Suggestion card added and displayed")
 
     def _on_card_dismissed(self, suggestion: ProactiveSuggestion) -> None:
         """Remove a suggestion card when dismissed."""
@@ -1172,7 +1192,13 @@ class AIChatPanel(QWidget):
     @Slot(ProactiveSuggestion)
     def _on_suggestion_ready(self, suggestion: ProactiveSuggestion) -> None:
         """Handle incoming proactive suggestions from AI analysis."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG] _on_suggestion_ready called from thread {threading.current_thread().name} (ID: {threading.get_ident()})")
+        logger.info(f"[DEBUG] Main thread ID: {threading.main_thread().ident}")
+        logger.info(f"[DEBUG] Calling add_suggestion for: {suggestion.title}")
         self.suggestions_panel.add_suggestion(suggestion)
+        logger.info(f"[DEBUG] add_suggestion completed for: {suggestion.title}")
 
     def _suggestion_key(self, suggestion: ProactiveSuggestion) -> tuple[str, str | None, str]:
         line = str(suggestion.line_number) if suggestion.line_number is not None else None
