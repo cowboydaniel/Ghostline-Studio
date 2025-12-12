@@ -58,6 +58,8 @@ class _SuggestionCard(QFrame):
     """Card displaying a proactive AI suggestion."""
 
     dismissed = Signal(object)  # Emitted when card is dismissed
+    start_requested = Signal(object)  # Emitted when user wants the AI to fix the issue
+    accept_requested = Signal(object)  # Emitted when user accepts the suggested fix
 
     def __init__(self, suggestion: ProactiveSuggestion, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -140,9 +142,73 @@ class _SuggestionCard(QFrame):
         meta_label.setObjectName("suggestionMeta")
         layout.addWidget(meta_label)
 
+        # Status / response area
+        self.status_label = QLabel("", self)
+        self.status_label.setObjectName("suggestionMeta")
+        layout.addWidget(self.status_label)
+
+        self.response_view = QTextEdit(self)
+        self.response_view.setReadOnly(True)
+        self.response_view.hide()
+        self.response_view.setPlaceholderText("AI-generated fix will appear here")
+        self.response_view.setMinimumHeight(80)
+        layout.addWidget(self.response_view)
+
+        # Actions
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+
+        self.start_btn = QPushButton("Start", self)
+        self.start_btn.setCursor(Qt.PointingHandCursor)
+        self.start_btn.clicked.connect(lambda: self.start_requested.emit(self.suggestion))
+        actions.addWidget(self.start_btn)
+
+        self.accept_btn = QPushButton("Accept", self)
+        self.accept_btn.setCursor(Qt.PointingHandCursor)
+        self.accept_btn.setEnabled(False)
+        self.accept_btn.clicked.connect(lambda: self.accept_requested.emit(self.suggestion))
+        actions.addWidget(self.accept_btn)
+
+        actions.addStretch()
+        layout.addLayout(actions)
+
+    def set_status(self, text: str) -> None:
+        """Update the status line below the meta info."""
+
+        self.status_label.setText(text)
+
+    def set_running(self, running: bool) -> None:
+        """Disable/enable controls while a request is in flight."""
+
+        self.start_btn.setEnabled(not running)
+        self.accept_btn.setEnabled(False if running else self.accept_btn.isEnabled())
+        if running:
+            self.set_status("Sending prompt to AI…")
+        elif not self.response_view.toPlainText().strip():
+            self.set_status("")
+
+    def show_response(self, text: str) -> None:
+        """Display AI response text and enable acceptance."""
+
+        self.response_view.setPlainText(text)
+        self.response_view.show()
+        self.accept_btn.setEnabled(bool(text.strip()))
+        self.set_status("Review the suggested fix and click Accept to apply it.")
+
+    def show_error(self, text: str) -> None:
+        """Display an error and disable acceptance."""
+
+        self.response_view.setPlainText(text)
+        self.response_view.show()
+        self.accept_btn.setEnabled(False)
+        self.set_status("Could not fetch fix")
+
 
 class SuggestionsPanel(QFrame):
     """Panel that displays proactive AI suggestions."""
+
+    start_requested = Signal(ProactiveSuggestion)
+    accept_requested = Signal(ProactiveSuggestion)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -192,6 +258,8 @@ class SuggestionsPanel(QFrame):
 
         card = _SuggestionCard(suggestion, self)
         card.dismissed.connect(self._on_card_dismissed)
+        card.start_requested.connect(self.start_requested)
+        card.accept_requested.connect(self.accept_requested)
         self.cards_layout.addWidget(card)
         self._suggestion_cards.append(card)
         self.show()
@@ -216,6 +284,44 @@ class SuggestionsPanel(QFrame):
             card.deleteLater()
         self._suggestion_cards.clear()
         self.hide()
+
+    def set_status(self, suggestion: ProactiveSuggestion, message: str, running: bool = False) -> None:
+        """Update status text for a particular suggestion card."""
+
+        card = self._find_card(suggestion)
+        if card:
+            card.set_status(message)
+            card.set_running(running)
+
+    def set_response(self, suggestion: ProactiveSuggestion, text: str) -> None:
+        """Render AI response on the matching card."""
+
+        card = self._find_card(suggestion)
+        if card:
+            card.set_running(False)
+            card.show_response(text)
+
+    def set_streaming_response(self, suggestion: ProactiveSuggestion, text: str) -> None:
+        """Show in-progress AI output without toggling running state."""
+
+        card = self._find_card(suggestion)
+        if card:
+            card.response_view.setPlainText(text)
+            card.response_view.show()
+
+    def set_error(self, suggestion: ProactiveSuggestion, text: str) -> None:
+        """Render error on the matching card."""
+
+        card = self._find_card(suggestion)
+        if card:
+            card.set_running(False)
+            card.show_error(text)
+
+    def _find_card(self, suggestion: ProactiveSuggestion) -> _SuggestionCard | None:
+        for card in self._suggestion_cards:
+            if card.suggestion == suggestion:
+                return card
+        return None
 
 
 class _FloatingPopover(QFrame):
@@ -750,6 +856,7 @@ class AIChatPanel(QWidget):
         self.open_documents_provider = None
         self.command_adapter = None
         self.insert_handler = None
+        self.patch_handler = None
         self._last_chunks: list[ContextChunk] = []
         self._current_context_text: str = ""
         self._current_pins: list[ContextChunk] = []
@@ -760,6 +867,9 @@ class AIChatPanel(QWidget):
         self.available_models: list[ModelDescriptor] = []
         self._has_openai_key = bool(self.model_registry._openai_settings().get("api_key"))
         self.current_model_descriptor: ModelDescriptor | None = None
+        self._suggestion_threads: dict[tuple[str, str | None, str], QThread] = {}
+        self._suggestion_workers: dict[tuple[str, str | None, str], _AIRequestWorker] = {}
+        self._suggestion_results: dict[tuple[str, str | None, str], str] = {}
         self._refresh_models_background(initial=True)
         self.current_mode = "Code"
 
@@ -1024,6 +1134,8 @@ class AIChatPanel(QWidget):
 
         # Suggestions panel for proactive AI analysis
         self.suggestions_panel = SuggestionsPanel(self)
+        self.suggestions_panel.start_requested.connect(self._start_suggestion_fix)
+        self.suggestions_panel.accept_requested.connect(self._accept_suggestion_fix)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 40)
@@ -1050,6 +1162,9 @@ class AIChatPanel(QWidget):
     def set_insert_handler(self, handler) -> None:
         self.insert_handler = handler
 
+    def set_patch_handler(self, handler) -> None:
+        self.patch_handler = handler
+
     def set_command_adapter(self, adapter) -> None:
         self.command_adapter = adapter
 
@@ -1057,6 +1172,125 @@ class AIChatPanel(QWidget):
     def _on_suggestion_ready(self, suggestion: ProactiveSuggestion) -> None:
         """Handle incoming proactive suggestions from AI analysis."""
         self.suggestions_panel.add_suggestion(suggestion)
+
+    def _suggestion_key(self, suggestion: ProactiveSuggestion) -> tuple[str, str | None, str]:
+        line = str(suggestion.line_number) if suggestion.line_number is not None else None
+        return (str(suggestion.file_path), line, suggestion.title)
+
+    def _resolve_file_text(self, suggestion: ProactiveSuggestion) -> str | None:
+        """Prefer in-memory document content for the file backing a suggestion."""
+
+        if self.open_documents_provider:
+            for doc_path, text in self.open_documents_provider() or []:
+                if doc_path and Path(doc_path) == suggestion.file_path:
+                    return text
+
+        try:
+            return suggestion.file_path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
+    def _build_suggestion_prompt(self, suggestion: ProactiveSuggestion, file_text: str) -> str:
+        location = f"line {suggestion.line_number}" if suggestion.line_number else "the file"
+        return (
+            "You previously surfaced the following issue and should now fix it.\n"
+            f"Suggestion: {suggestion.title} — {suggestion.description}\n"
+            f"File: {suggestion.file_path}\n"
+            f"Focus on: {location}.\n"
+            "Return a unified diff patch (with --- and +++ headers) that applies the fix.\n"
+            "Do not include explanations or commentary—only the diff.\n"
+            "Base your edits on the exact file content provided below.\n"
+            "----- FILE START -----\n"
+            f"{file_text}\n"
+            "----- FILE END -----"
+        )
+
+    @Slot(ProactiveSuggestion)
+    def _start_suggestion_fix(self, suggestion: ProactiveSuggestion) -> None:
+        file_text = self._resolve_file_text(suggestion)
+        if not file_text:
+            self.suggestions_panel.set_error(
+                suggestion, "Could not load file content for this suggestion."
+            )
+            return
+
+        key = self._suggestion_key(suggestion)
+        prompt = self._build_suggestion_prompt(suggestion, file_text)
+        self._suggestion_results[key] = ""
+        self.suggestions_panel.set_status(suggestion, "Generating fix with AI…", running=True)
+
+        worker = _AIRequestWorker(self.client, prompt, None, self.current_model_descriptor)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.partial.connect(
+            lambda chunk: self._on_suggestion_partial(suggestion, chunk),
+            Qt.QueuedConnection,
+        )
+        worker.finished.connect(
+            lambda _prompt, text: self._on_suggestion_finished(suggestion, text),
+            Qt.QueuedConnection,
+        )
+        worker.failed.connect(
+            lambda error: self._on_suggestion_failed(suggestion, error),
+            Qt.QueuedConnection,
+        )
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+        self._suggestion_threads[key] = thread
+        self._suggestion_workers[key] = worker
+
+    def _on_suggestion_partial(self, suggestion: ProactiveSuggestion, chunk: str) -> None:
+        key = self._suggestion_key(suggestion)
+        current = self._suggestion_results.get(key, "") + chunk
+        self._suggestion_results[key] = current
+        self.suggestions_panel.set_streaming_response(suggestion, current)
+        self.suggestions_panel.set_status(suggestion, "AI is preparing a fix…", running=True)
+
+    def _on_suggestion_finished(self, suggestion: ProactiveSuggestion, text: str) -> None:
+        key = self._suggestion_key(suggestion)
+        self._suggestion_results[key] = text
+        self.suggestions_panel.set_response(suggestion, text)
+        self._cleanup_suggestion_thread(key)
+
+    def _on_suggestion_failed(self, suggestion: ProactiveSuggestion, error: str) -> None:
+        key = self._suggestion_key(suggestion)
+        self.suggestions_panel.set_error(suggestion, f"AI error: {error}")
+        self._cleanup_suggestion_thread(key)
+
+    def _cleanup_suggestion_thread(self, key: tuple[str, str | None, str]) -> None:
+        thread = self._suggestion_threads.pop(key, None)
+        worker = self._suggestion_workers.pop(key, None)
+        if worker:
+            worker.deleteLater()
+        if thread:
+            thread.quit()
+            thread.wait()
+
+    @Slot(ProactiveSuggestion)
+    def _accept_suggestion_fix(self, suggestion: ProactiveSuggestion) -> None:
+        if not self.patch_handler:
+            self.suggestions_panel.set_error(
+                suggestion, "No patch handler is configured to apply fixes."
+            )
+            return
+
+        key = self._suggestion_key(suggestion)
+        patch = self._suggestion_results.get(key, "").strip()
+        if not patch:
+            self.suggestions_panel.set_status(
+                suggestion, "Run the fix first to generate a patch."
+            )
+            return
+
+        applied = self.patch_handler(suggestion.file_path, patch)
+        if applied:
+            self.suggestions_panel.set_status(suggestion, "Applied fix to editor.")
+        else:
+            self.suggestions_panel.set_error(
+                suggestion, "Failed to apply AI fix. Review the patch manually."
+            )
 
     def _snapshot_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
         return [
