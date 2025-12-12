@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-from ghostline.ai.ai_client import AIClient
+from ghostline.ai.ai_client import AIClient, ProactiveSuggestion
 from ghostline.ai.context_engine import ContextChunk, ContextEngine
 from ghostline.ai.model_registry import ModelDescriptor, ModelRegistry
 
@@ -52,6 +52,170 @@ class ChatSession:
     title: str
     messages: list[ChatMessage]
     created_at: datetime
+
+
+class _SuggestionCard(QFrame):
+    """Card displaying a proactive AI suggestion."""
+
+    dismissed = Signal(object)  # Emitted when card is dismissed
+
+    def __init__(self, suggestion: ProactiveSuggestion, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.suggestion = suggestion
+        self.setObjectName("suggestionCard")
+
+        # Style based on severity
+        border_colors = {
+            "error": "#ff6b6b",
+            "warning": "#ffa500",
+            "info": "#4a9eff",
+        }
+        border_color = border_colors.get(suggestion.severity, "#4a9eff")
+
+        self.setStyleSheet(
+            f"""
+            QFrame#suggestionCard {{
+                background: palette(base);
+                border-left: 4px solid {border_color};
+                border-radius: 8px;
+                padding: 12px;
+            }}
+            QLabel#suggestionTitle {{
+                font-weight: 600;
+                font-size: 13px;
+            }}
+            QLabel#suggestionDescription {{
+                color: palette(dark);
+                font-size: 12px;
+            }}
+            QLabel#suggestionMeta {{
+                color: palette(mid);
+                font-size: 11px;
+            }}
+            QPushButton#dismissButton {{
+                background: transparent;
+                border: none;
+                color: palette(mid);
+                font-size: 18px;
+                padding: 2px 6px;
+            }}
+            QPushButton#dismissButton:hover {{
+                color: palette(dark);
+            }}
+            """
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+
+        # Header row with title and dismiss button
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(8)
+
+        title_label = QLabel(suggestion.title, self)
+        title_label.setObjectName("suggestionTitle")
+        header_layout.addWidget(title_label, 1)
+
+        dismiss_btn = QPushButton("×", self)
+        dismiss_btn.setObjectName("dismissButton")
+        dismiss_btn.setFixedSize(24, 24)
+        dismiss_btn.setCursor(Qt.PointingHandCursor)
+        dismiss_btn.clicked.connect(lambda: self.dismissed.emit(self.suggestion))
+        header_layout.addWidget(dismiss_btn, 0, Qt.AlignTop)
+
+        layout.addLayout(header_layout)
+
+        # Description
+        desc_label = QLabel(suggestion.description, self)
+        desc_label.setObjectName("suggestionDescription")
+        desc_label.setWordWrap(True)
+        layout.addWidget(desc_label)
+
+        # Meta info (file and line)
+        meta_parts = [suggestion.file_path.name]
+        if suggestion.line_number:
+            meta_parts.append(f"line {suggestion.line_number}")
+        meta_label = QLabel(" · ".join(meta_parts), self)
+        meta_label.setObjectName("suggestionMeta")
+        layout.addWidget(meta_label)
+
+
+class SuggestionsPanel(QFrame):
+    """Panel that displays proactive AI suggestions."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("suggestionsPanel")
+        self.setStyleSheet(
+            """
+            QFrame#suggestionsPanel {
+                background: transparent;
+                border: none;
+            }
+            QLabel#suggestionsPanelTitle {
+                font-weight: 600;
+                font-size: 12px;
+                color: palette(mid);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            """
+        )
+
+        self._suggestion_cards: list[_SuggestionCard] = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setSpacing(8)
+
+        # Header
+        header = QLabel("💡 AI Suggestions", self)
+        header.setObjectName("suggestionsPanelTitle")
+        layout.addWidget(header)
+
+        # Container for suggestion cards
+        self.cards_layout = QVBoxLayout()
+        self.cards_layout.setSpacing(8)
+        layout.addLayout(self.cards_layout)
+
+        self.hide()  # Hidden by default
+
+    def add_suggestion(self, suggestion: ProactiveSuggestion) -> None:
+        """Add a new suggestion card."""
+        # Don't add duplicates
+        for card in self._suggestion_cards:
+            if (card.suggestion.title == suggestion.title and
+                card.suggestion.file_path == suggestion.file_path and
+                card.suggestion.line_number == suggestion.line_number):
+                return
+
+        card = _SuggestionCard(suggestion, self)
+        card.dismissed.connect(self._on_card_dismissed)
+        self.cards_layout.addWidget(card)
+        self._suggestion_cards.append(card)
+        self.show()
+
+    def _on_card_dismissed(self, suggestion: ProactiveSuggestion) -> None:
+        """Remove a suggestion card when dismissed."""
+        for i, card in enumerate(self._suggestion_cards):
+            if card.suggestion == suggestion:
+                self.cards_layout.removeWidget(card)
+                card.deleteLater()
+                self._suggestion_cards.pop(i)
+                break
+
+        # Hide panel if no suggestions left
+        if not self._suggestion_cards:
+            self.hide()
+
+    def clear_all(self) -> None:
+        """Remove all suggestion cards."""
+        for card in self._suggestion_cards:
+            self.cards_layout.removeWidget(card)
+            card.deleteLater()
+        self._suggestion_cards.clear()
+        self.hide()
 
 
 class _FloatingPopover(QFrame):
@@ -858,12 +1022,19 @@ class AIChatPanel(QWidget):
         input_container_layout.addWidget(chips_row)
         input_container_layout.addWidget(self.input_bar)
 
+        # Suggestions panel for proactive AI analysis
+        self.suggestions_panel = SuggestionsPanel(self)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 40)
         layout.setSpacing(8)
         layout.addWidget(top_bar)
+        layout.addWidget(self.suggestions_panel)  # Add suggestions panel above transcript
         layout.addWidget(transcript_container, 1)
         layout.addWidget(input_container)
+
+        # Connect AI client signals to suggestions panel
+        self.client.signals.suggestion_ready.connect(self._on_suggestion_ready)
 
         self.plus_menu: _FloatingPopover | None = None
         self.mode_popover: _FloatingPopover | None = None
@@ -881,6 +1052,11 @@ class AIChatPanel(QWidget):
 
     def set_command_adapter(self, adapter) -> None:
         self.command_adapter = adapter
+
+    @Slot(ProactiveSuggestion)
+    def _on_suggestion_ready(self, suggestion: ProactiveSuggestion) -> None:
+        """Handle incoming proactive suggestions from AI analysis."""
+        self.suggestions_panel.add_suggestion(suggestion)
 
     def _snapshot_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
         return [
@@ -1103,6 +1279,7 @@ class AIChatPanel(QWidget):
             return
         self._store_current_chat()
         self.transcript_list.clear()
+        self.suggestions_panel.clear_all()  # Clear suggestions when starting new chat
         self._active_response_card = None
         self._active_response_text = ""
         self._current_messages = []

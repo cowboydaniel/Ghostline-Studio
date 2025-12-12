@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import subprocess
 import threading
@@ -15,6 +16,7 @@ from urllib import request
 from urllib.error import HTTPError, URLError
 
 from openai import OpenAI
+from PySide6.QtCore import QObject, Signal
 
 from ghostline.ai.model_registry import ModelDescriptor
 from ghostline.core.config import ConfigManager
@@ -25,6 +27,23 @@ from ghostline.ai.prompt_builder import PromptBuilder
 @dataclass
 class AIResponse:
     text: str
+
+
+@dataclass
+class ProactiveSuggestion:
+    """A suggestion generated from proactive file analysis."""
+
+    title: str
+    description: str
+    file_path: Path
+    line_number: int | None = None
+    severity: str = "info"  # "info", "warning", "error"
+
+
+class AIClientSignals(QObject):
+    """Qt signal emitter for AIClient events."""
+
+    suggestion_ready = Signal(ProactiveSuggestion)  # Emitted when a proactive suggestion is generated
 
 
 class DummyBackend:
@@ -359,9 +378,101 @@ class ClaudeBackend(HTTPBackend):
         return "".join(text_parts)
 
     def on_file_opened(self, path: Path, text: str) -> None:
-        """Hook for file-open events dispatched from the AI client."""
-        # Could implement context management here if needed
-        _ = (path, text)
+        """Proactively analyze opened files for potential issues and suggestions."""
+        if not self.api_key:
+            return  # Skip if no API key configured
+
+        # Skip if file is too large (>10k chars to avoid expensive API calls)
+        if len(text) > 10000:
+            return
+
+        # Only analyze code files
+        code_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".go", ".rs", ".rb", ".php"}
+        if path.suffix.lower() not in code_extensions:
+            return
+
+        client = getattr(self, "_client", None)
+        if not client:
+            return
+
+        try:
+            # Quick static analysis to find potential issues
+            suggestions = []
+
+            # Check for TODOs/FIXMEs
+            for i, line in enumerate(text.split('\n'), 1):
+                if re.search(r'\b(TODO|FIXME|XXX|HACK)\b', line, re.IGNORECASE):
+                    match = re.search(r'(TODO|FIXME|XXX|HACK)[:\s]+(.*)', line, re.IGNORECASE)
+                    if match:
+                        suggestion = ProactiveSuggestion(
+                            title=f"{match.group(1).upper()} found",
+                            description=match.group(2).strip()[:100] or "Action item needs attention",
+                            file_path=path,
+                            line_number=i,
+                            severity="info"
+                        )
+                        suggestions.append(suggestion)
+
+            # Only send first few suggestions to avoid spam
+            for suggestion in suggestions[:3]:
+                client.signals.suggestion_ready.emit(suggestion)
+
+            # If we found some low-hanging fruit, we're done
+            if len(suggestions) >= 2:
+                return
+
+            # Otherwise, ask Claude for deeper analysis (only for small files)
+            if len(text) > 5000:
+                return
+
+            prompt = f"""Analyze this {path.suffix[1:]} code file and provide 1-2 concise suggestions for improvement.
+Focus on:
+- Potential bugs or error handling issues
+- Security concerns (SQL injection, XSS, hardcoded secrets)
+- Performance issues
+- Code quality (complexity, readability)
+
+Format each suggestion as:
+TITLE: Brief title
+DESCRIPTION: One sentence description
+LINE: Approximate line number (or 0 if file-wide)
+SEVERITY: info/warning/error
+
+Code:
+{text[:5000]}"""
+
+            response = self.send(prompt)
+
+            # Parse Claude's response
+            if response and response.text:
+                self._parse_and_emit_suggestions(response.text, path, client)
+
+        except Exception as exc:
+            self.logger.debug("Error in proactive analysis for %s: %s", path, exc)
+
+    def _parse_and_emit_suggestions(self, text: str, path: Path, client) -> None:
+        """Parse suggestion format from Claude's response and emit signals."""
+        # Look for structured suggestions in the response
+        pattern = r'TITLE:\s*(.+?)\s*DESCRIPTION:\s*(.+?)\s*LINE:\s*(\d+)\s*SEVERITY:\s*(\w+)'
+        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+
+        for match in matches[:2]:  # Limit to 2 suggestions
+            title, description, line_str, severity = match
+            try:
+                line_num = int(line_str.strip())
+                if line_num == 0:
+                    line_num = None
+            except ValueError:
+                line_num = None
+
+            suggestion = ProactiveSuggestion(
+                title=title.strip()[:100],
+                description=description.strip()[:200],
+                file_path=path,
+                line_number=line_num,
+                severity=severity.strip().lower()
+            )
+            client.signals.suggestion_ready.emit(suggestion)
 
 
 class AIClient:
@@ -433,6 +544,7 @@ class AIClient:
     def __init__(self, config: ConfigManager) -> None:
         self.config = config
         self.logger = get_logger(__name__)
+        self.signals = AIClientSignals()  # Qt signal emitter for thread-safe UI updates
         self._http_error_counts: dict[str, int] = {}
         self._ollama_process: subprocess.Popen | None = None
         ai_settings = self.config.get("ai", {}) if self.config else {}
