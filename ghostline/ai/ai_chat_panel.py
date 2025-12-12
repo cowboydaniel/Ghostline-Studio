@@ -1146,7 +1146,8 @@ class AIChatPanel(QWidget):
         layout.addWidget(input_container)
 
         # Connect AI client signals to suggestions panel
-        self.client.signals.suggestion_ready.connect(self._on_suggestion_ready)
+        # Use QueuedConnection to ensure thread-safe updates from background AI analysis
+        self.client.signals.suggestion_ready.connect(self._on_suggestion_ready, Qt.QueuedConnection)
 
         self.plus_menu: _FloatingPopover | None = None
         self.mode_popover: _FloatingPopover | None = None
