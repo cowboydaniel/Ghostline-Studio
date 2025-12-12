@@ -204,7 +204,8 @@ class ClaudeBackend(HTTPBackend):
             if enabled:
                 self.model = enabled[0]
             else:
-                self.model = "claude-3-5-sonnet-latest"
+                # Use the latest versioned Claude 3.5 Sonnet model (not -latest which is invalid)
+                self.model = "claude-3-5-sonnet-20241022"
 
         # Log configuration for debugging
         has_api_key = bool(self.api_key)
