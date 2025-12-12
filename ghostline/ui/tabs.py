@@ -95,6 +95,7 @@ class EditorTabs(QTabWidget):
         self.ai_client = ai_client
         self.command_registry = command_registry
         self._preview_tabs: set[int] = set()
+        self.setObjectName("EditorTabs")
         self.setTabBar(EditorTabBar())
         self.setTabsClosable(True)
         self.tabCloseRequested.connect(self._close_tab)
