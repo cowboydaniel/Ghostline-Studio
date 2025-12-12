@@ -1198,6 +1198,24 @@ class AIChatPanel(QWidget):
         logger = logging.getLogger(__name__)
         logger.info(f"[DEBUG] _on_suggestion_ready called from thread {threading.current_thread().name} (ID: {threading.get_ident()})")
         logger.info(f"[DEBUG] Main thread ID: {threading.main_thread().ident}")
+        app = QApplication.instance()
+        ui_thread = app.thread() if app else None
+
+        if ui_thread and QThread.currentThread() is not ui_thread:
+            logger.info("[DEBUG] Queuing suggestion handling to UI thread")
+            QTimer.singleShot(
+                0,
+                lambda s=suggestion: self._handle_suggestion_on_ui_thread(s),
+            )
+            return
+
+        self._handle_suggestion_on_ui_thread(suggestion)
+
+    def _handle_suggestion_on_ui_thread(self, suggestion: ProactiveSuggestion) -> None:
+        """Render a proactive suggestion from the UI thread only."""
+        import logging
+
+        logger = logging.getLogger(__name__)
         logger.info(f"[DEBUG] Calling add_suggestion for: {suggestion.title}")
         self.suggestions_panel.add_suggestion(suggestion)
         logger.info(f"[DEBUG] add_suggestion completed for: {suggestion.title}")
