@@ -17,6 +17,7 @@ from urllib.error import HTTPError, URLError
 
 from openai import OpenAI
 from PySide6.QtCore import QObject, Signal
+import tiktoken
 
 from ghostline.ai.model_registry import ModelDescriptor
 from ghostline.core.config import ConfigManager
@@ -44,6 +45,44 @@ class AIClientSignals(QObject):
     """Qt signal emitter for AIClient events."""
 
     suggestion_ready = Signal(ProactiveSuggestion)  # Emitted when a proactive suggestion is generated
+
+
+def count_tokens(text: str, model_name: str | None = None) -> int:
+    """
+    Count the number of tokens in a text string using tiktoken.
+
+    Args:
+        text: The text to count tokens for
+        model_name: Optional model name to use appropriate encoding
+
+    Returns:
+        Number of tokens in the text
+    """
+    try:
+        # Determine the appropriate encoding based on model
+        if model_name:
+            model_name_lower = model_name.lower()
+
+            # For Claude models, use cl100k_base (similar to GPT-4)
+            if "claude" in model_name_lower:
+                encoding = tiktoken.get_encoding("cl100k_base")
+            # For GPT-3.5/GPT-4 models, try to get model-specific encoding
+            elif "gpt-4" in model_name_lower or "gpt-3.5" in model_name_lower:
+                try:
+                    encoding = tiktoken.encoding_for_model(model_name)
+                except KeyError:
+                    encoding = tiktoken.get_encoding("cl100k_base")
+            # For other models (including Ollama), use cl100k_base as default
+            else:
+                encoding = tiktoken.get_encoding("cl100k_base")
+        else:
+            # Default to cl100k_base (most common/modern encoding)
+            encoding = tiktoken.get_encoding("cl100k_base")
+
+        return len(encoding.encode(text))
+    except Exception:
+        # Fallback to rough estimate if tiktoken fails (1 token ≈ 4 chars)
+        return len(text) // 4
 
 
 class DummyBackend:
@@ -728,11 +767,18 @@ class AIClient:
 
     def _proactive_analysis(self, path: Path, text: str, backend: object) -> None:
         """Perform proactive analysis on file contents (backend-agnostic)."""
-        self.logger.info("[Proactive] Starting analysis for %s (%d chars)", path, len(text))
+        # Get model name from backend for accurate token counting
+        model_name = getattr(backend, 'model', None)
 
-        # Skip if file is too large (100k tokens ≈ 400k characters)
-        if len(text) > 400000:
-            self.logger.info("[Proactive] Skipping %s - file too large (%d chars)", path, len(text))
+        # Count actual tokens
+        token_count = count_tokens(text, model_name)
+        self.logger.info("[Proactive] Starting analysis for %s (%d chars, %d tokens)",
+                        path, len(text), token_count)
+
+        # Skip if file is too large (100k token limit)
+        if token_count > 100000:
+            self.logger.info("[Proactive] Skipping %s - file too large (%d tokens > 100k limit)",
+                           path, token_count)
             return
 
         # Only analyze code files
@@ -772,9 +818,7 @@ class AIClient:
                 return
 
             # For deeper analysis, check if backend supports it
-            # Only do expensive AI analysis for files within token limit (100k tokens ≈ 400k chars)
-            if len(text) > 400000:
-                return
+            # Token count already checked at the start, so we can proceed
 
             # Check if backend can do AI analysis (has send method and API key)
             if not hasattr(backend, 'send'):
@@ -786,7 +830,7 @@ class AIClient:
                 self.logger.info("[Proactive] Skipping AI analysis - no API key configured")
                 return
 
-            self.logger.info("[Proactive] Requesting AI analysis for %s", path)
+            self.logger.info("[Proactive] Requesting AI analysis for %s (%d tokens)", path, token_count)
 
             prompt = f"""Analyze this {path.suffix[1:]} code file and provide 1-2 concise suggestions for improvement.
 Focus on:
@@ -802,7 +846,7 @@ LINE: Approximate line number (or 0 if file-wide)
 SEVERITY: info/warning/error
 
 Code:
-{text[:400000]}"""
+{text}"""
 
             response = backend.send(prompt)
 
