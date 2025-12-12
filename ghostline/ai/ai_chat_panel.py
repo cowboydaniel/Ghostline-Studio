@@ -117,6 +117,9 @@ class _SuggestionCard(QFrame):
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(6)
 
+        # Ensure card has minimum size to be visible
+        self.setMinimumHeight(120)
+
         # Header row with title and dismiss button
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
@@ -271,12 +274,16 @@ class SuggestionsPanel(QFrame):
         # Header
         header = QLabel("💡 AI Suggestions", self)
         header.setObjectName("suggestionsPanelTitle")
+        header.setMinimumHeight(20)  # Ensure header is visible
         layout.addWidget(header)
 
         # Container for suggestion cards
         self.cards_layout = QVBoxLayout()
         self.cards_layout.setSpacing(8)
         layout.addLayout(self.cards_layout)
+
+        # Set minimum size to ensure panel is visible when shown
+        self.setMinimumHeight(60)
 
         self.hide()  # Hidden by default
 
@@ -311,7 +318,13 @@ class SuggestionsPanel(QFrame):
         self.cards_layout.addWidget(card)
         self._suggestion_cards.append(card)
         self.show()
+        # Force layout update to ensure panel gets proper space
+        self.updateGeometry()
+        if self.parent():
+            self.parent().updateGeometry()
         logger.info(f"[DEBUG] Suggestion card added and displayed")
+        logger.info(f"[DEBUG] Panel isVisible={self.isVisible()}, geometry={self.geometry()}, sizeHint={self.sizeHint()}")
+        logger.info(f"[DEBUG] Card isVisible={card.isVisible()}, geometry={card.geometry()}, sizeHint={card.sizeHint()}")
 
     def _on_card_dismissed(self, suggestion: ProactiveSuggestion) -> None:
         """Remove a suggestion card when dismissed."""
