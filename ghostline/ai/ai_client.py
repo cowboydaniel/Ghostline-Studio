@@ -206,6 +206,10 @@ class ClaudeBackend(HTTPBackend):
             else:
                 self.model = "claude-3-5-sonnet-latest"
 
+        # Log configuration for debugging
+        has_api_key = bool(self.api_key)
+        self.logger.info("[Claude] Initialized with model=%s, has_api_key=%s, endpoint=%s", self.model, has_api_key, self.endpoint)
+
     def _headers(self) -> dict[str, str]:
         """Return headers for Anthropic API requests."""
         headers = {
@@ -218,6 +222,12 @@ class ClaudeBackend(HTTPBackend):
 
     def send(self, prompt: str, context: str | None = None) -> AIResponse:
         """Send a non-streaming request to Claude API."""
+        # Check if API key is configured
+        if not self.api_key:
+            error_msg = "Claude API key not configured. Please set ai.providers.claude.api_key in your configuration."
+            self.logger.error("[Claude] %s", error_msg)
+            return AIResponse(text=error_msg)
+
         content = prompt if not context else f"[context]\n{context}\n\n{prompt}"
 
         payload = {
@@ -239,12 +249,29 @@ class ClaudeBackend(HTTPBackend):
             text = self._extract_text_from_response(response_data)
             return AIResponse(text=text)
 
+        except HTTPError as exc:
+            # Read error response body for better debugging
+            try:
+                error_body = exc.read().decode("utf-8")
+                error_data = json.loads(error_body)
+                self.logger.error("[Claude] HTTP %s error: %s", exc.code, error_data)
+            except Exception:
+                self.logger.error("[Claude] HTTP %s error (could not read response body)", exc.code)
+            self.logger.error("[Claude] Request payload: %s", json.dumps(payload, indent=2))
+            raise
         except Exception as exc:
             self.logger.error("[Claude] Error in send: %s", exc)
             raise
 
     def stream(self, prompt: str, context: str | None = None) -> Generator[str, None, None]:
         """Send a streaming request to Claude API."""
+        # Check if API key is configured
+        if not self.api_key:
+            error_msg = "Claude API key not configured. Please set ai.providers.claude.api_key in your configuration."
+            self.logger.error("[Claude] %s", error_msg)
+            yield error_msg
+            return
+
         content = prompt if not context else f"[context]\n{context}\n\n{prompt}"
 
         payload = {
@@ -301,6 +328,16 @@ class ClaudeBackend(HTTPBackend):
                             self.logger.debug("[Claude] Failed to parse streaming event: %s", data_str)
                             continue
 
+        except HTTPError as exc:
+            # Read error response body for better debugging
+            try:
+                error_body = exc.read().decode("utf-8")
+                error_data = json.loads(error_body)
+                self.logger.error("[Claude] HTTP %s error in stream: %s", exc.code, error_data)
+            except Exception:
+                self.logger.error("[Claude] HTTP %s error in stream (could not read response body)", exc.code)
+            self.logger.error("[Claude] Request payload: %s", json.dumps(payload, indent=2))
+            raise
         except Exception as exc:
             self.logger.error("[Claude] Error in stream: %s", exc)
             raise
