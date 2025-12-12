@@ -378,112 +378,11 @@ class ClaudeBackend(HTTPBackend):
         return "".join(text_parts)
 
     def on_file_opened(self, path: Path, text: str) -> None:
-        """Proactively analyze opened files for potential issues and suggestions."""
-        self.logger.info("[Proactive] on_file_opened called for %s (%d chars)", path, len(text))
-
-        if not self.api_key:
-            self.logger.info("[Proactive] Skipping - no API key configured")
-            return  # Skip if no API key configured
-
-        # Skip if file is too large (>10k chars to avoid expensive API calls)
-        if len(text) > 10000:
-            self.logger.info("[Proactive] Skipping %s - file too large (%d chars)", path, len(text))
-            return
-
-        # Only analyze code files
-        code_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".go", ".rs", ".rb", ".php"}
-        if path.suffix.lower() not in code_extensions:
-            self.logger.info("[Proactive] Skipping %s - not a code file (extension: %s)", path, path.suffix)
-            return
-
-        client = getattr(self, "_client", None)
-        if not client:
-            self.logger.warning("[Proactive] No client reference found!")
-            return
-
-        self.logger.info("[Proactive] Starting analysis for %s", path)
-        try:
-            # Quick static analysis to find potential issues
-            suggestions = []
-
-            # Check for TODOs/FIXMEs
-            for i, line in enumerate(text.split('\n'), 1):
-                if re.search(r'\b(TODO|FIXME|XXX|HACK)\b', line, re.IGNORECASE):
-                    match = re.search(r'(TODO|FIXME|XXX|HACK)[:\s]+(.*)', line, re.IGNORECASE)
-                    if match:
-                        suggestion = ProactiveSuggestion(
-                            title=f"{match.group(1).upper()} found",
-                            description=match.group(2).strip()[:100] or "Action item needs attention",
-                            file_path=path,
-                            line_number=i,
-                            severity="info"
-                        )
-                        suggestions.append(suggestion)
-                        self.logger.info("[Proactive] Found TODO/FIXME at line %d", i)
-
-            self.logger.info("[Proactive] Found %d static suggestions", len(suggestions))
-
-            # Only send first few suggestions to avoid spam
-            for suggestion in suggestions[:3]:
-                self.logger.info("[Proactive] Emitting suggestion: %s", suggestion.title)
-                client.signals.suggestion_ready.emit(suggestion)
-
-            # If we found some low-hanging fruit, we're done
-            if len(suggestions) >= 2:
-                return
-
-            # Otherwise, ask Claude for deeper analysis (only for small files)
-            if len(text) > 5000:
-                return
-
-            prompt = f"""Analyze this {path.suffix[1:]} code file and provide 1-2 concise suggestions for improvement.
-Focus on:
-- Potential bugs or error handling issues
-- Security concerns (SQL injection, XSS, hardcoded secrets)
-- Performance issues
-- Code quality (complexity, readability)
-
-Format each suggestion as:
-TITLE: Brief title
-DESCRIPTION: One sentence description
-LINE: Approximate line number (or 0 if file-wide)
-SEVERITY: info/warning/error
-
-Code:
-{text[:5000]}"""
-
-            response = self.send(prompt)
-
-            # Parse Claude's response
-            if response and response.text:
-                self._parse_and_emit_suggestions(response.text, path, client)
-
-        except Exception as exc:
-            self.logger.debug("Error in proactive analysis for %s: %s", path, exc)
-
-    def _parse_and_emit_suggestions(self, text: str, path: Path, client) -> None:
-        """Parse suggestion format from Claude's response and emit signals."""
-        # Look for structured suggestions in the response
-        pattern = r'TITLE:\s*(.+?)\s*DESCRIPTION:\s*(.+?)\s*LINE:\s*(\d+)\s*SEVERITY:\s*(\w+)'
-        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
-
-        for match in matches[:2]:  # Limit to 2 suggestions
-            title, description, line_str, severity = match
-            try:
-                line_num = int(line_str.strip())
-                if line_num == 0:
-                    line_num = None
-            except ValueError:
-                line_num = None
-
-            suggestion = ProactiveSuggestion(
-                title=title.strip()[:100],
-                description=description.strip()[:200],
-                file_path=path,
-                line_number=line_num,
-                severity=severity.strip().lower()
-            )
-            client.signals.suggestion_ready.emit(suggestion)
+        """Hook for file-open events. Analysis is now done in AIClient._proactive_analysis()."""
+        # Proactive analysis is now handled by AIClient._proactive_analysis()
+        # which runs for all backends. This hook can be used for Claude-specific
+        # behavior if needed in the future.
+        pass
 
 
 class AIClient:
@@ -812,8 +711,13 @@ class AIClient:
         thread.start()
 
     def _run_file_opened_job(self, backend: object, path: Path, text: str) -> None:
+        """Background job that runs proactive analysis on opened files."""
         self.logger.info("Starting AI file-open job for %s", path)
         try:
+            # Run proactive analysis (works for all backends)
+            self._proactive_analysis(path, text, backend)
+
+            # Call backend-specific handler if it exists
             handler = getattr(backend, "on_file_opened", None)
             if callable(handler):
                 handler(path, text)
@@ -821,4 +725,116 @@ class AIClient:
             self.logger.exception("Error running AI file-open job for %s", path)
         finally:
             self.logger.info("Completed AI file-open job for %s", path)
+
+    def _proactive_analysis(self, path: Path, text: str, backend: object) -> None:
+        """Perform proactive analysis on file contents (backend-agnostic)."""
+        self.logger.info("[Proactive] Starting analysis for %s (%d chars)", path, len(text))
+
+        # Skip if file is too large
+        if len(text) > 10000:
+            self.logger.info("[Proactive] Skipping %s - file too large (%d chars)", path, len(text))
+            return
+
+        # Only analyze code files
+        code_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".go", ".rs", ".rb", ".php"}
+        if path.suffix.lower() not in code_extensions:
+            self.logger.info("[Proactive] Skipping %s - not a code file (extension: %s)", path, path.suffix)
+            return
+
+        try:
+            # Quick static analysis to find potential issues
+            suggestions = []
+
+            # Check for TODOs/FIXMEs
+            for i, line in enumerate(text.split('\n'), 1):
+                if re.search(r'\b(TODO|FIXME|XXX|HACK)\b', line, re.IGNORECASE):
+                    match = re.search(r'(TODO|FIXME|XXX|HACK)[:\s]+(.*)', line, re.IGNORECASE)
+                    if match:
+                        suggestion = ProactiveSuggestion(
+                            title=f"{match.group(1).upper()} found",
+                            description=match.group(2).strip()[:100] or "Action item needs attention",
+                            file_path=path,
+                            line_number=i,
+                            severity="info"
+                        )
+                        suggestions.append(suggestion)
+                        self.logger.info("[Proactive] Found TODO/FIXME at line %d", i)
+
+            self.logger.info("[Proactive] Found %d static suggestions", len(suggestions))
+
+            # Emit first few suggestions to avoid spam
+            for suggestion in suggestions[:3]:
+                self.logger.info("[Proactive] Emitting suggestion: %s", suggestion.title)
+                self.signals.suggestion_ready.emit(suggestion)
+
+            # If we found enough static suggestions, we're done
+            if len(suggestions) >= 2:
+                return
+
+            # For deeper analysis, check if backend supports it
+            # Only do expensive AI analysis for small files
+            if len(text) > 5000:
+                return
+
+            # Check if backend can do AI analysis (has send method and API key)
+            if not hasattr(backend, 'send'):
+                self.logger.info("[Proactive] Backend doesn't support AI analysis (no send method)")
+                return
+
+            api_key = getattr(backend, 'api_key', None)
+            if not api_key:
+                self.logger.info("[Proactive] Skipping AI analysis - no API key configured")
+                return
+
+            self.logger.info("[Proactive] Requesting AI analysis for %s", path)
+
+            prompt = f"""Analyze this {path.suffix[1:]} code file and provide 1-2 concise suggestions for improvement.
+Focus on:
+- Potential bugs or error handling issues
+- Security concerns (SQL injection, XSS, hardcoded secrets)
+- Performance issues
+- Code quality (complexity, readability)
+
+Format each suggestion as:
+TITLE: Brief title
+DESCRIPTION: One sentence description
+LINE: Approximate line number (or 0 if file-wide)
+SEVERITY: info/warning/error
+
+Code:
+{text[:5000]}"""
+
+            response = backend.send(prompt)
+
+            # Parse response and emit suggestions
+            if response and response.text:
+                self._parse_and_emit_suggestions(response.text, path)
+
+        except Exception as exc:
+            self.logger.debug("Error in proactive analysis for %s: %s", path, exc)
+
+    def _parse_and_emit_suggestions(self, text: str, path: Path) -> None:
+        """Parse suggestion format from AI response and emit signals."""
+        # Look for structured suggestions in the response
+        pattern = r'TITLE:\s*(.+?)\s*DESCRIPTION:\s*(.+?)\s*LINE:\s*(\d+)\s*SEVERITY:\s*(\w+)'
+        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+
+        for match in matches[:2]:  # Limit to 2 suggestions
+            title, description, line_str, severity = match
+            try:
+                line_num = int(line_str.strip())
+                if line_num == 0:
+                    line_num = None
+            except ValueError:
+                line_num = None
+
+            suggestion = ProactiveSuggestion(
+                title=title.strip()[:100],
+                description=description.strip()[:200],
+                file_path=path,
+                line_number=line_num,
+                severity=severity.strip().lower()
+            )
+            self.logger.info("[Proactive] Emitting AI suggestion: %s", suggestion.title)
+            self.signals.suggestion_ready.emit(suggestion)
 
