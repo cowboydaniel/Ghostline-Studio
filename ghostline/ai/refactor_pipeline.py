@@ -30,35 +30,93 @@ class UnifiedDiffApplier:
         lines = original_text.splitlines(keepends=True)
         cursor = 0
         new_lines: list[str] = []
-        target_line = 0
-        for raw in patch.splitlines():
+        patch_lines = patch.splitlines()
+        index = 0
+
+        while index < len(patch_lines):
+            raw = patch_lines[index]
             if raw.startswith("---") or raw.startswith("+++"):
+                index += 1
                 continue
+
             if raw.startswith("@@"):
-                match = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", raw)
-                if not match:
-                    raise PatchApplicationError(f"Invalid hunk header: {raw}")
-                target_line = int(match.group(1)) - 1
-                if target_line < cursor:
-                    raise PatchApplicationError("Patch overlaps previous hunks")
-                new_lines.extend(lines[cursor:target_line])
-                cursor = target_line
+                hunk_start = index
+                index += 1
+                hunk_lines: list[str] = []
+                while index < len(patch_lines) and not patch_lines[index].startswith("@@"):
+                    hunk_lines.append(patch_lines[index])
+                    index += 1
+                cursor = self._apply_hunk(lines, cursor, new_lines, patch_lines[hunk_start], hunk_lines)
                 continue
-            if raw.startswith("+"):
-                new_lines.append(raw[1:] + ("\n" if not raw.endswith("\n") else ""))
-                continue
-            if raw.startswith("-"):
-                if cursor >= len(lines):
-                    raise PatchApplicationError("Patch exceeds file length")
-                cursor += 1
-                continue
-            if cursor < len(lines):
-                new_lines.append(lines[cursor])
-                cursor += 1
-            else:
-                raise PatchApplicationError("Unexpected context past file end")
+
+            index += 1
+
         new_lines.extend(lines[cursor:])
         return "".join(new_lines)
+
+    def _apply_hunk(
+        self,
+        original_lines: list[str],
+        cursor: int,
+        new_lines: list[str],
+        header: str,
+        hunk_lines: list[str],
+    ) -> int:
+        match = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", header)
+        if not match:
+            raise PatchApplicationError(f"Invalid hunk header: {header}")
+
+        target_line = int(match.group(1)) - 1
+        expected_sequence = self._original_sequence(hunk_lines)
+
+        anchor = self._find_anchor(original_lines, cursor, target_line, expected_sequence)
+        if anchor is None:
+            raise PatchApplicationError("Could not locate patch hunk in original text")
+
+        if anchor < cursor:
+            raise PatchApplicationError("Patch overlaps previous hunks")
+
+        new_lines.extend(original_lines[cursor:anchor])
+        cursor = anchor
+
+        for raw in hunk_lines:
+            if raw.startswith("+"):
+                new_lines.append(self._ensure_newline(raw[1:]))
+            elif raw.startswith("-"):
+                if cursor >= len(original_lines):
+                    raise PatchApplicationError("Patch exceeds file length")
+                cursor += 1
+            else:
+                if cursor >= len(original_lines):
+                    raise PatchApplicationError("Unexpected context past file end")
+                new_lines.append(original_lines[cursor])
+                cursor += 1
+
+        return cursor
+
+    def _original_sequence(self, hunk_lines: list[str]) -> list[str]:
+        sequence: list[str] = []
+        for raw in hunk_lines:
+            if raw.startswith("+"):
+                continue
+            line = raw[1:] if raw[:1] in {" ", "-"} else raw
+            sequence.append(self._ensure_newline(line))
+        return sequence
+
+    def _find_anchor(
+        self, original_lines: list[str], cursor: int, target_line: int, sequence: list[str]
+    ) -> int | None:
+        if not sequence:
+            return min(target_line, len(original_lines))
+
+        start_search = cursor
+        for offset in range(start_search, len(original_lines) - len(sequence) + 1):
+            if original_lines[offset : offset + len(sequence)] == sequence:
+                return offset
+        return None
+
+    def _ensure_newline(self, text: str) -> str:
+        return text if text.endswith("\n") else f"{text}\n"
 
 
 class RefactorPipeline:
