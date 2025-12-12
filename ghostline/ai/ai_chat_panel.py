@@ -187,11 +187,21 @@ class _SuggestionCard(QFrame):
 
     def set_status(self, text: str) -> None:
         """Update the status line below the meta info."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.set_status(text))
+            return
 
         self.status_label.setText(text)
 
     def set_running(self, running: bool) -> None:
         """Disable/enable controls while a request is in flight."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.set_running(running))
+            return
 
         self.start_btn.setEnabled(not running)
         self.accept_btn.setEnabled(False if running else self.accept_btn.isEnabled())
@@ -202,6 +212,11 @@ class _SuggestionCard(QFrame):
 
     def show_response(self, text: str) -> None:
         """Display AI response text and enable acceptance."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.show_response(text))
+            return
 
         self.response_view.setText(text)
         self.response_view.show()
@@ -210,6 +225,11 @@ class _SuggestionCard(QFrame):
 
     def show_error(self, text: str) -> None:
         """Display an error and disable acceptance."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.show_error(text))
+            return
 
         self.response_view.setText(text)
         self.response_view.show()
@@ -267,6 +287,13 @@ class SuggestionsPanel(QFrame):
         logger = logging.getLogger(__name__)
         logger.info(f"[DEBUG] add_suggestion called from thread {threading.current_thread().name} (ID: {threading.get_ident()})")
 
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            logger.info("[DEBUG] Not on UI thread, queuing add_suggestion to UI thread")
+            QTimer.singleShot(0, lambda: self.add_suggestion(suggestion))
+            return
+
         # Don't add duplicates
         for card in self._suggestion_cards:
             if (card.suggestion.title == suggestion.title and
@@ -288,6 +315,12 @@ class SuggestionsPanel(QFrame):
 
     def _on_card_dismissed(self, suggestion: ProactiveSuggestion) -> None:
         """Remove a suggestion card when dismissed."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self._on_card_dismissed(suggestion))
+            return
+
         for i, card in enumerate(self._suggestion_cards):
             if card.suggestion == suggestion:
                 self.cards_layout.removeWidget(card)
@@ -301,6 +334,12 @@ class SuggestionsPanel(QFrame):
 
     def clear_all(self) -> None:
         """Remove all suggestion cards."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.clear_all())
+            return
+
         for card in self._suggestion_cards:
             self.cards_layout.removeWidget(card)
             card.deleteLater()
@@ -309,6 +348,11 @@ class SuggestionsPanel(QFrame):
 
     def set_status(self, suggestion: ProactiveSuggestion, message: str, running: bool = False) -> None:
         """Update status text for a particular suggestion card."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.set_status(suggestion, message, running))
+            return
 
         card = self._find_card(suggestion)
         if card:
@@ -317,6 +361,11 @@ class SuggestionsPanel(QFrame):
 
     def set_response(self, suggestion: ProactiveSuggestion, text: str) -> None:
         """Render AI response on the matching card."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.set_response(suggestion, text))
+            return
 
         card = self._find_card(suggestion)
         if card:
@@ -325,6 +374,11 @@ class SuggestionsPanel(QFrame):
 
     def set_streaming_response(self, suggestion: ProactiveSuggestion, text: str) -> None:
         """Show in-progress AI output without toggling running state."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.set_streaming_response(suggestion, text))
+            return
 
         card = self._find_card(suggestion)
         if card:
@@ -333,6 +387,11 @@ class SuggestionsPanel(QFrame):
 
     def set_error(self, suggestion: ProactiveSuggestion, text: str) -> None:
         """Render error on the matching card."""
+        # Ensure we're on the UI thread
+        app = QApplication.instance()
+        if app and QThread.currentThread() is not app.thread():
+            QTimer.singleShot(0, lambda: self.set_error(suggestion, text))
+            return
 
         card = self._find_card(suggestion)
         if card:
