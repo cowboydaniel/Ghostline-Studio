@@ -90,6 +90,12 @@ class ConfigManager:
                 python_cfg = servers.get("python")
                 if isinstance(python_cfg, dict):
                     changed |= self._migrate_python_lsp(python_cfg)
+
+        # Migrate deprecated Claude model names
+        ai_cfg = self.settings.get("ai")
+        if isinstance(ai_cfg, dict):
+            changed |= self._migrate_claude_models(ai_cfg)
+
         return changed
 
     def _migrate_python_lsp(self, python_cfg: dict[str, Any]) -> bool:
@@ -114,6 +120,58 @@ class ConfigManager:
                 primary_cfg["command"] = desired_command
                 primary_cfg["args"] = desired_args
                 python_cfg["primary"] = primary_cfg
+                changed = True
+
+        return changed
+
+    def _migrate_claude_models(self, ai_cfg: dict[str, Any]) -> bool:
+        """Migrate deprecated Claude 3.x model names to Claude 4.5 versions."""
+        # Map old invalid model names to new valid ones
+        model_migrations = {
+            "claude-3-5-sonnet-latest": "claude-haiku-4-5-20251001",  # Default to Haiku
+            "claude-3-opus-latest": "claude-haiku-4-5-20251001",
+            "claude-3-haiku-latest": "claude-haiku-4-5-20251001",
+            "claude-3-5-sonnet-20241022": "claude-haiku-4-5-20251001",  # Deprecated 3.x versions
+            "claude-3-opus-20240229": "claude-haiku-4-5-20251001",
+            "claude-3-haiku-20240307": "claude-haiku-4-5-20251001",
+        }
+
+        changed = False
+
+        # Migrate top-level model setting
+        if "model" in ai_cfg and ai_cfg["model"] in model_migrations:
+            ai_cfg["model"] = model_migrations[ai_cfg["model"]]
+            changed = True
+
+        # Migrate Claude provider settings
+        providers = ai_cfg.get("providers")
+        if isinstance(providers, dict):
+            claude_cfg = providers.get("claude")
+            if isinstance(claude_cfg, dict):
+                # Migrate default_model
+                if "default_model" in claude_cfg and claude_cfg["default_model"] in model_migrations:
+                    claude_cfg["default_model"] = model_migrations[claude_cfg["default_model"]]
+                    changed = True
+
+                # Migrate enabled_models list
+                if "enabled_models" in claude_cfg and isinstance(claude_cfg["enabled_models"], list):
+                    new_enabled = []
+                    for model in claude_cfg["enabled_models"]:
+                        if model in model_migrations:
+                            new_enabled.append(model_migrations[model])
+                            changed = True
+                        else:
+                            new_enabled.append(model)
+                    # Remove duplicates and keep only valid 4.5 models
+                    claude_cfg["enabled_models"] = list(dict.fromkeys(new_enabled))
+
+        # Migrate last_used_model
+        last_used = ai_cfg.get("last_used_model")
+        if isinstance(last_used, dict):
+            model_id = last_used.get("id")
+            if model_id in model_migrations:
+                last_used["id"] = model_migrations[model_id]
+                last_used["label"] = "Claude Haiku 4.5"
                 changed = True
 
         return changed
