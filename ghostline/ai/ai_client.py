@@ -85,6 +85,65 @@ def count_tokens(text: str, model_name: str | None = None) -> int:
         return len(text) // 4
 
 
+def get_model_token_limit(backend: object, model_name: str | None = None) -> int:
+    """
+    Get the appropriate token limit for a given backend and model.
+
+    This accounts for model context windows and reserves space for the response.
+    We use 70% of the context window for input to leave room for output and prompt overhead.
+
+    Args:
+        backend: The AI backend instance
+        model_name: Optional model name
+
+    Returns:
+        Maximum token limit for input text
+    """
+    backend_name = getattr(backend, 'name', 'dummy')
+    model = (model_name or getattr(backend, 'model', '')).lower()
+
+    # Claude models - very large context windows
+    if 'claude' in backend_name or 'claude' in model:
+        # Claude API supports up to 1M tokens (Sonnet 4/4.5)
+        # Standard: 200k tokens, Enterprise: 500k, API: 1M
+        # We'll use 150k as a safe default (75% of 200k standard limit)
+        return 150000
+
+    # OpenAI models - varies by model
+    if 'openai' in backend_name or 'gpt' in model:
+        # GPT-4.1 and newer: 1M tokens
+        if 'gpt-4.1' in model or 'gpt-4-turbo' in model:
+            return 700000  # 70% of 1M
+        # GPT-4o: 128k tokens
+        elif 'gpt-4o' in model:
+            return 90000  # 70% of 128k
+        # GPT-4: 8k-32k tokens
+        elif 'gpt-4' in model:
+            if '32k' in model:
+                return 22000  # 70% of 32k
+            return 5600  # 70% of 8k (conservative default)
+        # GPT-3.5: varies
+        elif 'gpt-3.5' in model:
+            if '16k' in model:
+                return 11000  # 70% of 16k
+            return 2800  # 70% of 4k
+        # Default for unknown OpenAI models
+        return 90000  # Assume GPT-4o-like capacity
+
+    # Ollama models - configurable, often limited by default
+    if 'ollama' in backend_name:
+        # Ollama defaults are often 4k tokens unless configured higher
+        # Check if backend has a configured context length
+        num_ctx = getattr(backend, 'num_ctx', None)
+        if num_ctx:
+            return int(num_ctx * 0.7)  # 70% of configured context
+        # Conservative default for Ollama (assumes 4k default)
+        return 2800  # 70% of 4k tokens
+
+    # Fallback for unknown backends
+    return 2800  # Conservative 4k context window assumption
+
+
 class DummyBackend:
     def __init__(self, _config: ConfigManager) -> None:
         pass
@@ -772,13 +831,17 @@ class AIClient:
 
         # Count actual tokens
         token_count = count_tokens(text, model_name)
-        self.logger.info("[Proactive] Starting analysis for %s (%d chars, %d tokens)",
-                        path, len(text), token_count)
 
-        # Skip if file is too large (100k token limit)
-        if token_count > 100000:
-            self.logger.info("[Proactive] Skipping %s - file too large (%d tokens > 100k limit)",
-                           path, token_count)
+        # Get model-specific token limit
+        token_limit = get_model_token_limit(backend, model_name)
+
+        self.logger.info("[Proactive] Starting analysis for %s (%d chars, %d tokens, limit: %d)",
+                        path, len(text), token_count, token_limit)
+
+        # Skip if file is too large for the model's context window
+        if token_count > token_limit:
+            self.logger.info("[Proactive] Skipping %s - file too large (%d tokens > %d limit)",
+                           path, token_count, token_limit)
             return
 
         # Only analyze code files
