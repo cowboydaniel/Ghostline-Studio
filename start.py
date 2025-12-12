@@ -255,8 +255,9 @@ def launch_ghostline() -> None:
 
 
 def main() -> None:
-    # Dependency installation now happens during the splash screen phase
-    # See ghostline.app.GhostlineApplication._start_dependency_worker()
+    # Ensure critical dependencies are installed before imports
+    # This prevents import errors from blocking the splash screen
+    ensure_dependencies_installed()
     launch_ghostline()
 
 
