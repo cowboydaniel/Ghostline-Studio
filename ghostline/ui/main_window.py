@@ -50,6 +50,7 @@ from ghostline.ai.analysis_service import AnalysisService
 from ghostline.ai.architecture_assistant import ArchitectureAssistant
 from ghostline.ai.doc_generator import DocGenerator
 from ghostline.ai.navigation_assistant import NavigationAssistant
+from ghostline.ai.refactor_pipeline import PatchApplicationError
 from ghostline.ai.workspace_memory import WorkspaceMemory
 from ghostline.semantic.index_manager import SemanticIndexManager
 from ghostline.semantic.query import SemanticQueryEngine
@@ -1433,6 +1434,19 @@ class MainWindow(QMainWindow):
         path: str | Path | None = editor.path if editor.path else "untitled"
         return (path, editor.toPlainText())
 
+    def _clean_patch_text(self, patch: str) -> str:
+        """Remove common formatting wrappers around AI patch responses."""
+
+        lines = patch.strip().splitlines()
+        if lines and lines[0].startswith("```"):
+            # Drop opening code fence
+            lines = lines[1:]
+            # Drop closing fence if present
+            while lines and lines[-1].startswith("```"):
+                lines.pop()
+
+        return "\n".join(lines).strip()
+
     def _apply_ai_suggestion_patch(self, path: Path, patch: str) -> bool:
         """Open a file and apply an AI-generated patch to the active editor."""
 
@@ -1447,23 +1461,31 @@ class MainWindow(QMainWindow):
             self.status.show_message("No editor available to apply AI fix")
             return False
 
-        applied = False
-        try:
-            editor.apply_unified_patch(patch)
-            applied = True
-        except Exception:  # noqa: BLE001
-            try:
-                editor.setPlainText(patch)
-                applied = True
-            except Exception:  # noqa: BLE001
-                applied = False
+        sanitized_patch = self._clean_patch_text(patch)
+        if not sanitized_patch:
+            self.status.show_message("AI patch was empty; review the suggestion manually")
+            return False
 
-        if applied:
-            self._sync_editor_to_index(editor)
-            self.status.show_message(f"Applied AI fix to {Path(path).name}")
-        else:
-            self.status.show_message("Could not apply AI patch; review the suggested changes")
-        return applied
+        try:
+            editor.apply_unified_patch(sanitized_patch)
+        except PatchApplicationError as exc:
+            logger.warning(
+                "AI patch could not be applied cleanly (%s). Patch content:\n%s",
+                exc,
+                sanitized_patch,
+            )
+            self.status.show_message(f"AI patch failed: {exc}")
+            return False
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to apply AI suggestion patch")
+            self.status.show_message(
+                "Could not apply AI patch; review the suggested changes"
+            )
+            return False
+
+        self._sync_editor_to_index(editor)
+        self.status.show_message(f"Applied AI fix to {Path(path).name}")
+        return True
 
     def _open_document_payloads(self) -> list[tuple[str | Path | None, str]]:
         payloads: list[tuple[str | Path | None, str]] = []
