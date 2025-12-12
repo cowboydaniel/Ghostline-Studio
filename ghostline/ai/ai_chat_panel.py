@@ -262,6 +262,10 @@ class SuggestionsPanel(QFrame):
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
             }
+            QScrollArea#suggestionsScrollArea {
+                background: transparent;
+                border: none;
+            }
             """
         )
 
@@ -277,13 +281,27 @@ class SuggestionsPanel(QFrame):
         header.setMinimumHeight(20)  # Ensure header is visible
         layout.addWidget(header)
 
-        # Container for suggestion cards
-        self.cards_layout = QVBoxLayout()
-        self.cards_layout.setSpacing(8)
-        layout.addLayout(self.cards_layout)
+        # Scroll area for suggestion cards
+        scroll_area = QScrollArea(self)
+        scroll_area.setObjectName("suggestionsScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
-        # Set minimum size to ensure panel is visible when shown
+        # Container widget for cards
+        cards_container = QWidget()
+        self.cards_layout = QVBoxLayout(cards_container)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.setSpacing(8)
+        self.cards_layout.addStretch()  # Push cards to top
+
+        scroll_area.setWidget(cards_container)
+        layout.addWidget(scroll_area)
+
+        # Set size constraints - min height to be visible, max height to not take over the screen
         self.setMinimumHeight(60)
+        self.setMaximumHeight(400)  # Allow up to 400px for suggestions panel
 
         self.hide()  # Hidden by default
 
@@ -315,7 +333,12 @@ class SuggestionsPanel(QFrame):
         card.dismissed.connect(self._on_card_dismissed)
         card.start_requested.connect(self.start_requested)
         card.accept_requested.connect(self.accept_requested)
-        self.cards_layout.addWidget(card)
+
+        # Insert card before the stretch item (which is always at the end)
+        insert_position = self.cards_layout.count() - 1
+        if insert_position < 0:
+            insert_position = 0
+        self.cards_layout.insertWidget(insert_position, card)
         self._suggestion_cards.append(card)
         self.show()
         # Force layout update to ensure panel gets proper space
