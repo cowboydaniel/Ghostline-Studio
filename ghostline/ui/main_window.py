@@ -380,9 +380,9 @@ class MainWindow(QMainWindow):
         editor_layout.addWidget(self.editor_tabs, 1)
 
         self.welcome_portal = WelcomePortal(self)
-        self.welcome_portal.startRequested.connect(self._prompt_open_folder)
-        self.welcome_portal.recentRequested.connect(self.open_folder)
-        self.welcome_portal.set_recents(self.workspace_manager.recent_items)
+        self.welcome_portal.openFolderRequested.connect(self._prompt_open_folder)
+        self.welcome_portal.openCommandPaletteRequested.connect(lambda: self.show_command_palette())
+        self.welcome_portal.openAIChatRequested.connect(self.toggle_ai_dock)
 
         self.central_stack = QStackedWidget(self)
         self.central_stack.addWidget(self.welcome_portal)
@@ -607,17 +607,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
     def _show_welcome_if_empty(self) -> None:
-        workspace = self.workspace_manager.current_workspace
-        if workspace:
+        """Show welcome screen when no files are open, even if workspace is open."""
+        if self.editor_tabs.count() > 0:
             self.central_stack.setCurrentWidget(self.editor_container)
-            return
-
-        if self.editor_tabs.count():
-            self.central_stack.setCurrentWidget(self.editor_container)
-            return
-
-        self.welcome_portal.set_recents(self.workspace_manager.recent_items)
-        self.central_stack.setCurrentWidget(self.welcome_portal)
+        else:
+            self.central_stack.setCurrentWidget(self.welcome_portal)
 
     def _restore_workspace_tabs(self, workspace_str: str | None) -> None:
         if not workspace_str:
@@ -1482,7 +1476,6 @@ class MainWindow(QMainWindow):
 
     def open_folder(self, folder: str) -> None:
         self.workspace_manager.open_workspace(folder)
-        self.welcome_portal.set_recents(self.workspace_manager.recent_items)
         workspace_path = self.workspace_manager.current_workspace
         if hasattr(self, "context_engine"):
             self.context_engine.on_workspace_changed(workspace_path)
@@ -1674,7 +1667,6 @@ class MainWindow(QMainWindow):
             self.terminal.set_workspace(None)
         if hasattr(self, "context_engine"):
             self.context_engine.on_workspace_changed(None)
-        self.welcome_portal.set_recents(self.workspace_manager.recent_items)
         self._show_welcome_if_empty()
 
     def open_file_at(self, path: str, line: int) -> None:
