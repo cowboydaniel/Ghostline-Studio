@@ -21,7 +21,7 @@ class ProjectModel(QFileSystemModel):
 
         # Load folder icon from resources or fallback to system
         style = QApplication.style()
-        folder_icon = load_icon("folder.svg")
+        folder_icon = load_icon("folders/folder.svg")
         if folder_icon.isNull():
             folder_icon = style.standardIcon(QStyle.SP_DirIcon)
 
