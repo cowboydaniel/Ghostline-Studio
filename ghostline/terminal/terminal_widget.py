@@ -78,14 +78,9 @@ class TerminalWidget(QWidget):
         self.process.setWorkingDirectory(str(self.current_directory))
         self.process.start(self.shell)
         if self.process.waitForStarted(1000):
-            self._send_initial_cd()
+            self.cwd_label.setText(f"Working directory: {self.current_directory}")
         else:
             self.output.appendPlainText("Failed to start embedded terminal process.")
-
-    def _send_initial_cd(self) -> None:
-        if self.current_directory:
-            self.process.write((f"cd {self.current_directory}\n").encode())
-            self.cwd_label.setText(f"Working directory: {self.current_directory}")
 
     def set_workspace(self, workspace: Path | None) -> None:
         """Update the terminal working directory to the active workspace."""
