@@ -487,3 +487,213 @@ QSplitter::handle:hover {
     background-color: #22242e;
     border-radius: 4px;
 }
+
+/* ==================== Windsurf-style Bottom Panel ==================== */
+
+#bottomPanel {
+    background-color: #1E1E1E;
+    border-top: 1px solid #2D2D30;
+}
+
+#bottomPanelTabBar {
+    background-color: #252526;
+    border-bottom: 1px solid #2D2D30;
+}
+
+#bottomPanelTab {
+    background-color: transparent;
+    color: #969696;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+#bottomPanelTab:hover {
+    background-color: #2A2D2E;
+    color: #D4D4D4;
+}
+
+#bottomPanelTab[active="true"] {
+    background-color: #1E1E1E;
+    color: #FFFFFF;
+    border-bottom: 2px solid #007ACC;
+}
+
+#bottomPanelSeparator {
+    background-color: #2D2D30;
+}
+
+#bottomPanelCloseBtn {
+    background-color: transparent;
+    border: none;
+    color: #CCCCCC;
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 4px;
+}
+
+#bottomPanelCloseBtn:hover {
+    background-color: #3E3E42;
+    color: #FFFFFF;
+}
+
+/* Terminal Widget */
+#windsurfTerminal {
+    background-color: #1E1E1E;
+}
+
+#terminalHeader {
+    background-color: #252526;
+    border-bottom: 1px solid #2D2D30;
+}
+
+#terminalTitle {
+    color: #CCCCCC;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#terminalDescription {
+    color: #808080;
+    font-size: 11px;
+}
+
+#terminalWorkingDir {
+    color: #6A6A6A;
+    font-size: 10px;
+}
+
+#terminalProfileCombo,
+#terminalSelector {
+    background-color: #3C3C3C;
+    border: 1px solid #454545;
+    border-radius: 2px;
+    padding: 2px 6px;
+    color: #CCCCCC;
+    selection-background-color: #264F78;
+}
+
+#terminalProfileCombo:hover,
+#terminalSelector:hover {
+    background-color: #404040;
+}
+
+#terminalProfileCombo::drop-down,
+#terminalSelector::drop-down {
+    border: none;
+}
+
+#terminalNewBtn {
+    background-color: transparent;
+    border: 1px solid #454545;
+    color: #CCCCCC;
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 2px;
+}
+
+#terminalNewBtn:hover {
+    background-color: #3E3E42;
+    color: #FFFFFF;
+}
+
+#terminalSeparator {
+    background-color: #2D2D30;
+}
+
+#ptyTerminal {
+    background-color: #1E1E1E;
+    color: #D4D4D4;
+    border: none;
+    selection-background-color: #264F78;
+    selection-color: #FFFFFF;
+}
+
+#terminalSessionList {
+    background-color: #252526;
+    border-left: 1px solid #2D2D30;
+    color: #CCCCCC;
+    outline: none;
+}
+
+#terminalSessionList::item {
+    padding: 8px 12px;
+    border: none;
+}
+
+#terminalSessionList::item:selected {
+    background-color: #37373D;
+    color: #FFFFFF;
+}
+
+#terminalSessionList::item:hover {
+    background-color: #2A2D2E;
+}
+
+#openExternalTerminalBtn {
+    background-color: #0E639C;
+    border: 1px solid #1177BB;
+    color: #FFFFFF;
+    border-radius: 2px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+#openExternalTerminalBtn:hover {
+    background-color: #1177BB;
+    border: 1px solid #1C8DD9;
+}
+
+#openExternalTerminalBtn:pressed {
+    background-color: #0D5A8F;
+}
+
+/* Other Bottom Panels */
+#problemsPanel,
+#outputPanel,
+#debugConsolePanel,
+#portsPanel {
+    background-color: #1E1E1E;
+}
+
+#problemsTable,
+#portsTable {
+    background-color: #1E1E1E;
+    color: #CCCCCC;
+    gridline-color: #2D2D30;
+    border: none;
+    outline: none;
+}
+
+#problemsTable::item:selected,
+#portsTable::item:selected {
+    background-color: #37373D;
+    color: #FFFFFF;
+}
+
+#problemsTable::item:hover,
+#portsTable::item:hover {
+    background-color: #2A2D2E;
+}
+
+#problemsTable QHeaderView::section,
+#portsTable QHeaderView::section {
+    background-color: #252526;
+    color: #CCCCCC;
+    border: none;
+    border-bottom: 1px solid #2D2D30;
+    border-right: 1px solid #2D2D30;
+    padding: 4px 8px;
+    font-weight: 500;
+}
+
+#outputText,
+#debugConsoleOutput {
+    background-color: #1E1E1E;
+    color: #CCCCCC;
+    border: none;
+    selection-background-color: #264F78;
+    selection-color: #FFFFFF;
+}

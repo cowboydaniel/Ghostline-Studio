@@ -79,10 +79,17 @@ from ghostline.ui.docks.collab_panel import CollabPanel
 from ghostline.ui.docks.doc_panel import DocPanel
 from ghostline.ui.docks.pipeline_panel import PipelinePanel
 from ghostline.ui.docks.runtime_panel import RuntimePanel
+from ghostline.ui.docks.bottom_panel import BottomPanel
+from ghostline.ui.docks.panel_widgets import (
+    ProblemsPanel,
+    OutputPanel,
+    DebugConsolePanel,
+    PortsPanel,
+)
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.workspace.project_model import ProjectModel
 from ghostline.workspace.project_view import ProjectView
-from ghostline.terminal.terminal_widget import TerminalWidget
+from ghostline.terminal.windsurf_terminal import WindsurfTerminalWidget
 from ghostline.vcs.git_integration import GitIntegration
 from ghostline.vcs.git_panel import GitPanel
 from ghostline.vcs.git_service import GitService
@@ -416,22 +423,22 @@ class MainWindow(QMainWindow):
         self.central_stack.setMinimumWidth(320)  # Reduced from 400
         self.right_region_container.setMinimumWidth(200)  # Reduced from 260
 
-        # Create bottom dock container first (before adding to splitter)
-        self.bottom_dock_container = QWidget(self)
-        bottom_layout = QVBoxLayout(self.bottom_dock_container)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(0)
-        self.bottom_dock_stack = QStackedWidget(self.bottom_dock_container)
-        bottom_layout.addWidget(self.bottom_dock_stack)
-        self.bottom_dock_container.setVisible(False)
+        # Create bottom panel (Windsurf-style with tabs)
+        self.bottom_panel = BottomPanel(self)
+        self.bottom_panel.setVisible(False)
 
-        # Create vertical splitter for center region (editor + bottom dock)
+        # Connect close button
+        self.bottom_panel.get_close_button().clicked.connect(
+            lambda: self._toggle_bottom_region(False)
+        )
+
+        # Create vertical splitter for center region (editor + bottom panel)
         self.center_vertical_splitter = QSplitter(Qt.Vertical, self)
         self.center_vertical_splitter.setChildrenCollapsible(False)
         self.center_vertical_splitter.addWidget(self.central_stack)
-        self.center_vertical_splitter.addWidget(self.bottom_dock_container)
+        self.center_vertical_splitter.addWidget(self.bottom_panel)
         self.center_vertical_splitter.setStretchFactor(0, 1)  # Editor expands
-        self.center_vertical_splitter.setStretchFactor(1, 0)  # Bottom dock fixed height
+        self.center_vertical_splitter.setStretchFactor(1, 0)  # Bottom panel fixed height
 
         # Set initial sizes for center vertical splitter (75% editor, 25% terminal when shown)
         # More generous to editor on small screens
@@ -639,8 +646,8 @@ class MainWindow(QMainWindow):
         ]
         for dock in bottom_docks:
             dock.hide()
-        if self.bottom_dock_container:
-            self.bottom_dock_container.setVisible(False)
+        if self.bottom_panel:
+            self.bottom_panel.setVisible(False)
             if hasattr(self, "toggle_bottom_region"):
                 self.toggle_bottom_region.setChecked(False)
 
@@ -704,7 +711,7 @@ class MainWindow(QMainWindow):
 
     def _collect_dock_regions(self) -> None:
         self.left_docks = [self.left_dock_stack.widget(i) for i in range(self.left_dock_stack.count())]
-        self.bottom_docks = [self.bottom_dock_stack.widget(i) for i in range(self.bottom_dock_stack.count())]
+        self.bottom_docks = []  # No longer using dock stack for bottom panels
         self.right_docks = [self.right_dock_stack.widget(i) for i in range(self.right_dock_stack.count())]
 
         preferred_left = getattr(self, "project_dock", None)
@@ -720,18 +727,16 @@ class MainWindow(QMainWindow):
         for dock in self.right_docks:
             dock.setVisible(dock is self.right_dock_stack.currentWidget())
 
-        if self.bottom_docks:
-            self.bottom_dock_stack.setCurrentWidget(self.bottom_docks[0])
-        for dock in self.bottom_docks:
-            dock.setVisible(False)
+        # Bottom panel is now managed separately (Windsurf-style)
+        # It's hidden by default and shown when user toggles it
 
     def _place_left_dock(self, dock: QDockWidget, area: Qt.DockWidgetArea = Qt.LeftDockWidgetArea) -> None:
         dock.setAllowedAreas(Qt.LeftDockWidgetArea)
         self.left_dock_stack.addWidget(dock)
 
     def _place_bottom_dock(self, dock: QDockWidget) -> None:
-        dock.setAllowedAreas(Qt.BottomDockWidgetArea)
-        self.bottom_dock_stack.addWidget(dock)
+        """Legacy method - bottom panels now use BottomPanel widget directly."""
+        pass  # No longer needed with new Windsurf-style bottom panel
 
     def _place_ai_dock(self, dock: QDockWidget) -> None:
         dock.setAllowedAreas(Qt.RightDockWidgetArea)
@@ -757,16 +762,15 @@ class MainWindow(QMainWindow):
         self._update_view_action_states()
 
     def _toggle_bottom_region(self, visible: bool) -> None:
-        """Toggle the bottom dock region and ensure terminal is shown when opened."""
-        if not hasattr(self, "bottom_dock_container"):
+        """Toggle the bottom panel region and ensure terminal is shown when opened."""
+        if not hasattr(self, "bottom_panel"):
             return
 
-        self.bottom_dock_container.setVisible(visible)
+        self.bottom_panel.setVisible(visible)
 
-        if visible and hasattr(self, "terminal_dock"):
-            # When opening bottom region, show the terminal dock by default
-            self.bottom_dock_stack.setCurrentWidget(self.terminal_dock)
-            self.terminal_dock.show()
+        if visible and hasattr(self, "terminal_panel_index"):
+            # When opening bottom region, show the terminal panel by default
+            self.bottom_panel.set_current_panel(self.terminal_panel_index)
 
         self._update_view_action_states()
 
@@ -816,8 +820,8 @@ class MainWindow(QMainWindow):
         # Terminal region
         if hasattr(self, "action_toggle_terminal"):
             terminal_open = False
-            if hasattr(self, "bottom_dock_container"):
-                terminal_open = self.bottom_dock_container.isVisible()
+            if hasattr(self, "bottom_panel"):
+                terminal_open = self.bottom_panel.isVisible()
             self.action_toggle_terminal.setChecked(terminal_open)
 
         # 3D Architecture Map
@@ -1078,18 +1082,27 @@ class MainWindow(QMainWindow):
         return results
 
     def _create_terminal_dock(self) -> None:
-        dock = QDockWidget("Terminal", self)
-        dock.setObjectName("terminalDock")
-        # Remove close button from the dock
-        dock.setFeatures(dock.features() & ~QDockWidget.DockWidgetClosable)
-        terminal = TerminalWidget(self.workspace_manager)
-        dock.setWidget(terminal)
-        dock.setMinimumHeight(100)  # Reduced from 140 for small screens
-        dock.setAllowedAreas(Qt.BottomDockWidgetArea)
-        self._place_bottom_dock(dock)
-        self._register_dock_action(dock)
-        self.terminal = terminal
-        self.terminal_dock = dock
+        """Create all bottom panels (Windsurf-style)."""
+        # Create all panel widgets
+        self.problems_panel = ProblemsPanel(self)
+        self.output_panel = OutputPanel(self)
+        self.debug_console_panel = DebugConsolePanel(self)
+        self.terminal_widget = WindsurfTerminalWidget(self.workspace_manager, self)
+        self.ports_panel = PortsPanel(self)
+
+        # Add panels to bottom panel in Windsurf order
+        self.bottom_panel.add_panel("Problems", self.problems_panel)
+        self.output_panel_index = self.bottom_panel.add_panel("Output", self.output_panel)
+        self.bottom_panel.add_panel("Debug Console", self.debug_console_panel)
+        self.terminal_panel_index = self.bottom_panel.add_panel("Terminal", self.terminal_widget)
+        self.bottom_panel.add_panel("Ports", self.ports_panel)
+
+        # Set terminal as default panel
+        self.bottom_panel.set_current_panel(self.terminal_panel_index)
+
+        # Keep backward compatibility references
+        self.terminal = self.terminal_widget
+        self.terminal_dock = self.bottom_panel  # For compatibility
 
     def _create_project_dock(self) -> None:
         dock = QDockWidget("Explorer", self)
@@ -1625,9 +1638,10 @@ class MainWindow(QMainWindow):
             self.right_region_container.show()
             self.toggle_right_region.setChecked(True)
         elif dock in getattr(self, "bottom_docks", []):
-            self.bottom_dock_stack.setCurrentWidget(dock)
-            self.bottom_dock_container.show()
-            self.toggle_bottom_region.setChecked(True)
+            # Legacy support - bottom docks now managed by BottomPanel
+            if hasattr(self, "bottom_panel"):
+                self.bottom_panel.show()
+                self.toggle_bottom_region.setChecked(True)
         if tool_id and hasattr(self, "activity_bar"):
             self.activity_bar.setActiveTool(tool_id)
 
@@ -1679,15 +1693,14 @@ class MainWindow(QMainWindow):
             self.toggle_left_region.setChecked(False)
 
     def _toggle_terminal(self, checked: bool) -> None:
-        if not hasattr(self, "terminal_dock"):
+        if not hasattr(self, "bottom_panel"):
             return
 
-        self.bottom_dock_container.setVisible(checked)
+        self.bottom_panel.setVisible(checked)
 
-        if checked:
-            # Ensure the terminal dock is visible when showing the bottom region
-            self.bottom_dock_stack.setCurrentWidget(self.terminal_dock)
-            self.terminal_dock.show()
+        if checked and hasattr(self, "terminal_panel_index"):
+            # Ensure the terminal panel is visible when showing the bottom region
+            self.bottom_panel.set_current_panel(self.terminal_panel_index)
             self.toggle_bottom_region.setChecked(True)
         else:
             self.toggle_bottom_region.setChecked(False)
