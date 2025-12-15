@@ -9,6 +9,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal, QProcess, QSize
 from PySide6.QtGui import QIcon, QFontMetrics
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -82,7 +83,7 @@ class WindsurfTerminalWidget(QWidget):
         self.session_list = QListWidget(self)
         self.session_list.setObjectName("terminalSessionList")
         self.session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.session_list.setVerticalScrollMode(self.session_list.ScrollPerPixel)
+        self.session_list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.session_list.setUniformItemSizes(True)
         self.session_list.setIconSize(QSize(14, 14))
         self.session_list.setSpacing(0)
