@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import builtins
 import keyword
+import re
 import tokenize
 from io import StringIO
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 from PySide6.QtCore import QTimer, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import (
@@ -23,7 +24,18 @@ from PySide6.QtGui import (
     QTextDocument,
     QPalette,
 )
-from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget, QToolTip, QListWidget, QListWidgetItem
+from PySide6.QtWidgets import (
+    QPlainTextEdit,
+    QTextEdit,
+    QWidget,
+    QToolTip,
+    QListWidget,
+    QListWidgetItem,
+    QLabel,
+    QVBoxLayout,
+    QHBoxLayout,
+    QFrame,
+)
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.theme import ThemeManager
@@ -36,8 +48,129 @@ from ghostline.ai.ai_client import AIClient
 from ghostline.ui.editor.semantic_tokens import SemanticToken, SemanticTokenProvider
 
 
-class CompletionWidget(QListWidget):
-    """Popup widget for displaying LSP completions."""
+class SnippetManager:
+    """Manages snippet insertion and tab stop navigation."""
+
+    def __init__(self, editor: "CodeEditor") -> None:
+        self.editor = editor
+        self.active_snippet: Optional[dict] = None
+        self.tab_stops: List[tuple[int, int, str]] = []  # (start_pos, length, placeholder)
+        self.current_tab_stop = 0
+
+    def parse_snippet(self, text: str) -> tuple[str, List[tuple[int, int, str]]]:
+        """Parse snippet text and extract tab stops.
+
+        Supports:
+        - ${1:placeholder} - tab stop with placeholder text
+        - $1 - simple tab stop
+        - $0 - final cursor position
+        - ${1|choice1,choice2|} - choice tab stop (simplified to first choice)
+        """
+        tab_stops: List[tuple[int, int, str]] = []
+        result = []
+        offset = 0
+
+        # Pattern: ${number:placeholder} or ${number|choice1,choice2|} or $number
+        pattern = r'\$\{(\d+):([^}]*)\}|\$\{(\d+)\|([^}]*)\}|\$(\d+)'
+
+        for match in re.finditer(pattern, text):
+            # Add text before the match
+            result.append(text[offset:match.start()])
+
+            if match.group(1):  # ${number:placeholder}
+                tab_num = int(match.group(1))
+                placeholder = match.group(2)
+                pos = len(''.join(result))
+                tab_stops.append((tab_num, pos, len(placeholder), placeholder))
+                result.append(placeholder)
+            elif match.group(3):  # ${number|choice1,choice2|}
+                tab_num = int(match.group(3))
+                choices = match.group(4).split(',')
+                placeholder = choices[0] if choices else ""
+                pos = len(''.join(result))
+                tab_stops.append((tab_num, pos, len(placeholder), placeholder))
+                result.append(placeholder)
+            elif match.group(5):  # $number
+                tab_num = int(match.group(5))
+                pos = len(''.join(result))
+                tab_stops.append((tab_num, pos, 0, ""))
+
+            offset = match.end()
+
+        # Add remaining text
+        result.append(text[offset:])
+
+        # Sort tab stops by number
+        tab_stops.sort(key=lambda x: x[0])
+
+        # Convert to (position, length, placeholder) tuples
+        simplified_stops = [(pos, length, placeholder) for _, pos, length, placeholder in tab_stops]
+
+        return ''.join(result), simplified_stops
+
+    def insert_snippet(self, snippet_text: str) -> None:
+        """Insert snippet and set up tab stops."""
+        parsed_text, tab_stops = self.parse_snippet(snippet_text)
+
+        cursor = self.editor.textCursor()
+        start_pos = cursor.position()
+
+        # Insert the parsed text
+        cursor.insertText(parsed_text)
+
+        # Adjust tab stop positions relative to insertion point
+        self.tab_stops = [(start_pos + pos, length, placeholder) for pos, length, placeholder in tab_stops]
+        self.current_tab_stop = 0
+
+        if self.tab_stops:
+            self.active_snippet = {"start": start_pos, "text": parsed_text}
+            self.jump_to_next_tab_stop()
+        else:
+            self.active_snippet = None
+
+    def jump_to_next_tab_stop(self) -> bool:
+        """Jump to next tab stop. Returns True if jumped, False if no more stops."""
+        if not self.tab_stops or self.current_tab_stop >= len(self.tab_stops):
+            self.active_snippet = None
+            return False
+
+        pos, length, placeholder = self.tab_stops[self.current_tab_stop]
+        cursor = self.editor.textCursor()
+        cursor.setPosition(pos)
+        if length > 0:
+            cursor.setPosition(pos + length, QTextCursor.MoveMode.KeepAnchor)
+        self.editor.setTextCursor(cursor)
+
+        self.current_tab_stop += 1
+        return True
+
+    def cancel_snippet(self) -> None:
+        """Cancel active snippet."""
+        self.active_snippet = None
+        self.tab_stops = []
+        self.current_tab_stop = 0
+
+
+class CompletionWidget(QWidget):
+    """Enhanced popup widget for displaying LSP completions with documentation preview."""
+
+    # LSP CompletionItemKind mapping to display strings
+    COMPLETION_KINDS = {
+        1: "Text", 2: "Method", 3: "Function", 4: "Constructor", 5: "Field",
+        6: "Variable", 7: "Class", 8: "Interface", 9: "Module", 10: "Property",
+        11: "Unit", 12: "Value", 13: "Enum", 14: "Keyword", 15: "Snippet",
+        16: "Color", 17: "File", 18: "Reference", 19: "Folder", 20: "EnumMember",
+        21: "Constant", 22: "Struct", 23: "Event", 24: "Operator", 25: "TypeParameter"
+    }
+
+    # Symbol characters for completion kinds (similar to VS Code)
+    KIND_SYMBOLS = {
+        1: "abc", 2: "ƒ", 3: "ƒ", 4: "ƒ", 5: "⚬",
+        6: "x", 7: "○", 8: "◎", 9: "□", 10: "⚬",
+        11: "u", 12: "v", 13: "Ɛ", 14: "‹›", 15: "▭",
+        16: "⬜", 17: "📄", 18: "⮕", 19: "📁", 20: "◆",
+        21: "◆", 22: "◫", 23: "⚡", 24: "+", 25: "T"
+    }
 
     def __init__(self, editor: "CodeEditor") -> None:
         super().__init__(editor)
@@ -46,45 +179,185 @@ class CompletionWidget(QListWidget):
         self.completion_prefix = ""
         self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setMaximumHeight(200)
-        self.setMinimumWidth(300)
-        self.itemActivated.connect(self._insert_completion)
+
+        # Create layout
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Left side: completion list
+        self.list_widget = QListWidget()
+        self.list_widget.setMinimumWidth(300)
+        self.list_widget.setMaximumHeight(300)
+        self.list_widget.itemActivated.connect(self._insert_completion)
+        self.list_widget.currentRowChanged.connect(self._update_documentation)
+        layout.addWidget(self.list_widget)
+
+        # Right side: documentation preview
+        self.doc_frame = QFrame()
+        self.doc_frame.setFrameShape(QFrame.StyledPanel)
+        self.doc_frame.setMinimumWidth(350)
+        self.doc_frame.setMaximumWidth(450)
+        self.doc_frame.setMaximumHeight(300)
+        doc_layout = QVBoxLayout(self.doc_frame)
+        doc_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.doc_label = QLabel()
+        self.doc_label.setWordWrap(True)
+        self.doc_label.setTextFormat(Qt.TextFormat.RichText)
+        self.doc_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        doc_layout.addWidget(self.doc_label)
+
+        layout.addWidget(self.doc_frame)
+
+        # Apply VS Code Dark+ styling
+        self.setStyleSheet("""
+            QListWidget {
+                background-color: #252526;
+                color: #CCCCCC;
+                border: 1px solid #454545;
+                outline: none;
+                font-size: 13px;
+            }
+            QListWidget::item {
+                padding: 4px 8px;
+                border: none;
+            }
+            QListWidget::item:selected {
+                background-color: #094771;
+                color: #FFFFFF;
+            }
+            QListWidget::item:hover {
+                background-color: #2A2D2E;
+            }
+            QFrame {
+                background-color: #1E1E1E;
+                border: 1px solid #454545;
+            }
+            QLabel {
+                color: #CCCCCC;
+                font-size: 12px;
+            }
+        """)
+
         self.hide()
 
     def show_completions(self, items: list[dict], prefix: str = "") -> None:
         """Display completion items filtered by prefix."""
         self.completion_items = items
         self.completion_prefix = prefix
-        self.clear()
+        self.list_widget.clear()
 
-        # Filter items by prefix
+        # Filter items by prefix - prioritize prefix matches at start
+        def match_score(item: dict) -> tuple[int, str]:
+            label = item.get("label", "").lower()
+            prefix_lower = prefix.lower()
+            if label.startswith(prefix_lower):
+                return (0, label)  # Exact prefix match - highest priority
+            elif prefix_lower in label:
+                return (1, label)  # Contains prefix
+            else:
+                return (2, label)  # No match
+
         filtered_items = [
             item for item in items
             if prefix.lower() in item.get("label", "").lower()
         ]
 
+        # Sort by match quality
+        filtered_items.sort(key=match_score)
+
         if not filtered_items:
             self.hide()
             return
 
-        for item in filtered_items[:20]:  # Limit to 20 items
+        for item in filtered_items[:50]:  # Limit to 50 items (VS Code shows more than 20)
             label = item.get("label", "")
+            kind = item.get("kind", 1)
             detail = item.get("detail", "")
-            display_text = f"{label}  {detail}" if detail else label
+
+            # Create display text with kind symbol
+            kind_symbol = self.KIND_SYMBOLS.get(kind, "○")
+            display_text = f"{kind_symbol}  {label}"
+            if detail and len(detail) < 40:
+                display_text += f"  {detail}"
+
             list_item = QListWidgetItem(display_text)
             list_item.setData(Qt.ItemDataRole.UserRole, item)
-            self.addItem(list_item)
 
-        if self.count() > 0:
-            self.setCurrentRow(0)
+            # Color code by kind (similar to VS Code)
+            if kind in {2, 3, 4}:  # Methods/Functions
+                list_item.setForeground(QColor("#DCDCAA"))
+            elif kind in {7, 8}:  # Class/Interface
+                list_item.setForeground(QColor("#4EC9B0"))
+            elif kind == 14:  # Keyword
+                list_item.setForeground(QColor("#569CD6"))
+            elif kind == 15:  # Snippet
+                list_item.setForeground(QColor("#D16969"))
+
+            self.list_widget.addItem(list_item)
+
+        if self.list_widget.count() > 0:
+            self.list_widget.setCurrentRow(0)
             # Position below cursor
             cursor_rect = self.editor.cursorRect()
             global_pos = self.editor.mapToGlobal(cursor_rect.bottomLeft())
             self.move(global_pos)
             self.show()
             self.raise_()
+            self._update_documentation(0)
         else:
             self.hide()
+
+    def _update_documentation(self, row: int) -> None:
+        """Update documentation preview for selected item."""
+        if row < 0 or row >= self.list_widget.count():
+            self.doc_label.setText("")
+            return
+
+        item = self.list_widget.item(row)
+        completion_data = item.data(Qt.ItemDataRole.UserRole) if item else None
+        if not completion_data:
+            self.doc_label.setText("")
+            return
+
+        # Build documentation HTML
+        html_parts = []
+
+        label = completion_data.get("label", "")
+        kind = completion_data.get("kind", 1)
+        kind_name = self.COMPLETION_KINDS.get(kind, "Symbol")
+        detail = completion_data.get("detail", "")
+        documentation = completion_data.get("documentation", "")
+
+        # Header with label and kind
+        html_parts.append(f'<div style="margin-bottom: 8px;">')
+        html_parts.append(f'<span style="color: #4EC9B0; font-weight: bold; font-size: 14px;">{label}</span>')
+        html_parts.append(f'<span style="color: #858585; font-size: 11px; margin-left: 8px;">({kind_name})</span>')
+        html_parts.append('</div>')
+
+        # Detail (function signature, type info, etc.)
+        if detail:
+            html_parts.append(f'<div style="margin-bottom: 8px; font-family: monospace; color: #DCDCAA; background-color: #1E1E1E; padding: 4px; border-left: 3px solid #007ACC;">')
+            html_parts.append(detail.replace('<', '&lt;').replace('>', '&gt;'))
+            html_parts.append('</div>')
+
+        # Documentation text
+        if documentation:
+            doc_text = documentation
+            # Handle dict format (LSP MarkupContent)
+            if isinstance(documentation, dict):
+                doc_text = documentation.get("value", "")
+
+            # Convert markdown code blocks to styled HTML
+            doc_text = str(doc_text).replace('<', '&lt;').replace('>', '&gt;')
+            doc_text = re.sub(r'`([^`]+)`', r'<code style="background-color: #1E1E1E; padding: 2px 4px;">\1</code>', doc_text)
+
+            html_parts.append(f'<div style="color: #CCCCCC; line-height: 1.4;">')
+            html_parts.append(doc_text)
+            html_parts.append('</div>')
+
+        self.doc_label.setText(''.join(html_parts) if html_parts else "No documentation available.")
 
     def _insert_completion(self, item: QListWidgetItem) -> None:
         """Insert the selected completion item."""
@@ -92,31 +365,42 @@ class CompletionWidget(QListWidget):
         if not completion_data:
             return
 
+        # Check for snippet format
+        insert_format = completion_data.get("insertTextFormat", 1)  # 1 = PlainText, 2 = Snippet
         insert_text = completion_data.get("insertText") or completion_data.get("label", "")
 
         # Remove the prefix that was already typed
         cursor = self.editor.textCursor()
         if self.completion_prefix:
             cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, len(self.completion_prefix))
-        cursor.insertText(insert_text)
-        self.editor.setTextCursor(cursor)
+            cursor.removeSelectedText()
+
+        # Insert as snippet or plain text
+        if insert_format == 2 and hasattr(self.editor, 'snippet_manager'):
+            # Insert as snippet with tab stops
+            self.editor.snippet_manager.insert_snippet(insert_text)
+        else:
+            # Insert as plain text
+            cursor.insertText(insert_text)
+            self.editor.setTextCursor(cursor)
+
         self.hide()
 
     def select_next(self) -> None:
         """Select next completion item."""
-        current = self.currentRow()
-        if current < self.count() - 1:
-            self.setCurrentRow(current + 1)
+        current = self.list_widget.currentRow()
+        if current < self.list_widget.count() - 1:
+            self.list_widget.setCurrentRow(current + 1)
 
     def select_previous(self) -> None:
         """Select previous completion item."""
-        current = self.currentRow()
+        current = self.list_widget.currentRow()
         if current > 0:
-            self.setCurrentRow(current - 1)
+            self.list_widget.setCurrentRow(current - 1)
 
     def accept_current(self) -> None:
         """Accept currently selected completion."""
-        current_item = self.currentItem()
+        current_item = self.list_widget.currentItem()
         if current_item:
             self._insert_completion(current_item)
 
@@ -387,6 +671,23 @@ class CodeEditor(QPlainTextEdit):
         self._hover_timer.timeout.connect(self._request_hover_at_mouse)
         self._hover_position: QPoint | None = None
 
+        # Auto-completion timer for debouncing
+        self._completion_timer = QTimer(self)
+        self._completion_timer.setSingleShot(True)
+
+        # IntelliSense configuration from settings
+        intellisense_config = self.config.get("intellisense", {}) if self.config else {}
+        self._intellisense_enabled = intellisense_config.get("enabled", True)
+        self._auto_trigger_enabled = intellisense_config.get("auto_trigger", True)
+        debounce_ms = intellisense_config.get("debounce_ms", 150)
+        self._completion_timer.setInterval(debounce_ms)
+        self._completion_timer.timeout.connect(self._auto_request_completions)
+
+        # Trigger characters from config
+        trigger_chars = intellisense_config.get("trigger_characters", ['.', ':', '>', '(', '[', '"', "'", '/', '@'])
+        self._trigger_characters = set(trigger_chars) if isinstance(trigger_chars, list) else {'.', ':', '>', '(', '[', '"', "'", '/', '@'}
+        self._min_chars_for_completion = intellisense_config.get("min_chars", 1)
+
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
         self.setFont(QFont(font_family, font_size))
@@ -408,6 +709,7 @@ class CodeEditor(QPlainTextEdit):
         self.folding = FoldingManager(self)
         self.minimap = MiniMap(self)
         self.completion_widget = CompletionWidget(self)
+        self.snippet_manager = SnippetManager(self)
         self.setMouseTracking(True)  # Enable mouse tracking for hover
 
         self._update_line_number_area_width(self.blockCount())
@@ -597,12 +899,34 @@ class CodeEditor(QPlainTextEdit):
             elif event.key() == Qt.Key_Up:
                 self.completion_widget.select_previous()
                 return
-            elif event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Tab):
+            elif event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.completion_widget.accept_current()
+                return
+            elif event.key() == Qt.Key_Tab:
+                # Tab accepts completion and starts snippet navigation if available
                 self.completion_widget.accept_current()
                 return
             elif event.key() == Qt.Key_Escape:
                 self.completion_widget.hide()
                 return
+            # Allow typing to filter completions
+            elif event.text() and event.text().isprintable():
+                super().keyPressEvent(event)
+                self._trigger_auto_completion(force=False)
+                return
+
+        # Handle snippet tab navigation
+        if event.key() == Qt.Key_Tab and not event.modifiers():
+            if self.snippet_manager.active_snippet:
+                if self.snippet_manager.jump_to_next_tab_stop():
+                    return
+                # No more tab stops, exit snippet mode and continue
+                self.snippet_manager.cancel_snippet()
+
+        # Handle snippet escape
+        if event.key() == Qt.Key_Escape and self.snippet_manager.active_snippet:
+            self.snippet_manager.cancel_snippet()
+            return
 
         # Trigger completions with Ctrl+Space
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key_Space:
@@ -644,7 +968,61 @@ class CodeEditor(QPlainTextEdit):
             super().keyPressEvent(event)
             self._sync_extra_cursors()
             return
+
+        # Call super to handle the key event first
         super().keyPressEvent(event)
+
+        # Auto-trigger completions after typing
+        if self._auto_trigger_enabled and self._intellisense_enabled:
+            # Check if this was a printable character or trigger character
+            if event.text():
+                self._trigger_auto_completion()
+
+    def _trigger_auto_completion(self, force: bool = False) -> None:
+        """Trigger auto-completion with debouncing."""
+        if not self._auto_trigger_enabled and not force:
+            return
+
+        # Get the character that was just typed
+        cursor = self.textCursor()
+        pos = cursor.position()
+
+        # Get text before cursor to check for trigger characters
+        cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, 1)
+        last_char = cursor.selectedText()
+
+        # Reset cursor position
+        cursor = self.textCursor()
+
+        # Check if this is a trigger character
+        is_trigger_char = last_char in self._trigger_characters
+
+        # Get current word prefix
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        prefix = cursor.selectedText()
+
+        # Trigger completion if:
+        # 1. It's a trigger character (immediate trigger)
+        # 2. We have enough characters typed
+        # 3. Force flag is set
+        if is_trigger_char:
+            # Immediate trigger for trigger characters
+            self._completion_timer.stop()
+            self._auto_request_completions()
+        elif force or len(prefix) >= self._min_chars_for_completion:
+            # Debounced trigger for regular typing
+            if self._completion_timer.isActive():
+                self._completion_timer.stop()
+            self._completion_timer.start()
+        else:
+            # Hide completions if prefix is too short
+            self.completion_widget.hide()
+
+    def _auto_request_completions(self) -> None:
+        """Auto-triggered completion request (called after debounce)."""
+        # Don't trigger if already showing completions (to avoid flickering)
+        # unless this is a new trigger
+        self._request_completions()
 
     # Highlight current line and diagnostics
     def _highlight_current_line(self) -> None:

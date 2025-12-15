@@ -80,6 +80,23 @@ window:
 formatting:
   on_save: false
   provider: "lsp"
+intellisense:
+  enabled: true
+  auto_trigger: true
+  trigger_characters:
+    - "."
+    - ":"
+    - ">"
+    - "("
+    - "["
+    - '"'
+    - "'"
+    - "/"
+    - "@"
+  min_chars: 1
+  debounce_ms: 150
+  show_documentation: true
+  snippet_support: true
 lsp:
   servers:
     python:
