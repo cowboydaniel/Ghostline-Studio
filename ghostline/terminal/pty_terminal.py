@@ -191,7 +191,7 @@ class PTYTerminal(QTextEdit):
         self.read_timer.start(50)  # Read every 50ms
 
         # Control flags
-        self._drop_next_output = False
+        self._suppress_interrupt_echo = False
 
     def start_shell(self, working_dir: Optional[Path] = None) -> None:
         """Start a shell in a PTY."""
@@ -257,10 +257,14 @@ class PTYTerminal(QTextEdit):
 
     def _append_output(self, text: str) -> None:
         """Append output text with ANSI formatting."""
-        if self._drop_next_output:
-            self._drop_next_output = False
-            self.clear_output()
-            return
+        if self._suppress_interrupt_echo:
+            self._suppress_interrupt_echo = False
+            # Drop the echoed Ctrl+C and any immediate newlines, but keep the prompt
+            text = text.lstrip("\r\n")
+            if text.startswith("\x03"):
+                text = text[1:].lstrip("\r\n")
+            if not text:
+                return
 
         # Parse ANSI codes
         segments = self.ansi_parser.parse(text)
@@ -391,7 +395,7 @@ class PTYTerminal(QTextEdit):
 
     def send_interrupt(self) -> None:
         """Send a Ctrl+C interrupt to the running PTY process."""
-        self._drop_next_output = True
+        self._suppress_interrupt_echo = True
         self.clear_output()
 
         if self.pid is not None:
