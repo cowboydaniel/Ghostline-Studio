@@ -308,7 +308,8 @@ class WindsurfTerminalWidget(QWidget):
         if not self.sessions:
             return
         session = self.sessions[self.current_session_index]
-        session.terminal.write_input("exit\n")
+        session.terminal.send_interrupt()
+        session.terminal.clear_output()
 
     def _launch_external_terminal(self, cwd: Path) -> None:
         """Launch system terminal emulator."""
