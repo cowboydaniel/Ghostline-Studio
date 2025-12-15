@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import ghostline.resources.resources_rc  # type: ignore  # noqa: F401
 from ghostline.core.events import CommandRegistry
 from ghostline.core.resources import load_icon
 from ghostline.core.theme import ThemeManager
