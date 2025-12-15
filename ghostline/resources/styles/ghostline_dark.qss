@@ -645,3 +645,45 @@ QSplitter::handle:hover {
     selection-background-color: #264F78;
     selection-color: #FFFFFF;
 }
+
+/* Welcome Screen (Windsurf-style) */
+#WelcomePortal {
+    background-color: #1E1E1E;
+}
+
+#WelcomeTitle {
+    color: #E0E0E0;
+    font-size: 48px;
+    font-weight: bold;
+}
+
+#WelcomeSubtitle {
+    color: #9D9D9D;
+    font-size: 14px;
+}
+
+#WelcomeAction {
+    background-color: #252526;
+    border: 1px solid #2D2D30;
+    border-radius: 6px;
+}
+
+#WelcomeAction:hover {
+    background-color: #2A2D2E;
+    border-color: #3E3E42;
+}
+
+#WelcomeActionLabel {
+    color: #CCCCCC;
+    font-size: 13px;
+}
+
+#WelcomeShortcut {
+    background-color: #3C3C3C;
+    color: #D4D4D4;
+    border: 1px solid #4D4D4D;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-family: "Consolas", "Monaco", "Courier New", monospace;
+}
