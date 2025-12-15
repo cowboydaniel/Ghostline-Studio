@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.ai.ai_client import AIClient, ProactiveSuggestion
+from ghostline.ai.chat_history_manager import ChatHistoryManager
 from ghostline.ai.context_engine import ContextChunk, ContextEngine
 from ghostline.ai.model_registry import ModelDescriptor, ModelRegistry
 
@@ -1061,6 +1062,12 @@ class AIChatPanel(QWidget):
         self._current_messages: list[ChatMessage] = []
         self._current_chat_started_at: datetime = datetime.now()
         self.chat_history: list[ChatSession] = []
+
+        # Initialize chat history persistence
+        self.chat_history_manager = ChatHistoryManager()
+        self._session_ids: dict[ChatSession, str] = {}  # Maps sessions to their IDs
+        self._load_chat_history_from_disk()
+
         self.model_registry = ModelRegistry(self.client.config)
         self.available_models: list[ModelDescriptor] = []
         self._has_openai_key = bool(self.model_registry._openai_settings().get("api_key"))
@@ -1552,6 +1559,13 @@ class AIChatPanel(QWidget):
             for message in messages
         ]
 
+    def _load_chat_history_from_disk(self) -> None:
+        """Load all chat sessions from disk on startup."""
+        sessions = self.chat_history_manager.load_all_sessions()
+        for session_id, session in sessions:
+            self.chat_history.append(session)
+            self._session_ids[session] = session_id
+
     def _derive_title(self, messages: list[ChatMessage]) -> str:
         for message in messages:
             if message.role.lower() == "you" and message.text:
@@ -1567,10 +1581,23 @@ class AIChatPanel(QWidget):
         session = ChatSession(
             self._derive_title(snapshot), snapshot, self._current_chat_started_at
         )
+
+        # Determine if we're updating an existing session or creating a new one
+        session_id = None
         if self.chat_history and self.chat_history[0].created_at == session.created_at:
+            # Updating existing session
+            old_session = self.chat_history[0]
+            session_id = self._session_ids.get(old_session)
             self.chat_history[0] = session
+            if session_id:
+                self._session_ids.pop(old_session, None)
         else:
+            # Creating new session
             self.chat_history.insert(0, session)
+
+        # Save to disk
+        session_id = self.chat_history_manager.save_session(session, session_id)
+        self._session_ids[session] = session_id
 
     def _toggle_plus_menu(self) -> None:
         if self.plus_menu and self.plus_menu.isVisible():
@@ -1804,6 +1831,12 @@ class AIChatPanel(QWidget):
             return
         session = item.data(Qt.UserRole)
         if session in self.chat_history:
+            # Delete from disk
+            session_id = self._session_ids.get(session)
+            if session_id:
+                self.chat_history_manager.delete_session(session_id)
+                self._session_ids.pop(session, None)
+            # Delete from in-memory list
             self.chat_history.remove(session)
         row = list_widget.row(item)
         removed = list_widget.takeItem(row)
