@@ -10,69 +10,13 @@ from PySide6.QtWidgets import QTabWidget
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.events import CommandRegistry
-from ghostline.core.resources import load_icon
+from ghostline.core.resources import load_file_icon
 from ghostline.core.theme import ThemeManager
 from ghostline.editor.code_editor import CodeEditor
 from ghostline.lang.lsp_manager import LSPManager
 from ghostline.ai.ai_client import AIClient
 from ghostline.ui.editor.EditorWidget import EditorWidget
 from ghostline.ui.tabbar import EditorTabBar
-
-
-FILE_ICON_BY_SUFFIX: dict[str, str] = {
-    ".py": "file_python.svg",
-    ".json": "file_json.svg",
-    ".yaml": "file_yaml.svg",
-    ".yml": "file_yaml.svg",
-    ".toml": "file_toml.svg",
-    ".md": "file_markdown.svg",
-    ".markdown": "file_markdown.svg",
-    ".txt": "file_text.svg",
-    ".log": "file_text.svg",
-    ".html": "file_html.svg",
-    ".htm": "file_html.svg",
-    ".css": "file_css.svg",
-    ".js": "file_javascript.svg",
-    ".mjs": "file_javascript.svg",
-    ".cjs": "file_javascript.svg",
-    ".jsx": "file_javascript.svg",
-    ".ts": "file_typescript.svg",
-    ".tsx": "file_typescript.svg",
-    ".xml": "file_xml.svg",
-    ".sh": "file_shell.svg",
-    ".bash": "file_shell.svg",
-    ".zsh": "file_shell.svg",
-    ".c": "file_c.svg",
-    ".h": "file_c.svg",
-    ".cpp": "file_cpp.svg",
-    ".cc": "file_cpp.svg",
-    ".cxx": "file_cpp.svg",
-    ".hpp": "file_cpp.svg",
-    ".hh": "file_cpp.svg",
-    ".hxx": "file_cpp.svg",
-    ".java": "file_java.svg",
-    ".rb": "file_ruby.svg",
-    ".go": "file_go.svg",
-    ".rs": "file_rust.svg",
-    ".php": "file_php.svg",
-    ".sql": "file_sql.svg",
-    ".csv": "file_csv.svg",
-    ".tsv": "file_csv.svg",
-    ".ini": "file_config.svg",
-    ".cfg": "file_config.svg",
-    ".conf": "file_config.svg",
-    ".config": "file_config.svg",
-    ".env": "file_config.svg",
-    ".png": "file_image.svg",
-    ".jpg": "file_image.svg",
-    ".jpeg": "file_image.svg",
-    ".gif": "file_image.svg",
-    ".bmp": "file_image.svg",
-    ".svg": "file_image.svg",
-    ".webp": "file_image.svg",
-    ".ico": "file_image.svg",
-    ".pdf": "file_pdf.svg",
-}
 
 
 class EditorTabs(QTabWidget):
@@ -151,15 +95,8 @@ class EditorTabs(QTabWidget):
         return None
 
     def _icon_for_file(self, path: Path) -> QIcon:
-        suffix = path.suffix.lower()
-        if not suffix:
-            return load_icon("file_text.svg", fallback="file_generic.svg")
-
-        icon_name = FILE_ICON_BY_SUFFIX.get(suffix)
-        if icon_name:
-            return load_icon(icon_name, fallback="file_generic.svg")
-
-        return load_icon("file_generic.svg")
+        """Get the appropriate icon for a file based on its name and extension."""
+        return load_file_icon(path.name)
 
     def _close_tab(self, index: int) -> None:
         widget = self.widget(index)
