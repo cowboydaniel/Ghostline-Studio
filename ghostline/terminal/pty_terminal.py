@@ -5,6 +5,7 @@ import os
 import sys
 import pty
 import select
+import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -189,6 +190,9 @@ class PTYTerminal(QTextEdit):
         self.read_timer.timeout.connect(self._read_output)
         self.read_timer.start(50)  # Read every 50ms
 
+        # Control flags
+        self._suppress_interrupt_echo = False
+
     def start_shell(self, working_dir: Optional[Path] = None) -> None:
         """Start a shell in a PTY."""
         if self.master_fd is not None:
@@ -253,6 +257,15 @@ class PTYTerminal(QTextEdit):
 
     def _append_output(self, text: str) -> None:
         """Append output text with ANSI formatting."""
+        if self._suppress_interrupt_echo:
+            self._suppress_interrupt_echo = False
+            # Drop the echoed Ctrl+C and any immediate newlines, but keep the prompt
+            text = text.lstrip("\r\n")
+            if text.startswith("\x03"):
+                text = text[1:].lstrip("\r\n")
+            if not text:
+                return
+
         # Parse ANSI codes
         segments = self.ansi_parser.parse(text)
 
@@ -379,6 +392,32 @@ class PTYTerminal(QTextEdit):
                 os.write(self.master_fd, text.encode("utf-8"))
             except OSError:
                 pass
+
+    def send_interrupt(self) -> None:
+        """Send a Ctrl+C interrupt to the running PTY process."""
+        self._suppress_interrupt_echo = True
+        self.clear_output()
+
+        if self.pid is not None:
+            try:
+                os.kill(self.pid, signal.SIGINT)
+                return
+            except OSError:
+                pass
+
+        if self.master_fd is not None:
+            try:
+                os.write(self.master_fd, b"\x03")
+            except OSError:
+                pass
+
+    def clear_output(self) -> None:
+        """Clear all terminal output and reset the input start position."""
+        self.clear()
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.setTextCursor(cursor)
+        self.input_start_pos = cursor.position()
 
     def _cleanup_pty(self) -> None:
         """Clean up PTY resources."""
