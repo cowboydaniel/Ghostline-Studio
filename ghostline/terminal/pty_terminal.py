@@ -5,6 +5,7 @@ import os
 import sys
 import pty
 import select
+import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -189,6 +190,9 @@ class PTYTerminal(QTextEdit):
         self.read_timer.timeout.connect(self._read_output)
         self.read_timer.start(50)  # Read every 50ms
 
+        # Control flags
+        self._drop_next_output = False
+
     def start_shell(self, working_dir: Optional[Path] = None) -> None:
         """Start a shell in a PTY."""
         if self.master_fd is not None:
@@ -253,6 +257,11 @@ class PTYTerminal(QTextEdit):
 
     def _append_output(self, text: str) -> None:
         """Append output text with ANSI formatting."""
+        if self._drop_next_output:
+            self._drop_next_output = False
+            self.clear_output()
+            return
+
         # Parse ANSI codes
         segments = self.ansi_parser.parse(text)
 
@@ -382,6 +391,16 @@ class PTYTerminal(QTextEdit):
 
     def send_interrupt(self) -> None:
         """Send a Ctrl+C interrupt to the running PTY process."""
+        self._drop_next_output = True
+        self.clear_output()
+
+        if self.pid is not None:
+            try:
+                os.kill(self.pid, signal.SIGINT)
+                return
+            except OSError:
+                pass
+
         if self.master_fd is not None:
             try:
                 os.write(self.master_fd, b"\x03")
