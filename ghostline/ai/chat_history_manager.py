@@ -31,9 +31,8 @@ class ChatHistoryManager:
                         If None, uses ~/.config/ghostline/chat_history/
         """
         if storage_dir is None:
-            from ghostline.core.config import ConfigManager
-            config_dir = ConfigManager.get_config_dir()
-            storage_dir = config_dir / "chat_history"
+            from ghostline.core.config import CONFIG_DIR
+            storage_dir = CONFIG_DIR / "chat_history"
 
         self.storage_dir = storage_dir
         self.storage_dir.mkdir(parents=True, exist_ok=True)
