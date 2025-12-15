@@ -219,6 +219,10 @@ class BottomPanel(QWidget):
         """Set the currently visible panel."""
         self.tab_bar.set_current_index(index)
 
+    def get_current_panel_index(self) -> int:
+        """Get the currently visible panel index."""
+        return self.tab_bar.current_index_value()
+
     def get_close_button(self) -> QPushButton:
         """Get the close button for connecting signals."""
         return self.tab_bar.panel_close_btn

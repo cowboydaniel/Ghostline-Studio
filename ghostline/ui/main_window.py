@@ -543,6 +543,7 @@ class MainWindow(QMainWindow):
         self._configure_dock_corners()
         self._apply_initial_layout()
         self._collect_dock_regions()
+        self._restore_dock_state()  # Restore saved dock/panel states after collection
         self._connect_dock_toggles()
         self._update_workspace_state()
         self._show_welcome_if_empty()
@@ -680,6 +681,92 @@ class MainWindow(QMainWindow):
                 pass
         if force_maximize or window_cfg.get("maximized", True):
             self.showMaximized()
+
+    def _restore_dock_state(self) -> None:
+        """Restore dock/panel states and sizes from saved configuration."""
+        if not self.config:
+            return
+
+        window_cfg = self.config.get("window", {})
+        dock_state = window_cfg.get("dock_state", {})
+
+        # Restore main splitter sizes (left/center/right regions)
+        if hasattr(self, "main_splitter") and "main_splitter_sizes" in dock_state:
+            try:
+                self.main_splitter.setSizes(dock_state["main_splitter_sizes"])
+            except Exception:
+                pass
+
+        # Restore center vertical splitter sizes (editor/bottom panel)
+        if hasattr(self, "center_vertical_splitter") and "center_vertical_splitter_sizes" in dock_state:
+            try:
+                self.center_vertical_splitter.setSizes(dock_state["center_vertical_splitter_sizes"])
+            except Exception:
+                pass
+
+        # Restore left dock stack current widget
+        if hasattr(self, "left_dock_stack") and "left_dock_index" in dock_state:
+            try:
+                index = dock_state["left_dock_index"]
+                if 0 <= index < self.left_dock_stack.count():
+                    self.left_dock_stack.setCurrentIndex(index)
+                    # Update visibility of left docks
+                    for i in range(self.left_dock_stack.count()):
+                        widget = self.left_dock_stack.widget(i)
+                        if widget:
+                            widget.setVisible(i == index)
+            except Exception:
+                pass
+
+        # Restore right dock stack current widget
+        if hasattr(self, "right_dock_stack") and "right_dock_index" in dock_state:
+            try:
+                index = dock_state["right_dock_index"]
+                if 0 <= index < self.right_dock_stack.count():
+                    self.right_dock_stack.setCurrentIndex(index)
+                    # Update visibility of right docks
+                    for i in range(self.right_dock_stack.count()):
+                        widget = self.right_dock_stack.widget(i)
+                        if widget:
+                            widget.setVisible(i == index)
+            except Exception:
+                pass
+
+        # Restore left region visibility
+        if hasattr(self, "left_region_container") and "left_region_visible" in dock_state:
+            try:
+                visible = dock_state["left_region_visible"]
+                self.left_region_container.setVisible(visible)
+                if hasattr(self, "toggle_left_region"):
+                    self.toggle_left_region.setChecked(visible)
+            except Exception:
+                pass
+
+        # Restore right region visibility
+        if hasattr(self, "right_region_container") and "right_region_visible" in dock_state:
+            try:
+                visible = dock_state["right_region_visible"]
+                self.right_region_container.setVisible(visible)
+                if hasattr(self, "toggle_right_region"):
+                    self.toggle_right_region.setChecked(visible)
+            except Exception:
+                pass
+
+        # Restore bottom panel visibility
+        if hasattr(self, "bottom_panel") and "bottom_panel_visible" in dock_state:
+            try:
+                visible = dock_state["bottom_panel_visible"]
+                self.bottom_panel.setVisible(visible)
+            except Exception:
+                pass
+
+        # Restore bottom panel current tab
+        if hasattr(self, "bottom_panel") and "bottom_panel_index" in dock_state:
+            try:
+                index = dock_state["bottom_panel_index"]
+                self.bottom_panel.set_current_panel(index)
+            except Exception:
+                pass
 
     def _update_workspace_state(self) -> None:
         workspace = self.workspace_manager.current_workspace
@@ -1635,6 +1722,25 @@ class MainWindow(QMainWindow):
         geometry = self.saveGeometry()
         if isinstance(geometry, QByteArray):
             window_cfg["geometry"] = bytes(geometry.toHex()).decode("ascii")
+
+        # Save dock/panel state
+        dock_state = {}
+        if hasattr(self, "main_splitter"):
+            dock_state["main_splitter_sizes"] = self.main_splitter.sizes()
+        if hasattr(self, "center_vertical_splitter"):
+            dock_state["center_vertical_splitter_sizes"] = self.center_vertical_splitter.sizes()
+        if hasattr(self, "left_dock_stack"):
+            dock_state["left_dock_index"] = self.left_dock_stack.currentIndex()
+        if hasattr(self, "right_dock_stack"):
+            dock_state["right_dock_index"] = self.right_dock_stack.currentIndex()
+        if hasattr(self, "left_region_container"):
+            dock_state["left_region_visible"] = self.left_region_container.isVisible()
+        if hasattr(self, "right_region_container"):
+            dock_state["right_region_visible"] = self.right_region_container.isVisible()
+        if hasattr(self, "bottom_panel"):
+            dock_state["bottom_panel_visible"] = self.bottom_panel.isVisible()
+            dock_state["bottom_panel_index"] = self.bottom_panel.get_current_panel_index()
+        window_cfg["dock_state"] = dock_state
 
         workspace = self.workspace_manager.current_workspace
         if workspace and hasattr(self, "editor_tabs"):
