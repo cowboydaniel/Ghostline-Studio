@@ -15,14 +15,27 @@ Ghostline Studio is structured as a platform: nearly every subsystem is modular,
   - Line numbers
   - Indentation helpers
   - Syntax highlighting
+  - Code folding with visual indicators
   - Folding infrastructure
 - Document sync with the LSP system
 - Editor events exposed for plugins and agents
+- AI-powered inline suggestions with proactive code assistance
+- Thread-safe AI suggestion cards with real-time updates
 
 ### Workspace & Navigation
+- **Windsurf-style Welcome Portal** - Modern welcome screen with quick actions
+  - Quick access shortcuts for common operations
+  - Keyboard shortcut hints and discoverable commands
+  - Clean, centered design for improved user experience
 - Workspace-aware project explorer dock backed by a filesystem model
 - Diagnostics dock driven by LSP publishDiagnostics events
 - Command palette with fuzzy search across commands, files, and symbols
+- **Persistent UI State** - Dock and widget state preservation across sessions
+  - Window geometry and position persistence
+  - Dock layout and visibility state restoration
+  - Splitter positions and panel sizes remembered
+- Activity bar for quick navigation between features
+- Workspace dashboard for project overview
 
 ### Architecture Map
 - **Ghostline Spatial Map** dock (View → 3D Architecture Map)
@@ -46,10 +59,17 @@ Ghostline Studio is structured as a platform: nearly every subsystem is modular,
 - Backend-agnostic (supports pyright, pylsp, or any compliant server)
 
 ### Embedded Terminal
-- Cross-platform terminal widget
-- Backed by `QProcess`
-- Shell selection, interactive input, and color output
-- Dockable within the UI
+- **Windsurf-style terminal dock** with modern UI design
+- Multiple terminal session management with tabs
+- PTY (pseudo-terminal) support for true terminal emulation
+- Advanced interrupt handling (Ctrl+C) with echo suppression
+- Cross-platform terminal widget backed by `QProcess` and PTY
+- Shell selection, interactive input, and ANSI color output support
+- Integrated bottom panel system with session switching
+- Terminal profile management with customizable shells
+- Resource-bundled terminal icons for consistent UI
+- Clear output and kill session capabilities
+- Dockable within the UI with persistent state
 
 ### Command System
 - Global command registry
@@ -60,15 +80,33 @@ Ghostline Studio is structured as a platform: nearly every subsystem is modular,
 ### AI System
 Ghostline Studio includes a multi-agent AI architecture designed for code reasoning, indexing, and workflow automation:
 
+- **Persistent Chat History** - Save, load, and manage chat sessions across application restarts
+  - Session storage with JSON-based persistence
+  - Full message history with context preservation
+  - Chat session management (create, update, delete)
+  - Index-based session discovery and loading
+- **Model Registry and Discovery** - Automatic discovery and management of AI models
+  - OpenAI model support (GPT-5.1, GPT-4.1, and variants)
+  - Ollama model auto-discovery via HTTP and CLI
+  - Model provider abstraction for extensibility
+  - Model metadata and capability tracking
+- **Proactive AI Suggestions** - Context-aware code suggestions displayed as cards
+  - Thread-safe suggestion delivery
+  - Real-time suggestion updates
+  - Multiple suggestion card display with scrolling
+  - Comprehensive debugging and error handling
 - Agent graph and orchestration (`ghostline/agents`)
 - Workflow engine for multi-step operations (`ghostline/workflows`)
 - Retrieval and semantic indexing system (`ghostline/semantic`)
 - Task execution system for tool-augmented agent behavior (`ghostline/tasks`)
 - Embeddings, search, chunking, and memory stores
-- Pluggable AI backends
+- Pluggable AI backends with automatic fallback
 - Chat interface integrated with the editor
 - Workspace indexer and context engine that stitch together open buffers, recent semantic updates, and pinned snippets for AI prompts
 - AI chat dock shows the context that will be used for a response, supports pinning active documents, and allows custom instructions per workspace session
+- Architecture assistant for code navigation and analysis
+- AI-powered refactor pipeline with patch parsing and application
+- Maintenance daemon for background AI tasks
 
 ### Plugin Architecture
 - Plugin registry and dynamic loader (`ghostline/plugins`)
@@ -86,13 +124,42 @@ Ghostline Studio includes a multi-agent AI architecture designed for code reason
 - File and project-wide queries
 - Integration with agents and UI workflows
 
+### Testing & Quality Assurance
+- **Test Manager** - Integrated test execution and management
+- **Test Panel** - Visual test runner interface
+- **Coverage Panel** - Code coverage tracking and visualization
+- Test integration with pytest
+- AST integrity verification tests
+- Core component testing infrastructure
+
 ### CRDT Engine (Experimental)
 - Early CRDT implementation for collaborative editing
-- Merge logic, serialization, and test coverage under `ghostline/testing`
+- Merge logic, serialization, and test coverage
+- Collaborative panel for real-time editing sessions
+- Session manager for multi-user collaboration
+
+### Build & Formatting
+- **Build System Integration** - Build panel for project compilation
+- **Formatter Manager** - Code formatting with LSP integration
+- Multi-server LSP chains for specialized formatting
+- Pipeline manager for build workflows
+
+### Runtime & Debugging
+- **Runtime Panel** - Runtime environment monitoring
+- **Debugger Manager** - Debug Adapter Protocol foundation
+- Future DAP integration for multi-language debugging
 
 ### 3D Visualization (Experimental)
 - `visual3d` subsystem for agent-assisted data visualizations
 - Supports 3D scene models and rendering hooks
+
+### Additional UI Components
+- **Splash Screen** - Branded application startup screen
+- **Status Bar** - Real-time status indicators
+- **Custom Tab Bar** - Enhanced tab management
+- **Panel Widgets** - Reusable UI components for consistent design
+- **Dialog System** - Plugin manager and settings dialogs
+- **Layout Manager** - Advanced layout management and persistence
 
 ---
 
@@ -100,25 +167,44 @@ Ghostline Studio includes a multi-agent AI architecture designed for code reason
 
 ```
 ghostline/
-    app.py                – application bootstrap
+    app.py                – application bootstrap and initialization
     main.py               – entry point
-    agents/               – multi-agent AI architecture
-    core/                 – config loading, logging, utilities
-    editor/               – CodeEditor and document system
-    lang/                 – LSP engine and protocol logic
+    agents/               – multi-agent AI architecture and orchestration
+    ai/                   – AI clients, chat panel, model registry, chat history
+    core/                 – config loading, logging, utilities, theme, cache
+    editor/               – CodeEditor, document system, and folding
+    lang/                 – LSP engine and protocol logic (client, manager)
     workspace/            – workspace and project management
-    terminal/             – embedded terminal subsystem
+    terminal/             – embedded terminal (PTY, Windsurf-style UI)
     ui/                   – interface components and docks
+        dialogs/          – plugin manager, settings, and other dialogs
+        docks/            – all dock panels (terminal, build, tests, etc.)
+        editor/           – editor-specific UI components
     plugins/              – plugin loader and registry
     tasks/                – tool/task execution for agents
-    semantic/             – embeddings and retrieval
+    semantic/             – embeddings, semantic indexing, and retrieval
     search/               – indexing and search engine
     runtime/              – low-level runtime utilities
-    vcs/                  – version control helpers
+    vcs/                  – version control helpers (Git service)
     visual3d/             – 3D visualization components
+    workflows/            – workflow engine and pipeline manager
+    testing/              – test manager, test panel, coverage tracking
+    build/                – build system integration
+    formatter/            – code formatting and formatter manager
+    debugger/             – debugger adapter protocol foundation
+    collab/               – CRDT engine and session manager
+    indexer/              – code indexing and index manager
+    settings/             – default settings and configuration
+    resources/            – bundled icons, themes, and assets
 docs/
-    architecture/         – design docs (LSP chains, AI pipeline, CRDT)
-tests/                    – test suite
+    architecture/         – design docs (LSP chains, AI pipeline, CRDT, DAP, plugins)
+    plugins.md            – plugin development guide
+    overview.md           – high-level overview
+tests/                    – comprehensive test suite
+    test_chat_history.py  – chat history persistence tests
+    test_ai_client.py     – AI client tests
+    test_core_*.py        – core component tests
+    test_semantic_*.py    – semantic indexing tests
 ```
 
 ---
