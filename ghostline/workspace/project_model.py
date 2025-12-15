@@ -7,6 +7,8 @@ from PySide6.QtCore import QDir, QModelIndex, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QFileIconProvider, QFileSystemModel, QStyle
 
+from ghostline.core.resources import load_file_icon, load_icon
+
 
 class ProjectModel(QFileSystemModel):
     """A thin wrapper around QFileSystemModel with simple filtering."""
@@ -17,15 +19,13 @@ class ProjectModel(QFileSystemModel):
         self._workspace_root: Path | None = None
         self._hidden = {".git", "__pycache__"}
 
+        # Load folder icon from resources or fallback to system
         style = QApplication.style()
-        fallback_file_icon = style.standardIcon(QStyle.SP_FileIcon)
-        self._icons: dict[str, QIcon] = {
-            "folder": style.standardIcon(QStyle.SP_DirIcon),
-            "python": QIcon.fromTheme("text-x-python", fallback_file_icon),
-            "markdown": QIcon.fromTheme("text-x-markdown", fallback_file_icon),
-            "text": QIcon.fromTheme("text-plain", fallback_file_icon),
-            "file": fallback_file_icon,
-        }
+        folder_icon = load_icon("folder.svg")
+        if folder_icon.isNull():
+            folder_icon = style.standardIcon(QStyle.SP_DirIcon)
+
+        self._folder_icon = folder_icon
 
         provider = QFileIconProvider()
         provider.setOptions(QFileIconProvider.DontUseCustomDirectoryIcons)
@@ -44,15 +44,9 @@ class ProjectModel(QFileSystemModel):
         if role == Qt.DecorationRole:
             path = Path(self.filePath(index))
             if path.is_dir():
-                return self._icons["folder"]
-            suffix = path.suffix.lower()
-            if suffix == ".py":
-                return self._icons["python"]
-            if suffix in {".md", ".markdown"}:
-                return self._icons["markdown"]
-            if suffix in {".txt", ".log"}:
-                return self._icons["text"]
-            return self._icons["file"]
+                return self._folder_icon
+            # Use the new icon system that supports all file types
+            return load_file_icon(path.name)
         if role == Qt.DisplayRole:
             # Show folder/file names without size or type columns.
             return Path(self.filePath(index)).name
