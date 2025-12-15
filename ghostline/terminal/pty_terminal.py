@@ -56,6 +56,7 @@ class ANSIParser:
         import re
 
         result = []
+        text = self._strip_unhandled_sequences(text)
         ansi_pattern = re.compile(r"\x1b\[([\d;]*)m")
 
         pos = 0
@@ -79,6 +80,19 @@ class ANSIParser:
             result.append((text[pos:], self._get_format()))
 
         return result
+
+    def _strip_unhandled_sequences(self, text: str) -> str:
+        """Remove escape sequences we do not render (titles, bracketed paste, etc.)."""
+        import re
+
+        # OSC sequences like terminal titles: ESC ] ... BEL or ESC ] ... ESC \\
+        osc_pattern = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+        # CSI sequences that do not end with 'm' (we only render SGR color codes)
+        csi_non_sgr_pattern = re.compile(r"\x1b\[[0-9;?]*((?!m)[@-~])")
+
+        text = osc_pattern.sub("", text)
+        text = csi_non_sgr_pattern.sub("", text)
+        return text
 
     def _process_codes(self, codes: str) -> None:
         """Process ANSI SGR codes."""
