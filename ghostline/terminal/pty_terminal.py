@@ -380,6 +380,22 @@ class PTYTerminal(QTextEdit):
             except OSError:
                 pass
 
+    def send_interrupt(self) -> None:
+        """Send a Ctrl+C interrupt to the running PTY process."""
+        if self.master_fd is not None:
+            try:
+                os.write(self.master_fd, b"\x03")
+            except OSError:
+                pass
+
+    def clear_output(self) -> None:
+        """Clear all terminal output and reset the input start position."""
+        self.clear()
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.setTextCursor(cursor)
+        self.input_start_pos = cursor.position()
+
     def _cleanup_pty(self) -> None:
         """Clean up PTY resources."""
         if self.master_fd is not None:
