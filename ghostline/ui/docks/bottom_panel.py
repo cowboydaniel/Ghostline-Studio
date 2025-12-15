@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -15,6 +14,7 @@ from PySide6.QtWidgets import (
     QStackedLayout,
 )
 
+from ghostline.core.resources import load_icon
 
 class BottomPanelTab(QWidget):
     """A single tab in the bottom panel tab bar."""
@@ -104,11 +104,11 @@ class BottomPanelTabBar(QWidget):
 
         # Panel controls (always visible)
         self.panel_menu_btn = self._build_panel_button("bottomPanelMenuBtn", "Panel options")
-        self.panel_menu_btn.setIcon(QIcon(":/icons/terminal_bar/panel-square.svg"))
+        self.panel_menu_btn.setIcon(load_icon("terminal_bar/panel-square.svg"))
         self.panel_maximize_btn = self._build_panel_button("bottomPanelMaximizeBtn", "Maximize panel")
-        self.panel_maximize_btn.setIcon(QIcon(":/icons/terminal_bar/maximize.svg"))
+        self.panel_maximize_btn.setIcon(load_icon("terminal_bar/maximize.svg"))
         self.panel_close_btn = self._build_panel_button("bottomPanelCloseBtn", "Close Panel")
-        self.panel_close_btn.setIcon(QIcon(":/icons/terminal_bar/close.svg"))
+        self.panel_close_btn.setIcon(load_icon("terminal_bar/close.svg"))
 
         self.panel_menu_btn.clicked.connect(self.panel_collapse_requested)
         self.panel_maximize_btn.clicked.connect(self.panel_maximize_requested)

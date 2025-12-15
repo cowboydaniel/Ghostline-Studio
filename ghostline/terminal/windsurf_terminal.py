@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal, QProcess, QSize
-from PySide6.QtGui import QIcon, QFontMetrics
+from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QWidget,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QStyle,
 )
 
+from ghostline.core.resources import load_icon
 from ghostline.terminal.pty_terminal import PTYTerminal
 from ghostline.workspace.workspace_manager import WorkspaceManager
 
@@ -150,7 +151,7 @@ class WindsurfTerminalWidget(QWidget):
 
         self.profile_button = self._build_icon_button(
             "terminalProfileButton",
-            QIcon(":/icons/terminal_bar/terminal.svg"),
+            load_icon("terminal_bar/terminal.svg"),
             "Terminal Profile",
             with_text=True,
         )
@@ -163,13 +164,13 @@ class WindsurfTerminalWidget(QWidget):
         layout.addSpacing(pad // 2)
 
         self.new_terminal_btn = self._build_icon_button(
-            "terminalNewBtn", QIcon(":/icons/terminal_bar/plus.svg"), "New Terminal"
+            "terminalNewBtn", load_icon("terminal_bar/plus.svg"), "New Terminal"
         )
         self.new_terminal_btn.clicked.connect(self._create_new_session)
         layout.addWidget(self.new_terminal_btn)
 
         self.session_dropdown_btn = self._build_icon_button(
-            "terminalDropdownBtn", QIcon(":/icons/terminal_bar/chevron-down.svg"), "Switch Terminal"
+            "terminalDropdownBtn", load_icon("terminal_bar/chevron-down.svg"), "Switch Terminal"
         )
         self.session_dropdown_btn.setPopupMode(QToolButton.InstantPopup)
         self.session_dropdown_menu = QMenu(self.session_dropdown_btn)
@@ -177,19 +178,19 @@ class WindsurfTerminalWidget(QWidget):
         layout.addWidget(self.session_dropdown_btn)
 
         self.split_btn = self._build_icon_button(
-            "terminalSplitBtn", QIcon(":/icons/terminal_bar/split.svg"), "Split Terminal (coming soon)"
+            "terminalSplitBtn", load_icon("terminal_bar/split.svg"), "Split Terminal (coming soon)"
         )
         self.split_btn.setEnabled(False)
         layout.addWidget(self.split_btn)
 
         self.kill_btn = self._build_icon_button(
-            "terminalKillBtn", QIcon(":/icons/terminal_bar/trash.svg"), "Kill Terminal"
+            "terminalKillBtn", load_icon("terminal_bar/trash.svg"), "Kill Terminal"
         )
         self.kill_btn.clicked.connect(self._kill_current_session)
         layout.addWidget(self.kill_btn)
 
         self.menu_btn = self._build_icon_button(
-            "terminalMenuBtn", QIcon(":/icons/terminal_bar/ellipsis.svg"), "More actions"
+            "terminalMenuBtn", load_icon("terminal_bar/ellipsis.svg"), "More actions"
         )
         self.menu_btn.setPopupMode(QToolButton.InstantPopup)
         self.overflow_menu = QMenu(self.menu_btn)
