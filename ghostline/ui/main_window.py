@@ -1497,7 +1497,7 @@ class MainWindow(QMainWindow):
         self.task_manager.load_workspace_tasks()
         self.semantic_index.reindex()
         self._restore_workspace_tabs(workspace_str)
-        self.central_stack.setCurrentWidget(self.editor_container)
+        self._show_welcome_if_empty()
 
     def save_all(self) -> None:
         for editor in self.editor_tabs.iter_editors():
