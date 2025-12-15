@@ -543,40 +543,29 @@ QSplitter::handle:hover {
     background-color: #1E1E1E;
 }
 
-#terminalHeader {
-    background-color: #252526;
+#terminalToolbar {
+    background-color: #1F1F1F;
     border-bottom: 1px solid #2D2D30;
 }
 
-#terminalTitle {
-    color: #CCCCCC;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-#terminalDescription {
-    color: #808080;
+#terminalStatusLabel {
+    color: #BEBEBE;
     font-size: 11px;
-}
-
-#terminalWorkingDir {
-    color: #6A6A6A;
-    font-size: 10px;
 }
 
 #terminalProfileCombo,
 #terminalSelector {
-    background-color: #3C3C3C;
-    border: 1px solid #454545;
+    background-color: #2B2B2B;
+    border: 1px solid #343434;
     border-radius: 2px;
     padding: 2px 6px;
-    color: #CCCCCC;
+    color: #DDDDDD;
     selection-background-color: #264F78;
 }
 
 #terminalProfileCombo:hover,
 #terminalSelector:hover {
-    background-color: #404040;
+    background-color: #313131;
 }
 
 #terminalProfileCombo::drop-down,
@@ -584,22 +573,26 @@ QSplitter::handle:hover {
     border: none;
 }
 
-#terminalNewBtn {
+#terminalNewBtn,
+#terminalSplitBtn,
+#terminalKillBtn,
+#terminalMenuBtn,
+#openExternalTerminalBtn {
     background-color: transparent;
-    border: 1px solid #454545;
-    color: #CCCCCC;
-    font-size: 16px;
-    font-weight: bold;
-    border-radius: 2px;
+    border: 1px solid #343434;
+    color: #D0D0D0;
+    border-radius: 3px;
+    padding: 2px 5px;
+    min-height: 20px;
 }
 
-#terminalNewBtn:hover {
-    background-color: #3E3E42;
+#terminalNewBtn:hover,
+#terminalSplitBtn:hover,
+#terminalKillBtn:hover,
+#terminalMenuBtn:hover,
+#openExternalTerminalBtn:hover {
+    background-color: #2C2C2C;
     color: #FFFFFF;
-}
-
-#terminalSeparator {
-    background-color: #2D2D30;
 }
 
 #ptyTerminal {
@@ -611,43 +604,26 @@ QSplitter::handle:hover {
 }
 
 #terminalSessionList {
-    background-color: #252526;
+    background-color: #1E1E1E;
     border-left: 1px solid #2D2D30;
     color: #CCCCCC;
     outline: none;
+    padding: 2px 0;
 }
 
 #terminalSessionList::item {
-    padding: 8px 12px;
+    padding: 4px 10px;
     border: none;
+    margin: 0;
 }
 
 #terminalSessionList::item:selected {
-    background-color: #37373D;
+    background-color: #2C2C32;
     color: #FFFFFF;
 }
 
 #terminalSessionList::item:hover {
-    background-color: #2A2D2E;
-}
-
-#openExternalTerminalBtn {
-    background-color: #0E639C;
-    border: 1px solid #1177BB;
-    color: #FFFFFF;
-    border-radius: 2px;
-    padding: 8px 16px;
-    font-size: 13px;
-    font-weight: 500;
-}
-
-#openExternalTerminalBtn:hover {
-    background-color: #1177BB;
-    border: 1px solid #1C8DD9;
-}
-
-#openExternalTerminalBtn:pressed {
-    background-color: #0D5A8F;
+    background-color: #25282A;
 }
 
 /* Other Bottom Panels */

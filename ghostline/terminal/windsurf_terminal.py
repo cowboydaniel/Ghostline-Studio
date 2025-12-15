@@ -6,17 +6,20 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, QProcess
+from PySide6.QtCore import Qt, Signal, QProcess, QSize
+from PySide6.QtGui import QIcon, QFontMetrics
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QComboBox,
     QListWidget,
+    QListWidgetItem,
     QSplitter,
-    QFrame,
+    QToolButton,
+    QSizePolicy,
+    QStyle,
 )
 
 from ghostline.terminal.pty_terminal import PTYTerminal
@@ -35,13 +38,7 @@ class TerminalSession:
 
 class WindsurfTerminalWidget(QWidget):
     """
-    Complete Windsurf-style terminal widget.
-
-    Layout:
-    - Header area: "Terminal" title, description, working directory
-    - Main area: Terminal viewport + session list (splitter)
-    - Controls: Profile indicator, +, dropdown, etc.
-    - Bottom: "Open External Terminal" button
+    Complete Windsurf-style terminal widget with compact toolbar and slim sidebar.
     """
 
     def __init__(self, workspace_manager: WorkspaceManager, parent=None) -> None:
@@ -49,6 +46,10 @@ class WindsurfTerminalWidget(QWidget):
         self.workspace_manager = workspace_manager
         self.sessions: list[TerminalSession] = []
         self.current_session_index = 0
+        self._metrics = self._build_metrics()
+        self._session_icon = QIcon.fromTheme("utilities-terminal")
+        if self._session_icon.isNull():
+            self._session_icon = self.style().standardIcon(QStyle.SP_ComputerIcon)
 
         self.setObjectName("windsurfTerminal")
         self._setup_ui()
@@ -60,81 +61,75 @@ class WindsurfTerminalWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Header area
-        header_widget = self._create_header()
-        main_layout.addWidget(header_widget)
-
-        # Separator
-        sep1 = QFrame(self)
-        sep1.setObjectName("terminalSeparator")
-        sep1.setFrameShape(QFrame.HLine)
-        sep1.setFixedHeight(1)
-        main_layout.addWidget(sep1)
+        toolbar_widget = self._create_toolbar()
+        main_layout.addWidget(toolbar_widget)
 
         # Main content area: terminal + session list
         content_splitter = QSplitter(Qt.Horizontal, self)
         content_splitter.setChildrenCollapsible(False)
+        content_splitter.setHandleWidth(1)
 
         # Left side: terminal viewport
         self.terminal_stack = QWidget(self)
         self.terminal_layout = QVBoxLayout(self.terminal_stack)
         self.terminal_layout.setContentsMargins(0, 0, 0, 0)
         self.terminal_layout.setSpacing(0)
+        self.terminal_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         content_splitter.addWidget(self.terminal_stack)
 
         # Right side: session list
         self.session_list = QListWidget(self)
         self.session_list.setObjectName("terminalSessionList")
-        self.session_list.setMaximumWidth(200)
+        self.session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.session_list.setVerticalScrollMode(self.session_list.ScrollPerPixel)
+        self.session_list.setUniformItemSizes(True)
+        self.session_list.setIconSize(QSize(14, 14))
+        self.session_list.setSpacing(0)
+        self.session_list.setFixedWidth(self._metrics["sidebar_width"])
         self.session_list.currentRowChanged.connect(self._on_session_changed)
         content_splitter.addWidget(self.session_list)
 
         # Set splitter proportions (terminal gets most space)
         content_splitter.setStretchFactor(0, 1)
         content_splitter.setStretchFactor(1, 0)
-        content_splitter.setSizes([800, 200])
+        content_splitter.setSizes([900, self._metrics["sidebar_width"]])
 
         main_layout.addWidget(content_splitter, stretch=1)
 
-        # Separator
-        sep2 = QFrame(self)
-        sep2.setObjectName("terminalSeparator")
-        sep2.setFrameShape(QFrame.HLine)
-        sep2.setFixedHeight(1)
-        main_layout.addWidget(sep2)
+    def _build_metrics(self) -> dict[str, int]:
+        """Derive compact sizing from font metrics to mimic Windsurf proportions."""
+        fm = QFontMetrics(self.font())
+        base = fm.height()
+        return {
+            "toolbar_height": max(28, base + 10),
+            "toolbar_padding": 6,
+            "sidebar_width": max(120, fm.horizontalAdvance("Terminal 000") + 18),
+            "sidebar_row_height": max(24, base + 6),
+        }
 
-        # Bottom: "Open External Terminal" button
-        self.external_terminal_btn = QPushButton("Open External Terminal", self)
-        self.external_terminal_btn.setObjectName("openExternalTerminalBtn")
-        self.external_terminal_btn.clicked.connect(self._open_external_terminal)
-        self.external_terminal_btn.setMinimumHeight(32)
-        main_layout.addWidget(self.external_terminal_btn)
+    def _create_toolbar(self) -> QWidget:
+        """Create compact toolbar that mirrors Windsurf's terminal strip."""
+        toolbar = QWidget(self)
+        toolbar.setObjectName("terminalToolbar")
+        toolbar.setFixedHeight(self._metrics["toolbar_height"])
 
-    def _create_header(self) -> QWidget:
-        """Create the header area with title, description, and controls."""
-        header = QWidget(self)
-        header.setObjectName("terminalHeader")
-        header.setMinimumHeight(80)
+        layout = QHBoxLayout(toolbar)
+        pad = self._metrics["toolbar_padding"]
+        layout.setContentsMargins(pad, 2, pad, 2)
+        layout.setSpacing(6)
 
-        layout = QVBoxLayout(header)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(4)
+        working_dir = self.workspace_manager.current_workspace or Path.cwd()
+        self.cwd_label = QLabel(self)
+        self.cwd_label.setObjectName("terminalStatusLabel")
+        self.cwd_label.setText(f"bash — {working_dir}")
+        self.cwd_label.setToolTip(f"Working directory: {working_dir}")
+        self.cwd_label.setMinimumWidth(80)
+        self.cwd_label.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.cwd_label)
 
-        # Top row: Title + controls
-        top_row = QHBoxLayout()
-        top_row.setSpacing(8)
+        layout.addStretch()
 
-        # Title
-        title_label = QLabel("Terminal", self)
-        title_label.setObjectName("terminalTitle")
-        title_label.setStyleSheet("font-size: 14px; font-weight: bold;")
-        top_row.addWidget(title_label)
-
-        top_row.addStretch()
-
-        # Terminal controls (right side)
-        # Profile indicator
         self.profile_combo = QComboBox(self)
         self.profile_combo.setObjectName("terminalProfileCombo")
         self.profile_combo.addItem("bash")
@@ -142,40 +137,55 @@ class WindsurfTerminalWidget(QWidget):
             self.profile_combo.addItem("zsh")
         if shutil.which("fish"):
             self.profile_combo.addItem("fish")
-        self.profile_combo.setMaximumWidth(100)
-        top_row.addWidget(self.profile_combo)
+        self.profile_combo.setFixedWidth(96)
+        layout.addWidget(self.profile_combo)
 
-        # Add new terminal button
-        self.new_terminal_btn = QPushButton("+", self)
+        self.new_terminal_btn = QToolButton(self)
         self.new_terminal_btn.setObjectName("terminalNewBtn")
-        self.new_terminal_btn.setFixedSize(24, 24)
+        self.new_terminal_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.new_terminal_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
         self.new_terminal_btn.setToolTip("New Terminal")
         self.new_terminal_btn.clicked.connect(self._create_new_session)
-        top_row.addWidget(self.new_terminal_btn)
+        layout.addWidget(self.new_terminal_btn)
 
-        # Terminal selector dropdown
         self.terminal_selector = QComboBox(self)
         self.terminal_selector.setObjectName("terminalSelector")
         self.terminal_selector.currentIndexChanged.connect(self._on_selector_changed)
-        self.terminal_selector.setMaximumWidth(150)
-        top_row.addWidget(self.terminal_selector)
+        self.terminal_selector.setFixedWidth(130)
+        layout.addWidget(self.terminal_selector)
 
-        layout.addLayout(top_row)
+        self.split_btn = QToolButton(self)
+        self.split_btn.setObjectName("terminalSplitBtn")
+        self.split_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.split_btn.setIcon(self.style().standardIcon(QStyle.SP_TitleBarShadeButton))
+        self.split_btn.setToolTip("Split Terminal (coming soon)")
+        self.split_btn.setEnabled(False)
+        layout.addWidget(self.split_btn)
 
-        # Description
-        desc_label = QLabel("Embedded terminal is running your workspace shell.", self)
-        desc_label.setObjectName("terminalDescription")
-        desc_label.setStyleSheet("color: #999; font-size: 11px;")
-        layout.addWidget(desc_label)
+        self.kill_btn = QToolButton(self)
+        self.kill_btn.setObjectName("terminalKillBtn")
+        self.kill_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.kill_btn.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
+        self.kill_btn.setToolTip("Kill Terminal")
+        self.kill_btn.clicked.connect(self._kill_current_session)
+        layout.addWidget(self.kill_btn)
 
-        # Working directory
-        working_dir = self.workspace_manager.current_workspace or Path.cwd()
-        self.cwd_label = QLabel(f"Working directory: {working_dir}", self)
-        self.cwd_label.setObjectName("terminalWorkingDir")
-        self.cwd_label.setStyleSheet("color: #888; font-size: 10px;")
-        layout.addWidget(self.cwd_label)
+        self.external_terminal_btn = QToolButton(self)
+        self.external_terminal_btn.setObjectName("openExternalTerminalBtn")
+        self.external_terminal_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.external_terminal_btn.setIcon(self.style().standardIcon(QStyle.SP_DesktopIcon))
+        self.external_terminal_btn.setToolTip("Open External Terminal")
+        self.external_terminal_btn.clicked.connect(self._open_external_terminal)
+        layout.addWidget(self.external_terminal_btn)
 
-        return header
+        self.menu_btn = QToolButton(self)
+        self.menu_btn.setObjectName("terminalMenuBtn")
+        self.menu_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.menu_btn.setIcon(self.style().standardIcon(QStyle.SP_ToolBarHorizontalExtensionButton))
+        self.menu_btn.setToolTip("More actions")
+        layout.addWidget(self.menu_btn)
+
+        return toolbar
 
     def _create_initial_session(self) -> None:
         """Create the first terminal session."""
@@ -197,7 +207,9 @@ class WindsurfTerminalWidget(QWidget):
 
         # Add to UI
         self.terminal_layout.addWidget(terminal)
-        self.session_list.addItem(session_name)
+        item = QListWidgetItem(self._session_icon, session_name)
+        item.setSizeHint(QSize(item.sizeHint().width(), self._metrics["sidebar_row_height"]))
+        self.session_list.addItem(item)
         self.terminal_selector.addItem(session_name)
 
         # Switch to new session
@@ -218,7 +230,7 @@ class WindsurfTerminalWidget(QWidget):
             # Update working directory label
             current_session = self.sessions[index]
             current_dir = current_session.terminal.get_working_directory()
-            self.cwd_label.setText(f"Working directory: {current_dir}")
+            self._update_status_label(current_dir)
 
     def _on_session_changed(self, index: int) -> None:
         """Handle session list selection change."""
@@ -234,6 +246,13 @@ class WindsurfTerminalWidget(QWidget):
         """Open external terminal in workspace directory."""
         working_dir = self.workspace_manager.current_workspace or Path.cwd()
         self._launch_external_terminal(working_dir)
+
+    def _kill_current_session(self) -> None:
+        """Terminate the current terminal session without removing UI context."""
+        if not self.sessions:
+            return
+        session = self.sessions[self.current_session_index]
+        session.terminal.write_input("exit\n")
 
     def _launch_external_terminal(self, cwd: Path) -> None:
         """Launch system terminal emulator."""
@@ -274,8 +293,14 @@ class WindsurfTerminalWidget(QWidget):
         """Update working directory when workspace changes."""
         if workspace:
             working_dir = Path(workspace)
-            self.cwd_label.setText(f"Working directory: {working_dir}")
+            self._update_status_label(working_dir)
             # Update current session's working directory
             if self.sessions:
                 current_session = self.sessions[self.current_session_index]
                 current_session.terminal.write_input(f"cd {working_dir}\n")
+
+    def _update_status_label(self, working_dir: Path) -> None:
+        path = Path(working_dir)
+        short_text = f"bash — {path}"
+        self.cwd_label.setText(short_text)
+        self.cwd_label.setToolTip(f"Working directory: {path}")
