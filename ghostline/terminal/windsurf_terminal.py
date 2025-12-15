@@ -121,17 +121,20 @@ class WindsurfTerminalWidget(QWidget):
         """Build a small set of terminal profiles with a Windsurf-style default."""
         profiles: dict[str, str] = {}
 
-        if sys.executable:
-            profiles["Python"] = sys.executable
-
+        # Prefer the user's configured shell if available
         shell_env = os.environ.get("SHELL")
         if shell_env:
-            profiles.setdefault(Path(shell_env).name.capitalize(), shell_env)
+            profiles[Path(shell_env).name.capitalize()] = shell_env
 
+        # Add common shells, without overriding an explicitly configured shell
         for shell_name in ("bash", "zsh", "fish"):
             shell_path = shutil.which(shell_name)
             if shell_path:
                 profiles.setdefault(shell_name.capitalize(), shell_path)
+
+        # Offer Python as an optional profile, but not as the default
+        if sys.executable:
+            profiles.setdefault("Python", sys.executable)
 
         if not profiles:
             profiles["Python"] = sys.executable or "/bin/bash"
