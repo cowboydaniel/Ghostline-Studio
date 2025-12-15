@@ -496,103 +496,75 @@ QSplitter::handle:hover {
 }
 
 #bottomPanelTabBar {
-    background-color: #252526;
+    background-color: #1F1F22;
     border-bottom: 1px solid #2D2D30;
 }
 
 #bottomPanelTab {
     background-color: transparent;
-    color: #969696;
+    color: #C6C6C6;
     border: none;
-    border-bottom: 2px solid transparent;
-    padding: 6px 12px;
+    padding: 5px 10px;
     font-size: 12px;
+    border-radius: 8px;
 }
 
 #bottomPanelTab:hover {
-    background-color: #2A2D2E;
-    color: #D4D4D4;
+    background-color: #2B2D31;
+    color: #FFFFFF;
 }
 
 #bottomPanelTab[active="true"] {
-    background-color: #1E1E1E;
+    background-color: #3A3D42;
     color: #FFFFFF;
-    border-bottom: 2px solid #007ACC;
 }
 
 #bottomPanelSeparator {
     background-color: #2D2D30;
 }
 
-#bottomPanelCloseBtn {
-    background-color: transparent;
+#bottomPanelControls QToolButton[category="panelBar"] {
+    background: transparent;
     border: none;
-    color: #CCCCCC;
-    font-size: 16px;
-    font-weight: bold;
-    border-radius: 4px;
+    color: #D0D0D0;
+    padding: 4px;
+    min-width: 22px;
 }
 
-#bottomPanelCloseBtn:hover {
-    background-color: #3E3E42;
+#bottomPanelControls QToolButton[category="panelBar"]:hover {
+    background-color: #2B2D31;
+    border-radius: 5px;
     color: #FFFFFF;
 }
 
-/* Terminal Widget */
+#terminalProfileButton {
+    padding: 4px 10px;
+    border-radius: 7px;
+    font-weight: 500;
+    color: #E0E0E0;
+}
+
+#terminalProfileButton:hover {
+    background-color: #2B2D31;
+    color: #FFFFFF;
+}
+
+#terminalProfileButton::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
+#bottomPanelCloseBtn {
+    color: #D0D0D0;
+}
+
 #windsurfTerminal {
     background-color: #1E1E1E;
 }
 
 #terminalToolbar {
-    background-color: #1F1F1F;
+    background-color: #1F1F22;
     border-bottom: 1px solid #2D2D30;
-}
-
-#terminalStatusLabel {
-    color: #BEBEBE;
-    font-size: 11px;
-}
-
-#terminalProfileCombo,
-#terminalSelector {
-    background-color: #2B2B2B;
-    border: 1px solid #343434;
-    border-radius: 2px;
-    padding: 2px 6px;
-    color: #DDDDDD;
-    selection-background-color: #264F78;
-}
-
-#terminalProfileCombo:hover,
-#terminalSelector:hover {
-    background-color: #313131;
-}
-
-#terminalProfileCombo::drop-down,
-#terminalSelector::drop-down {
-    border: none;
-}
-
-#terminalNewBtn,
-#terminalSplitBtn,
-#terminalKillBtn,
-#terminalMenuBtn,
-#openExternalTerminalBtn {
-    background-color: transparent;
-    border: 1px solid #343434;
-    color: #D0D0D0;
-    border-radius: 3px;
-    padding: 2px 5px;
-    min-height: 20px;
-}
-
-#terminalNewBtn:hover,
-#terminalSplitBtn:hover,
-#terminalKillBtn:hover,
-#terminalMenuBtn:hover,
-#openExternalTerminalBtn:hover {
-    background-color: #2C2C2C;
-    color: #FFFFFF;
 }
 
 #ptyTerminal {

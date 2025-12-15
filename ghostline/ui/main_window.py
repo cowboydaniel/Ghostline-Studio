@@ -426,11 +426,19 @@ class MainWindow(QMainWindow):
         # Create bottom panel (Windsurf-style with tabs)
         self.bottom_panel = BottomPanel(self)
         self.bottom_panel.setVisible(False)
+        self._bottom_panel_previous_sizes: list[int] | None = None
+        self._bottom_panel_maximized = False
+        self._bottom_panel_collapsed = False
 
         # Connect close button
         self.bottom_panel.get_close_button().clicked.connect(
             lambda: self._toggle_bottom_region(False)
         )
+        self.bottom_panel.tab_bar.panel_close_requested.connect(
+            lambda: self._toggle_bottom_region(False)
+        )
+        self.bottom_panel.tab_bar.panel_maximize_requested.connect(self._toggle_bottom_panel_maximize)
+        self.bottom_panel.tab_bar.panel_collapse_requested.connect(self._toggle_bottom_panel_collapse)
 
         # Create vertical splitter for center region (editor + bottom panel)
         self.center_vertical_splitter = QSplitter(Qt.Vertical, self)
@@ -767,12 +775,50 @@ class MainWindow(QMainWindow):
             return
 
         self.bottom_panel.setVisible(visible)
+        self._bottom_panel_maximized = False
+        self._bottom_panel_collapsed = False
 
         if visible and hasattr(self, "terminal_panel_index"):
             # When opening bottom region, show the terminal panel by default
             self.bottom_panel.set_current_panel(self.terminal_panel_index)
 
         self._update_view_action_states()
+
+    def _toggle_bottom_panel_maximize(self) -> None:
+        if not hasattr(self, "center_vertical_splitter"):
+            return
+
+        sizes = self.center_vertical_splitter.sizes()
+        if not self._bottom_panel_maximized:
+            self._bottom_panel_previous_sizes = sizes
+            total = sum(sizes)
+            self.center_vertical_splitter.setSizes([int(total * 0.2), int(total * 0.8)])
+            self._bottom_panel_maximized = True
+            self._bottom_panel_collapsed = False
+        else:
+            if self._bottom_panel_previous_sizes:
+                self.center_vertical_splitter.setSizes(self._bottom_panel_previous_sizes)
+            self._bottom_panel_maximized = False
+
+    def _toggle_bottom_panel_collapse(self) -> None:
+        if not hasattr(self, "center_vertical_splitter"):
+            return
+
+        if not self.bottom_panel.isVisible():
+            self._toggle_bottom_region(True)
+
+        sizes = self.center_vertical_splitter.sizes()
+        if not self._bottom_panel_collapsed:
+            self._bottom_panel_previous_sizes = sizes
+            total = sum(sizes)
+            header_height = self.bottom_panel.tab_bar.height() + 4
+            self.center_vertical_splitter.setSizes([max(total - header_height, 1), header_height])
+            self._bottom_panel_collapsed = True
+            self._bottom_panel_maximized = False
+        else:
+            if self._bottom_panel_previous_sizes:
+                self.center_vertical_splitter.setSizes(self._bottom_panel_previous_sizes)
+            self._bottom_panel_collapsed = False
 
     def _set_left_docks_visible(self, visible: bool) -> None:
         if not hasattr(self, "left_dock_container"):
@@ -1087,14 +1133,16 @@ class MainWindow(QMainWindow):
         self.problems_panel = ProblemsPanel(self)
         self.output_panel = OutputPanel(self)
         self.debug_console_panel = DebugConsolePanel(self)
-        self.terminal_widget = WindsurfTerminalWidget(self.workspace_manager, self)
+        self.terminal_widget = WindsurfTerminalWidget(self.workspace_manager, self, use_external_toolbar=True)
         self.ports_panel = PortsPanel(self)
 
         # Add panels to bottom panel in Windsurf order
         self.bottom_panel.add_panel("Problems", self.problems_panel)
         self.output_panel_index = self.bottom_panel.add_panel("Output", self.output_panel)
         self.bottom_panel.add_panel("Debug Console", self.debug_console_panel)
-        self.terminal_panel_index = self.bottom_panel.add_panel("Terminal", self.terminal_widget)
+        self.terminal_panel_index = self.bottom_panel.add_panel(
+            "Terminal", self.terminal_widget, controls=self.terminal_widget.toolbar_widget
+        )
         self.bottom_panel.add_panel("Ports", self.ports_panel)
 
         # Set terminal as default panel

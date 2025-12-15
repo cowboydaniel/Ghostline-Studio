@@ -31,5 +31,14 @@
         <file>icons/debug.svg</file>
         <file>icons/configure.svg</file>
         <file>icons/ghostline_logo.svg</file>
+        <file>icons/terminal_bar/terminal.svg</file>
+        <file>icons/terminal_bar/plus.svg</file>
+        <file>icons/terminal_bar/chevron-down.svg</file>
+        <file>icons/terminal_bar/split.svg</file>
+        <file>icons/terminal_bar/trash.svg</file>
+        <file>icons/terminal_bar/ellipsis.svg</file>
+        <file>icons/terminal_bar/panel-square.svg</file>
+        <file>icons/terminal_bar/maximize.svg</file>
+        <file>icons/terminal_bar/close.svg</file>
     </qresource>
 </RCC>
