@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QButtonGroup, QStyle, QToolButton, QVBoxLayout, QWidget
+
+from ghostline.core.resources import load_icon
 
 
 class ActivityBar(QWidget):
@@ -44,24 +47,26 @@ class ActivityBar(QWidget):
         bottom_layout.setSpacing(6)
 
         style = self.style()
+        folder_icon = load_icon("folders/folder.svg")
+        explorer_icon = folder_icon if not folder_icon.isNull() else style.standardIcon(QStyle.SP_DirIcon)
         buttons = [
-            ("explorer", QStyle.SP_DirIcon, "Explorer", self.explorerRequested),
-            ("git", QStyle.SP_BrowserReload, "Source Control", self.gitRequested),
-            ("debug", QStyle.SP_MediaPlay, "Run / Debug", self.debugRequested),
-            ("tests", QStyle.SP_DriveHDIcon, "Tests", self.testsRequested),
-            ("tasks", QStyle.SP_FileDialogDetailedView, "Tasks", self.tasksRequested),
-            ("architecture", QStyle.SP_DirLinkIcon, "3D Architecture", self.architectureRequested),
+            ("explorer", explorer_icon, "Explorer", self.explorerRequested),
+            ("git", style.standardIcon(QStyle.SP_BrowserReload), "Source Control", self.gitRequested),
+            ("debug", style.standardIcon(QStyle.SP_MediaPlay), "Run / Debug", self.debugRequested),
+            ("tests", style.standardIcon(QStyle.SP_DriveHDIcon), "Tests", self.testsRequested),
+            ("tasks", style.standardIcon(QStyle.SP_FileDialogDetailedView), "Tasks", self.tasksRequested),
+            ("architecture", style.standardIcon(QStyle.SP_DirLinkIcon), "3D Architecture", self.architectureRequested),
         ]
 
-        for tool_id, icon_id, tooltip, signal in buttons:
-            button = self._create_button(style, icon_id, tooltip, tool_id, signal)
+        for tool_id, icon, tooltip, signal in buttons:
+            button = self._create_button(style, icon, tooltip, tool_id, signal)
             top_layout.addWidget(button)
 
         layout.addWidget(top_container)
         layout.addStretch(1)
 
         settings_button = self._create_button(
-            style, QStyle.SP_FileDialogInfoView, "Settings", "settings", self.settingsRequested
+            style, style.standardIcon(QStyle.SP_FileDialogInfoView), "Settings", "settings", self.settingsRequested
         )
         bottom_layout.addWidget(settings_button)
         layout.addWidget(bottom_container)
@@ -69,13 +74,13 @@ class ActivityBar(QWidget):
     def _create_button(
         self,
         style: QStyle,
-        icon_id: QStyle.StandardPixmap,
+        icon: QIcon,
         tooltip: str,
         tool_id: str,
         emitter: Signal,
     ) -> QToolButton:
         button = QToolButton(self)
-        button.setIcon(style.standardIcon(icon_id))
+        button.setIcon(icon if not icon.isNull() else style.standardIcon(QStyle.SP_FileIcon))
         button.setToolTip(tooltip)
         button.setCheckable(True)
         button.setAutoExclusive(True)
