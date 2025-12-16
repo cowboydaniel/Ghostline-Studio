@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from difflib import SequenceMatcher
 from typing import Any, Callable, Iterable, List
 
 
@@ -57,8 +58,14 @@ class CommandRegistry:
     def list_commands(self, filter_text: str | None = None) -> List[CommandDescriptor]:
         if not filter_text:
             return list(self._commands)
-        lowered = filter_text.lower()
-        return [cmd for cmd in self._commands if lowered in cmd.description.lower() or lowered in cmd.id]
+
+        def _score(command: CommandDescriptor) -> float:
+            haystack = f"{command.id} {command.description}"
+            return SequenceMatcher(None, filter_text.lower(), haystack.lower()).ratio()
+
+        scored = [cmd for cmd in self._commands if _score(cmd) > 0.1]
+        scored.sort(key=_score, reverse=True)
+        return scored
 
     # Execution helpers -------------------------------------------------
     def execute(self, descriptor: CommandDescriptor) -> None:

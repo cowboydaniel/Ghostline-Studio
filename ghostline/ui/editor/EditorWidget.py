@@ -2,15 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import Qt, QSize, QUrl
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QDesktopServices
 
 from ghostline.core.events import CommandRegistry
 from ghostline.core.resources import load_icon
@@ -123,27 +117,42 @@ class EditorWidget(QWidget):
         layout = self.breadcrumbs.layout()
         while layout.count():
             item = layout.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
 
         path = self._file_path()
         if not path:
             return
 
-        filename = path.name
+        segments: list[tuple[str, Path]] = []
+        accumulator = Path(path.anchor)
+        for part in path.parts:
+            if part == path.anchor:
+                continue
+            accumulator /= part
+            segments.append((part, accumulator))
 
-        leaf = QLabel(filename, self.breadcrumbs)
-        leaf.setObjectName("BreadcrumbLeaf")
-        layout.addWidget(leaf)
+        if len(segments) > 4:
+            display_segments = [segments[0], ("...", path.parent), *segments[-2:]]
+        else:
+            display_segments = segments
 
-        if path.parent != path:
-            sep = QLabel(">", self.breadcrumbs)
-            layout.addWidget(sep)
+        for index, (name, target) in enumerate(display_segments):
+            if index:
+                separator = QLabel(">", self.breadcrumbs)
+                layout.addWidget(separator)
 
-            dots = QLabel("...", self.breadcrumbs)
-            dots.setObjectName("BreadcrumbEllipsis")
-            layout.addWidget(dots)
+            button = QToolButton(self.breadcrumbs)
+            button.setText(name)
+            button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            button.setAutoRaise(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(lambda _=False, p=target: self._open_path(p))
+            layout.addWidget(button)
+
+    def _open_path(self, target: Path) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     # ------------------------------------------------------------------
     # Actions
