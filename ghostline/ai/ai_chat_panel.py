@@ -983,6 +983,7 @@ class _MessageCard(QWidget):
             """)
             self._bubble.setMaximumWidth(400)
         else:
+            # AI messages - no max width, stretch to fit content
             self._bubble.setStyleSheet("""
                 QFrame#chatBubble {
                     background-color: palette(alternate-base);
@@ -995,16 +996,16 @@ class _MessageCard(QWidget):
                 }
             """)
 
-        # Role title (hidden for cleaner look, but kept for accessibility)
+        # Role title - smaller and subtle
         title = QLabel(f"<b>{role}</b>", self._bubble)
         title.setStyleSheet("font-size: 10px; opacity: 0.7;")
         bubble_layout.addWidget(title)
 
-        # Context preamble
-        if context:
-            preamble = QLabel("\n".join([chunk.title for chunk in context]), self._bubble)
-            preamble.setWordWrap(True)
-            preamble.setStyleSheet("font-size: 10px; opacity: 0.6;")
+        # Context preamble - show as subtle hint only if context exists
+        if context and len(context) > 0:
+            context_count = len(context)
+            preamble = QLabel(f"📎 {context_count} file{'s' if context_count > 1 else ''} referenced", self._bubble)
+            preamble.setStyleSheet("font-size: 9px; opacity: 0.5; font-style: italic;")
             bubble_layout.addWidget(preamble)
 
         self._content_layout = QVBoxLayout()
