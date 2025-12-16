@@ -6,6 +6,8 @@ font:
 tabs:
   use_spaces: true
   tab_size: 4
+editor:
+  auto_close_brackets: true
 autosave:
   enabled: false
   interval_seconds: 60

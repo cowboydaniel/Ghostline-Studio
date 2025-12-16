@@ -20,11 +20,11 @@ This document provides a comprehensive breakdown of all features in Ghostline St
 - ✅ Code folding with visual indicators
 - ✅ Document synchronization with LSP
 - ✅ Editor events for plugins and agents
+- ✅ Minimap/code overview
+- ✅ Bracket matching and auto-closing
+- ✅ Multiple cursors/selections (Alt+Click)
+- ✅ Code snippets and templates
 - 🚧 Multi-language syntax highlighting (currently Python-focused)
-- 📋 Minimap/code overview
-- 📋 Bracket matching and auto-closing
-- 📋 Multiple cursors/selections
-- 📋 Code snippets and templates
 
 ### Workspace & Navigation
 - ✅ Workspace-aware project explorer
@@ -415,6 +415,7 @@ This document provides a comprehensive breakdown of all features in Ghostline St
 
 These features were implemented in the last development cycle:
 
+- ✅ **Auto-Closing Brackets** (Dec 2024) - Smart bracket and quote pairing with skip-over and wrap selection
 - ✅ **Chat History Persistence** (Dec 2024) - Full session save/load/delete
 - ✅ **Windsurf-style Welcome Screen** (Dec 2024) - Modern onboarding experience
 - ✅ **Windsurf-style Terminal Dock** (Dec 2024) - Advanced terminal with PTY support
@@ -437,5 +438,5 @@ These features were implemented in the last development cycle:
 
 ---
 
-**Last Updated:** December 15, 2024
-**Version:** Based on current main branch (commit: f2cef91)
+**Last Updated:** December 16, 2024
+**Version:** Based on claude/implement-code-editor-zzdIR branch
