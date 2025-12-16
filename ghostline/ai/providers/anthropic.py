@@ -111,6 +111,8 @@ class AnthropicProvider:
 
         tool_uses: Dict[str, Dict[str, Any]] = {}
         accumulated_text: List[str] = []
+        # Track content block index to tool_use id mapping
+        block_index_to_id: Dict[int, str] = {}
 
         # Build API call parameters
         api_params: Dict[str, Any] = {
@@ -133,28 +135,35 @@ class AnthropicProvider:
                 event_type = getattr(event, "type", None)
                 if event_type == "content_block_delta":
                     delta = getattr(event, "delta", None)
-                    block = getattr(event, "content_block", None)
+                    index = getattr(event, "index", None)
                     if getattr(delta, "type", None) == "text_delta":
                         text = getattr(delta, "text", "")
                         if text:
                             accumulated_text.append(text)
                             yield TextDeltaEvent(text)
-                    elif getattr(delta, "type", None) == "input_json_delta" and getattr(block, "type", None) == "tool_use":
-                        partial = getattr(delta, "partial_json", "")
-                        if partial:
-                            tool_data = tool_uses.setdefault(block.id, {"id": block.id, "name": block.name, "arguments": ""})
-                            tool_data["arguments"] += partial
+                    elif getattr(delta, "type", None) == "input_json_delta":
+                        # Look up which tool_use this delta belongs to using the index
+                        if index is not None and index in block_index_to_id:
+                            tool_id = block_index_to_id[index]
+                            partial = getattr(delta, "partial_json", "")
+                            if partial and tool_id in tool_uses:
+                                tool_uses[tool_id]["arguments"] += partial
                 elif event_type == "content_block_start":
                     block = getattr(event, "content_block", None)
+                    index = getattr(event, "index", None)
                     if getattr(block, "type", None) == "tool_use":
+                        tool_id = getattr(block, "id", "")
+                        # Track the mapping from content block index to tool_use id
+                        if index is not None:
+                            block_index_to_id[index] = tool_id
                         # Check if input is already provided (for small tool calls)
                         input_data = getattr(block, "input", None)
                         if input_data is not None:
                             # Input provided immediately, serialize it
-                            tool_uses[block.id] = {"id": block.id, "name": block.name, "arguments": json.dumps(input_data)}
+                            tool_uses[tool_id] = {"id": tool_id, "name": getattr(block, "name", ""), "arguments": json.dumps(input_data)}
                         else:
                             # Input will be streamed via input_json_delta events
-                            tool_uses[block.id] = {"id": block.id, "name": block.name, "arguments": ""}
+                            tool_uses[tool_id] = {"id": tool_id, "name": getattr(block, "name", ""), "arguments": ""}
                 elif event_type == "message_stop":
                     stop_reason = getattr(event, "stop_reason", None)
                     for data in tool_uses.values():
