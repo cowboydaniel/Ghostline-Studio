@@ -554,7 +554,7 @@ class PTYTerminal(QTextEdit):
                 f"{indent}{mouth}",
                 f"{indent}|  - -  |",
                 f"{indent}|       |",
-                f"{indent} \     /",
+                f"{indent} \\     /",
                 f"{indent}  {tail}",
             ]
 

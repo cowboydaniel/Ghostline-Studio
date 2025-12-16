@@ -10,7 +10,7 @@ This module provides export capabilities:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -42,7 +42,7 @@ class ExportConfig:
     width: int = 1920
     height: int = 1080
     scale_factor: float = 1.0
-    background_color: QColor = QColor(30, 30, 35)
+    background_color: QColor = field(default_factory=lambda: QColor(30, 30, 35))
     include_legend: bool = True
     include_title: bool = True
     title: str = "Architecture Visualization"
