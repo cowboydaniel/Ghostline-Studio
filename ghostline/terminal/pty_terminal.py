@@ -420,26 +420,62 @@ class PTYTerminal(QTextEdit):
         self.input_start_pos = cursor.position()
 
     def _cleanup_pty(self) -> None:
-        """Clean up PTY resources."""
+        """Clean up PTY resources with proper error handling."""
         if self.master_fd is not None:
             try:
                 os.close(self.master_fd)
             except OSError:
-                pass
-            self.master_fd = None
+                import logging
+                logging.getLogger(__name__).debug("Failed to close master_fd", exc_info=True)
+            finally:
+                self.master_fd = None
 
         if self.pid is not None:
             try:
-                os.waitpid(self.pid, os.WNOHANG)
-            except OSError:
+                # Try to wait for child process with timeout
+                # First attempt non-blocking to check if already exited
+                pid, status = os.waitpid(self.pid, os.WNOHANG)
+                if pid == 0:
+                    # Process still running, give it a chance to exit gracefully
+                    try:
+                        os.kill(self.pid, signal.SIGTERM)
+                        # Wait up to 1 second for graceful exit
+                        import time
+                        deadline = time.time() + 1.0
+                        while time.time() < deadline:
+                            pid, status = os.waitpid(self.pid, os.WNOHANG)
+                            if pid != 0:
+                                break
+                            time.sleep(0.1)
+                        # Force kill if still running
+                        if pid == 0:
+                            os.kill(self.pid, signal.SIGKILL)
+                            os.waitpid(self.pid, 0)
+                    except (OSError, ProcessLookupError):
+                        # Process already gone
+                        pass
+            except ChildProcessError:
+                # Process already reaped
                 pass
-            self.pid = None
+            except OSError:
+                import logging
+                logging.getLogger(__name__).debug("Failed to wait for child process", exc_info=True)
+            finally:
+                self.pid = None
 
     def closeEvent(self, event) -> None:
         """Clean up on close."""
         self.read_timer.stop()
         self._cleanup_pty()
         super().closeEvent(event)
+
+    def __del__(self) -> None:
+        """Ensure cleanup even if closeEvent isn't called."""
+        try:
+            self._cleanup_pty()
+        except Exception:
+            # Ignore errors during cleanup in __del__
+            pass
 
     def get_working_directory(self) -> Path:
         """Get the current working directory of the shell."""

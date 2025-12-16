@@ -581,6 +581,28 @@ class AIClient:
             "claude_models": [model.lower() for model in claude_models],
         }
 
+        # Register cleanup handler for subprocess cleanup
+        import atexit
+        atexit.register(self._cleanup_processes)
+
+    def _cleanup_processes(self) -> None:
+        """Cleanup all managed subprocesses to prevent resource leaks."""
+        if self._ollama_process and self._ollama_process.poll() is None:
+            try:
+                self.logger.info("Terminating Ollama process (PID: %s)", self._ollama_process.pid)
+                self._ollama_process.terminate()
+                try:
+                    self._ollama_process.wait(timeout=5)
+                    self.logger.info("Ollama process terminated gracefully")
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("Ollama process did not terminate, killing it")
+                    self._ollama_process.kill()
+                    self._ollama_process.wait()
+            except Exception as exc:
+                self.logger.error("Failed to cleanup Ollama process: %s", exc)
+            finally:
+                self._ollama_process = None
+
     def _create_backend(self, backend_type: str | None = None):
         backend = backend_type or self.backend_type
         if backend in self._backends:
