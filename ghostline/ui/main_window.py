@@ -1854,6 +1854,37 @@ class MainWindow(QMainWindow):
         self._konami_index = 0
 
     def show_konami_easter_egg(self) -> None:
+        message = "Konami code unlocked!"
+        if hasattr(self, "status") and hasattr(self.status, "show_message"):
+            try:
+                self.status.show_message(message)
+                self._on_konami_code()
+                return
+            except RuntimeError:
+                # Status bar might already be disposed during shutdown
+                pass
+
+        label = QLabel(message, self)
+        label.setObjectName("konamiEasterEggLabel")
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet(
+            """
+            background-color: rgba(30, 30, 30, 200);
+            color: white;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-weight: bold;
+            """
+        )
+        label.adjustSize()
+
+        available_rect = self.rect()
+        x_pos = available_rect.center().x() - label.width() // 2
+        y_pos = available_rect.top() + available_rect.height() // 5
+        label.move(x_pos, y_pos)
+        label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        label.show()
+        QTimer.singleShot(2500, label.deleteLater)
         self._on_konami_code()
 
     def _on_konami_code(self) -> None:
