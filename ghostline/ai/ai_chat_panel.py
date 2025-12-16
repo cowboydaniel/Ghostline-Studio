@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 import re
 import threading
 from pathlib import Path
@@ -1284,8 +1285,19 @@ class _ToolCallBlock(QFrame):
         self.call = call
         self.metadata: dict | None = None
         self.setObjectName("toolCallBlock")
-        self.setStyleSheet(
-            """
+        
+        # Set up the main layout first
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+        
+        # Now it's safe to create child widgets
+        self._setup_ui()
+        
+    def _setup_ui(self) -> None:
+        """Set up the UI components after the parent is properly initialized."""
+        # Set up styles after parent is initialized
+        self.setStyleSheet("""
             QFrame#toolCallBlock {
                 background: palette(base);
                 border: 1px solid palette(mid);
@@ -1297,45 +1309,50 @@ class _ToolCallBlock(QFrame):
             QLabel#toolArgs {
                 font-family: monospace;
             }
-            """
-        )
+        """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(6)
-
+        # Create header
         header = QHBoxLayout()
-        self.icon_label = QLabel(self._icon_for_tool(call.name), self)
+        self.icon_label = QLabel(self._icon_for_tool(self.call.name), self)
         header.addWidget(self.icon_label)
-        self.title_label = QLabel(call.name, self)
+        
+        self.title_label = QLabel(parent=self)
+        self.title_label.setText(self.call.name)
         self.title_label.setObjectName("toolTitle")
         header.addWidget(self.title_label)
+        
         header.addStretch()
+        
         self.summary_label = QLabel("Pending", self)
         self.summary_label.setStyleSheet("color: palette(dark); font-size: 11px;")
         header.addWidget(self.summary_label)
-        layout.addLayout(header)
+        
+        self.layout().addLayout(header)
 
-        self.args_label = QLabel(self._format_args(call.arguments), self)
+        # Add arguments label
+        self.args_label = QLabel(self._format_args(self.call.arguments), self)
         self.args_label.setObjectName("toolArgs")
         self.args_label.setWordWrap(True)
-        layout.addWidget(self.args_label)
+        self.layout().addWidget(self.args_label)
 
+        # Add output label (initially hidden)
         self.output_label = QLabel("", self)
         self.output_label.setWordWrap(True)
         self.output_label.hide()
-        layout.addWidget(self.output_label)
+        self.layout().addWidget(self.output_label)
 
+        # Add diff view (initially hidden)
         self.diff_view = QTextEdit(self)
         self.diff_view.setReadOnly(True)
         self.diff_view.hide()
         self.diff_view.setStyleSheet("font-family: monospace; background: palette(alternate-base);")
-        layout.addWidget(self.diff_view)
+        self.layout().addWidget(self.diff_view)
 
+        # Add undo button (initially hidden)
         self.undo_button = QPushButton("Undo", self)
         self.undo_button.hide()
         self.undo_button.clicked.connect(self._emit_undo)
-        layout.addWidget(self.undo_button, 0, Qt.AlignLeft)
+        self.layout().addWidget(self.undo_button, 0, Qt.AlignLeft)
 
     def _icon_for_tool(self, name: str) -> str:
         if name in {"write_file", "edit_file"}:
@@ -2681,21 +2698,37 @@ class AIChatPanel(QWidget):
 
     @Slot(object)
     def _on_tool_call(self, call: ToolCallEvent) -> None:
+        if not call.name:
+            logging.warning(f"Received tool call with empty name: {call}")
+            return
+            
         if not self._active_response_card:
             self._active_response_card = self._append("AI", "", context=self._last_chunks)
-        block = _ToolCallBlock(call, parent=self._active_response_card)
-        block.undo_requested.connect(self._handle_undo_request)
-        self._active_tool_blocks[call.call_id] = block
-        if self._active_response_card:
-            self._active_response_card._content_layout.addWidget(block)
-            self._active_response_card._update_list_item_size()
-        req = _ApprovalRequest(call, threading.Event())
-        self._approval_requests[call.call_id] = req
-        if self._requires_approval(call):
-            self._prompt_approval(req)
-        else:
-            req.approved = True
-            req.decision.set()
+            
+        try:
+            block = _ToolCallBlock(call, parent=self._active_response_card)
+            block.undo_requested.connect(self._handle_undo_request)
+            self._active_tool_blocks[call.call_id] = block
+            
+            if self._active_response_card:
+                self._active_response_card._content_layout.addWidget(block)
+                self._active_response_card._update_list_item_size()
+                
+            req = _ApprovalRequest(call, threading.Event())
+            self._approval_requests[call.call_id] = req
+            
+            if self._requires_approval(call):
+                self._prompt_approval(req)
+            else:
+                req.approved = True
+                req.decision.set()
+                
+        except Exception as e:
+            logging.error(f"Failed to handle tool call {call.call_id}: {e}")
+            if call.call_id in self._active_tool_blocks:
+                del self._active_tool_blocks[call.call_id]
+            if call.call_id in self._approval_requests:
+                del self._approval_requests[call.call_id]
 
     @Slot(object)
     def _on_tool_result(self, result: ToolResultEvent) -> None:
