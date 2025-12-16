@@ -82,6 +82,13 @@ class ToolExecutor:
 
     def execute(self, tool_name: str, args: Dict[str, Any]) -> ToolResult:
         """Execute a tool and return the result payload."""
+        # Log all tool execution attempts
+        logging.debug(
+            "Executing tool: %s with args: %s (types: %s)",
+            tool_name,
+            args,
+            {k: type(v).__name__ for k, v in args.items()},
+        )
         if tool_name not in self.allowed_tools:
             result = ToolResult(tool_name, f"Error: Unknown tool '{tool_name}'")
             self._record_history(tool_name, args, result)
@@ -97,6 +104,13 @@ class ToolExecutor:
             self.allowed_tools[tool_name], args
         )
         if validation_error:
+            # Log the exact tool call for debugging
+            logging.warning(
+                "Tool validation failed for %s - Missing: %s - Raw args: %s",
+                tool_name,
+                missing_params,
+                args,
+            )
             hint = ""
             if missing_params:
                 workspace_note = f" (workspace root: {self.workspace})"
