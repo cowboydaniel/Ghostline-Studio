@@ -92,6 +92,10 @@ class LSPManager(QObject):
             return None
         return self._language_map.get(suffix)
 
+    def language_for_path(self, path):
+        """Public helper to map a file path to a configured language id."""
+        return self._language_for_file(path)
+
     def _uri_for_path(self, path):
         try:
             normalized = self._normalize_path(path)

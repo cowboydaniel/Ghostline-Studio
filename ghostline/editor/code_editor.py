@@ -45,6 +45,7 @@ from ghostline.editor.folding import FoldingManager
 from ghostline.editor.minimap import MiniMap
 from ghostline.debugger.breakpoints import BreakpointStore
 from ghostline.ai.ai_client import AIClient
+from ghostline.editor.highlighting import create_highlighting
 from ghostline.ui.editor.semantic_tokens import SemanticToken, SemanticTokenProvider
 
 
@@ -656,7 +657,10 @@ class CodeEditor(QPlainTextEdit):
         self._bracket_selection: list[QTextEdit.ExtraSelection] = []
         self._bracket_scope: tuple[int, int, int] | None = None
         self.breakpoints = BreakpointStore.instance()
-        self._semantic_provider = SemanticTokenProvider("python", theme=self.theme)
+        self._language_override: str | None = None
+        self._language: str | None = None
+        self._semantic_provider: SemanticTokenProvider | None = None
+        self._highlighter: QSyntaxHighlighter | None = None
         self._lsp_sync_timer = QTimer(self)
         self._lsp_sync_timer.setSingleShot(True)
         self._lsp_sync_timer.timeout.connect(self._flush_lsp_change)
@@ -714,9 +718,7 @@ class CodeEditor(QPlainTextEdit):
         self.textChanged.connect(self._notify_lsp_change)
         self.textChanged.connect(self._refresh_semantic_tokens)
 
-        self._highlighter = PythonHighlighter(
-            self.document(), self.theme, token_provider=self._semantic_provider
-        )
+        self._update_language_for_context()
         self.folding = FoldingManager(self)
         self.minimap = MiniMap(self)
         self.completion_widget = CompletionWidget(self)
@@ -733,6 +735,62 @@ class CodeEditor(QPlainTextEdit):
         else:
             # For new/empty files, use the delayed request
             self._refresh_semantic_tokens()
+
+    # Highlighting helpers
+    def set_language(self, language: str | None) -> None:
+        """Explicitly set the editor language and rebuild highlighting."""
+        self._language_override = language
+        self._update_language_for_context(force=True)
+
+    def _update_language_for_context(self, *, force: bool = False) -> None:
+        self._apply_language_change(self._language_for_context(), force=force)
+
+    def _language_for_context(self) -> str:
+        if self._language_override:
+            return self._language_override
+        language = self._language_from_path(self.path)
+        return language or "python"
+
+    def _language_from_path(self, path: Path | None = None) -> str | None:
+        target = path if path is not None else self.path
+        if self.lsp_manager and target:
+            return self.lsp_manager.language_for_path(target)
+        return None
+
+    def _apply_language_change(self, language: str | None, *, force: bool = False) -> None:
+        resolved = (language or "python").lower()
+        if not force and self._language == resolved and self._highlighter:
+            return
+
+        self._language = resolved
+
+        if hasattr(self, "_highlighter") and self._highlighter:
+            self._highlighter.deleteLater()
+
+        highlighter, semantic_provider = create_highlighting(
+            self.document(), resolved, self.theme
+        )
+        self._semantic_provider = semantic_provider
+        self._highlighter = highlighter
+        self._highlighter.rehighlight()
+
+        # Reset semantic tracking so new providers request fresh tokens
+        self._last_semantic_revision = -1
+        self._semantic_request_pending = False
+        self._refresh_semantic_tokens()
+
+    def _update_document_path(self, path: Path | None) -> None:
+        if path == self.path:
+            return
+
+        self.path = path
+        self._lsp_document_opened = False
+        self._document_version = 0
+        self._update_language_for_context(force=True)
+
+    def set_path(self, path: Path | None) -> None:
+        """Public helper for updating the file path and language mapping."""
+        self._update_document_path(path)
 
     # Line number plumbing
     def line_number_area_width(self) -> int:
@@ -880,6 +938,7 @@ class CodeEditor(QPlainTextEdit):
     # File operations
     def _load_file(self, path: Path) -> None:
         self._loading_document = True
+        self._update_document_path(path)
         try:
             with path.open("r", encoding="utf-8") as handle:
                 self.setPlainText(handle.read())
@@ -1361,7 +1420,7 @@ class CodeEditor(QPlainTextEdit):
             return
 
         tokens = SemanticTokenProvider.from_lsp(result, legend)
-        if not tokens:
+        if not tokens and self._semantic_provider:
             tokens = self._semantic_provider.custom_tokens(self.toPlainText())
         # set_semantic_tokens already calls rehighlight(), don't call it again
         self._highlighter.set_semantic_tokens(tokens)
