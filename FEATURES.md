@@ -38,10 +38,10 @@ This document provides a comprehensive breakdown of all features in Ghostline St
 - ✅ Custom tab bar with enhanced management
 - ✅ Persistent UI state (window geometry, dock layouts)
 - ✅ Workspace dashboard
-- 📋 Breadcrumb navigation
-- 📋 File history and recent files
-- 📋 Split editor views
-- 📋 Workspace templates
+- ✅ Breadcrumb navigation with collapsible path segments in the editor header
+- ✅ File history and recent files surfaced in the workspace dashboard and welcome portal
+- ✅ Split editor views with synchronized dual-pane tabs
+- ✅ Workspace templates
 
 ### UI & Layout
 - ✅ Splash screen with branding

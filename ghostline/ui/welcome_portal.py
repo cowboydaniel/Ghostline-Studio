@@ -1,11 +1,15 @@
 """Full-window welcome portal with Windsurf-style design."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -18,6 +22,7 @@ class WelcomePortal(QWidget):
     openFolderRequested = Signal()
     openCommandPaletteRequested = Signal()
     openAIChatRequested = Signal()
+    openRecentRequested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -89,9 +94,35 @@ class WelcomePortal(QWidget):
         )
 
         content_layout.addWidget(actions_container, alignment=Qt.AlignCenter)
+        content_layout.addSpacing(16)
+
+        self.recent_files = QListWidget(self)
+        self.recent_files.setObjectName("WelcomeRecents")
+        self.recent_files.itemActivated.connect(lambda item: self._open_recent(item))
+
+        content_layout.addWidget(QLabel("Recent Files", self), alignment=Qt.AlignCenter)
+        content_layout.addWidget(self.recent_files)
         content_layout.addStretch(1)
 
         main_layout.addWidget(content_widget, alignment=Qt.AlignCenter)
+
+    def set_recent_files(self, files: list[str]) -> None:
+        self.recent_files.clear()
+        added = False
+        for path in files:
+            added = True
+            item = QListWidgetItem(path)
+            item.setData(Qt.UserRole, path)
+            self.recent_files.addItem(item)
+        if not added:
+            placeholder = QListWidgetItem("No recent files. Open a workspace to get started.")
+            placeholder.setFlags(Qt.NoItemFlags)
+            self.recent_files.addItem(placeholder)
+
+    def _open_recent(self, item: QListWidgetItem) -> None:
+        path = item.data(Qt.UserRole)
+        if path:
+            self.openRecentRequested.emit(str(path))
 
     def _add_quick_action(
         self,
