@@ -96,6 +96,7 @@ class ThemeManager:
 
     def __init__(self, theme_name: str | None = None) -> None:
         self.theme_name = theme_name or self.DEFAULT_THEME
+        self.previous_theme_name: str | None = None
         self._palette = self._build_palette()
         self._syntax_colors = self._load_syntax_colors()
 
@@ -117,6 +118,10 @@ class ThemeManager:
         self.theme_name = theme_name
         self._palette = self._build_palette()
         self._syntax_colors = self._load_syntax_colors()
+
+    def remember_current_theme(self) -> None:
+        """Record the active theme so it can be restored later."""
+        self.previous_theme_name = self.theme_name
 
     def color(self, role: QPalette.ColorRole) -> QColor:
         return self._palette.color(role)

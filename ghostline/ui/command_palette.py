@@ -162,6 +162,8 @@ class CommandPalette(QDialog):
         # Hidden easter egg: entering "ghost night" toggles the secret theme.
         if self._activate_ghost_night(normalized_query):
             return
+        if self._restore_ghost_day(normalized_query):
+            return
         # Hidden easter egg: entering "about:ghosts" opens the credits dialog instead of running a command.
         if self._handle_easter_egg(query):
             return
@@ -251,10 +253,23 @@ class CommandPalette(QDialog):
 
         # Easter egg trigger path for the secret Ghost Night theme.
         if self.theme:
+            self.theme.remember_current_theme()
             self.theme.set_theme("ghost_night")
             app = QApplication.instance()
             if app:
                 self.theme.apply(app)
+        return True
+
+    def _restore_ghost_day(self, normalized_query: str) -> bool:
+        if normalized_query != "ghost day" or not self.theme:
+            return False
+
+        fallback_theme = self.theme.previous_theme_name or self.theme.DEFAULT_THEME
+        self.theme.set_theme(fallback_theme)
+        app = QApplication.instance()
+        if app:
+            # Easter egg revert path still flows through theme hooks.
+            self.theme.apply(app)
         return True
 
     def _handle_easter_egg(self, query: str) -> bool:
