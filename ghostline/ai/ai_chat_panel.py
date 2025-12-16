@@ -964,6 +964,11 @@ class _MessageCard(QWidget):
         self._role = role
         self._is_user = role.lower() in ("you", "user")
         self._list_item: QListWidgetItem | None = None  # Reference for resize during streaming
+        
+        # Setup resize timer for debouncing
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(self._update_list_item_size)
 
         # Main layout with horizontal alignment
         main_layout = QHBoxLayout(self)
@@ -1105,36 +1110,62 @@ class _MessageCard(QWidget):
             body.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self._content_layout.addWidget(body)
 
-        # Update list item size hint for streaming resize
-        self._update_list_item_size()
+        # Schedule resize after Qt has processed the new layout
+        self._schedule_resize()
+
+    def _schedule_resize(self) -> None:
+        # Throttle to avoid murdering the UI during token streaming
+        if not self._resize_timer.isActive():
+            self._resize_timer.start(0)  # next event loop tick
 
     def _update_list_item_size(self) -> None:
-        """Update the parent list item's size hint to match current content."""
         if self._list_item is None:
             return
         list_widget = self._list_item.listWidget()
         if list_widget is None:
             return
 
-        # 1) Constrain THIS widget to the viewport width (critical for word-wrap height calc)
         available_width = max(240, list_widget.viewport().width() - 20)
         self.setFixedWidth(available_width)
 
-        # 2) Constrain bubble width (user vs AI)
         bubble_cap = 400 if self._is_user else 600
         bubble_width = min(available_width, bubble_cap)
         self._bubble.setFixedWidth(bubble_width)
 
-        # 3) Force layouts to recompute geometry now that widths are real
-        if self._bubble.layout():
-            self._bubble.layout().activate()
+        # Force child widgets to wrap at the bubble's *inner* width
+        bubble_layout = self._bubble.layout()
+        if bubble_layout is not None:
+            m = bubble_layout.contentsMargins()
+            inner_width = max(80, bubble_width - (m.left() + m.right()))
+        else:
+            inner_width = max(80, bubble_width - 24)
+
+        # Apply width constraints to content widgets so their heightForWidth works
+        for i in range(self._content_layout.count()):
+            item = self._content_layout.itemAt(i)
+            w = item.widget()
+            if w is None:
+                continue
+
+            if isinstance(w, QLabel):
+                w.setFixedWidth(inner_width)
+            elif isinstance(w, QTextEdit):
+                w.setFixedWidth(inner_width)
+                # Recompute doc height for code blocks
+                doc = w.document()
+                doc.setTextWidth(max(1, w.viewport().width()))
+                h = int(doc.size().height()) + 12
+                w.setFixedHeight(max(h, 40))
+
+        # Now recompute geometry properly
+        if bubble_layout:
+            bubble_layout.activate()
         if self.layout():
             self.layout().activate()
 
         self._bubble.adjustSize()
         self.adjustSize()
 
-        # 4) Set row height from the *constrained* sizeHint
         height = self.sizeHint().height()
         self._list_item.setSizeHint(QSize(available_width, height + 8))
 
@@ -2228,6 +2259,7 @@ class AIChatPanel(QWidget):
         item.setSizeHint(card.sizeHint())
         self.transcript_list.addItem(item)
         self.transcript_list.setItemWidget(item, card)
+        card._schedule_resize()
         self.transcript_stack.setCurrentWidget(self.transcript_list)
         # Scroll to bottom to show newest message
         self.transcript_list.scrollToBottom()
@@ -2613,6 +2645,7 @@ class AIChatPanel(QWidget):
         item.setSizeHint(card.sizeHint())
         self.transcript_list.addItem(item)
         self.transcript_list.setItemWidget(item, card)
+        card._schedule_resize()
         # Scroll to bottom to show newest message
         self.transcript_list.scrollToBottom()
         return card
