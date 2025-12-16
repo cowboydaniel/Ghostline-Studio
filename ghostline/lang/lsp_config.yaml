@@ -35,5 +35,12 @@ servers:
 
 # Optional extension overrides. Users can add entries under lsp.extension_map in settings.
 extension_map:
+  cc: "c_cpp"
+  cpp: "c_cpp"
+  c: "c_cpp"
+  h: "c_cpp"
+  hpp: "c_cpp"
   jsx: "typescript"
   tsx: "typescript"
+  rs: "rust"
+  java: "java"

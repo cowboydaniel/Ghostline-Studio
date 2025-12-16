@@ -103,7 +103,7 @@ lsp:
   servers:
     python:
       primary:
-        command: "pyright-langserver"
+        command: "basedpyright-langserver"
         args:
           - "--stdio"
         enabled: true
@@ -129,10 +129,41 @@ lsp:
       primary:
         command: "jdtls"
         args: []
+  language_defaults:
+    python:
+      extensions:
+        - py
+      semantic_tokens: true
+    typescript:
+      extensions:
+        - ts
+        - js
+        - jsx
+        - tsx
+      semantic_tokens: true
+    c_cpp:
+      extensions:
+        - c
+        - h
+        - cpp
+        - cc
+        - hpp
+      semantic_tokens: true
+    rust:
+      extensions:
+        - rs
+      semantic_tokens: true
+    java:
+      extensions:
+        - java
+      semantic_tokens: true
   extension_map:
+    cc: "c_cpp"
     cpp: "c_cpp"
     c: "c_cpp"
     h: "c_cpp"
     hpp: "c_cpp"
+    jsx: "typescript"
+    tsx: "typescript"
     rs: "rust"
     java: "java"
