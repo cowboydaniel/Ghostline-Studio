@@ -44,6 +44,21 @@ def _install_pyside6_stub() -> None:
             self.children: list[Any] = []
             super().__init__()
 
+        def setWindowTitle(self, title: str) -> None:
+            self.window_title = title
+
+        def setWindowModality(self, modality: Any) -> None:
+            self.window_modality = modality
+
+        def setModal(self, modal: bool) -> None:
+            self.modal = modal
+
+        def show(self) -> None:
+            self.visible = True
+
+        def close(self) -> None:
+            self.visible = False
+
     class _Layout(_Widget):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             super().__init__(*args, **kwargs)
@@ -184,6 +199,7 @@ def _install_pyside6_stub() -> None:
     qtwidgets.QApplication = _Application
     qtwidgets.QMessageBox = _MessageBox
     qtwidgets.QDialog = type("QDialog", (_Widget,), {})
+    qtwidgets.QGroupBox = type("QGroupBox", (_Widget,), {})
     qtwidgets.QDialogButtonBox = type("QDialogButtonBox", (_Widget,), {})
     qtwidgets.QCheckBox = type("QCheckBox", (_Widget,), {})
     qtwidgets.QProgressBar = type("QProgressBar", (_Widget,), {})

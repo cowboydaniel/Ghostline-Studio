@@ -16,6 +16,10 @@ from PySide6.QtWidgets import (
 
 from ghostline.core.events import CommandDescriptor, CommandRegistry
 from ghostline.ai.navigation_assistant import NavigationAssistant, PredictiveContext
+from ghostline.ui.dialogs.credits_dialog import CreditsDialog
+
+
+EASTER_EGG_QUERY = "about:ghosts"
 
 
 class CommandPalette(QDialog):
@@ -30,6 +34,7 @@ class CommandPalette(QDialog):
         self.file_provider = None
         self.open_file_callback = None
         self.pending_commands: list[CommandDescriptor] = []
+        self._credits_dialog: CreditsDialog | None = None
 
         self.input = QLineEdit(self)
         self.input.setPlaceholderText("Type a command...")
@@ -146,6 +151,10 @@ class CommandPalette(QDialog):
             self.autoflow_mode = mode
 
     def _execute_selected(self) -> None:
+        query = self.input.text().strip()
+        # Hidden easter egg: entering "about:ghosts" opens the credits dialog instead of running a command.
+        if self._handle_easter_egg(query):
+            return
         item = self.list_widget.currentItem()
         if item:
             self._execute_item(item)
@@ -224,3 +233,17 @@ class CommandPalette(QDialog):
             self.registry.execute(descriptor)
         else:
             descriptor.callback(**descriptor.arguments)
+
+    # Easter egg -------------------------------------------------------
+    def _handle_easter_egg(self, query: str) -> bool:
+        if query != EASTER_EGG_QUERY:
+            return False
+
+        self._show_credits_dialog()
+        return True
+
+    def _show_credits_dialog(self) -> None:
+        if not self._credits_dialog:
+            self._credits_dialog = CreditsDialog(self)
+        # Show the dialog without blocking the palette so users can keep searching.
+        self._credits_dialog.show()
