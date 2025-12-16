@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from ghostline.ai.ai_client import AIClient, ProactiveSuggestion
 from ghostline.ai.chat_history_manager import ChatHistoryManager
 from ghostline.ai.context_engine import ContextChunk, ContextEngine
+from ghostline.ai.creator_easter_egg import is_creator_query, get_random_response, get_sticker_path
 from ghostline.ai.model_registry import ModelDescriptor, ModelRegistry
 
 
@@ -995,6 +996,71 @@ class _MessageCard(QWidget):
             body = QTextEdit(text, self)
             body.setReadOnly(True)
             self._content_layout.addWidget(body)
+
+
+class _CreatorMessageCard(QWidget):
+    """Special message card for creator easter egg with hidden sticker."""
+
+    def __init__(
+        self,
+        text: str,
+        sticker_path: Path,
+        insert_handler=None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.insert_handler = insert_handler
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+
+        # Header row with "AI" title and hidden sticker
+        header = QHBoxLayout()
+        title = QLabel("<b>AI</b>", self)
+        header.addWidget(title)
+        header.addStretch()
+
+        # Hidden sticker - appears on hover
+        self.sticker_label = QLabel(self)
+        self.sticker_label.setObjectName("creatorSticker")
+        if sticker_path.exists():
+            from PySide6.QtGui import QPixmap
+            pixmap = QPixmap(str(sticker_path))
+            scaled = pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.sticker_label.setPixmap(scaled)
+        self.sticker_label.setToolTip("He is still here.")
+        self.sticker_label.setStyleSheet("""
+            QLabel#creatorSticker {
+                opacity: 0.15;
+                padding: 4px;
+            }
+            QLabel#creatorSticker:hover {
+                opacity: 1.0;
+            }
+        """)
+        header.addWidget(self.sticker_label)
+
+        layout.addLayout(header)
+
+        # Message body with special styling
+        body = QTextEdit(text, self)
+        body.setReadOnly(True)
+        body.setStyleSheet("""
+            QTextEdit {
+                font-style: italic;
+                color: #a78bfa;
+                background: transparent;
+                border: none;
+            }
+        """)
+        layout.addWidget(body)
+
+    def set_text(self, text: str) -> None:
+        """Update the message text."""
+        for i in range(self.layout().count()):
+            item = self.layout().itemAt(i)
+            if item and item.widget() and isinstance(item.widget(), QTextEdit):
+                item.widget().setPlainText(text)
+                break
 
 
 class _AIRequestWorker(QObject):
@@ -2027,9 +2093,39 @@ class AIChatPanel(QWidget):
         prompt = self.input.text().strip()
         if not prompt:
             return
+
+        # Easter egg: intercept creator queries
+        if is_creator_query(prompt):
+            self._handle_creator_easter_egg(prompt)
+            return
+
         context, chunks = self._gather_context(prompt)
         self._last_chunks = chunks
         self._start_request(prompt, context)
+
+    def _handle_creator_easter_egg(self, prompt: str) -> None:
+        """Display a lore-rich response with hidden sticker for creator queries."""
+        # Show user's message
+        self._append("You", prompt, context=[])
+        self._current_messages.append(ChatMessage("You", prompt, []))
+
+        # Get random lore response and display with sticker
+        response = get_random_response()
+        sticker_path = get_sticker_path()
+        card = self._append_creator_response(response, sticker_path)
+
+        self._current_messages.append(ChatMessage("AI", response, []))
+        self.input.clear()
+        self.transcript_stack.setCurrentWidget(self.transcript_list)
+
+    def _append_creator_response(self, text: str, sticker_path) -> _MessageCard:
+        """Append a special AI response with a hidden sticker."""
+        card = _CreatorMessageCard(text, sticker_path, insert_handler=self.insert_handler, parent=self)
+        item = QListWidgetItem(self.transcript_list)
+        item.setSizeHint(card.sizeHint())
+        self.transcript_list.addItem(item)
+        self.transcript_list.setItemWidget(item, card)
+        return card
 
     def _open_context_dialog(self) -> None:
         prompt = self.input.text().strip()
