@@ -2251,6 +2251,10 @@ class AIChatPanel(QWidget):
             available_models: list[ModelDescriptor] = []
             has_openai_key = self._has_openai_key
             try:
+                available_models.extend(self.model_registry.enabled_claude_models())
+            except Exception:  # noqa: BLE001
+                pass
+            try:
                 available_models.extend(self.model_registry.enabled_openai_models())
                 has_openai_key = bool(self.model_registry._openai_settings().get("api_key"))
             except Exception:  # noqa: BLE001
@@ -2262,8 +2266,13 @@ class AIChatPanel(QWidget):
 
             fallback: ModelDescriptor | None = None
             if not available_models:
-                openai_candidates = self.model_registry.openai_models()
-                fallback = openai_candidates[0] if openai_candidates else None
+                # Try to get fallback models if nothing is enabled
+                claude_candidates = self.model_registry.claude_models()
+                if claude_candidates:
+                    fallback = claude_candidates[0]
+                else:
+                    openai_candidates = self.model_registry.openai_models()
+                    fallback = openai_candidates[0] if openai_candidates else None
 
             chosen = self._choose_default_model(available_models, initial, fallback)
 
@@ -2650,8 +2659,22 @@ class AIChatPanel(QWidget):
         self._start_request(prompt, instructions)
 
     def _ensure_agentic_client(self) -> AgenticClient:
-        model = self.current_model_descriptor.id if self.current_model_descriptor else "gpt-4.1"
-        provider = (self.current_model_descriptor.provider if self.current_model_descriptor else "openai").lower()
+        # Determine model and provider - prefer current selection, then check for Claude API key, then fallback to OpenAI
+        if self.current_model_descriptor:
+            model = self.current_model_descriptor.id
+            provider = self.current_model_descriptor.provider.lower()
+        else:
+            # Check if Claude is configured (prefer Claude over OpenAI if API key exists)
+            claude_api_key = self.model_registry._claude_settings().get("api_key", "")  # noqa: SLF001
+            if claude_api_key:
+                # Use Claude as default if API key is configured
+                model = self.model_registry._claude_settings().get("default_model", "claude-haiku-4-5-20251001")  # noqa: SLF001
+                provider = "claude"
+            else:
+                # Fallback to OpenAI
+                model = "gpt-4.1"
+                provider = "openai"
+
         api_key = ""
         provider_name = provider
         if provider == "claude":
