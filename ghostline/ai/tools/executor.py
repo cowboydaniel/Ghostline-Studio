@@ -24,6 +24,7 @@ MAX_OUTPUT_LENGTH = 4000
 class ToolResult:
     name: str
     output: str
+    metadata: dict[str, Any] | None = None
 
 
 class ToolExecutor:
@@ -47,15 +48,18 @@ class ToolExecutor:
             "run_python": self.run_python,
         }
 
-    def execute(self, tool_name: str, args: Dict[str, Any]) -> str:
-        """Execute a tool and return the result as a string."""
+    def execute(self, tool_name: str, args: Dict[str, Any]) -> ToolResult:
+        """Execute a tool and return the result payload."""
         if tool_name not in self.allowed_tools:
-            return f"Error: Unknown tool '{tool_name}'"
+            return ToolResult(tool_name, f"Error: Unknown tool '{tool_name}'")
 
         try:
-            return self.allowed_tools[tool_name](**args)
+            output = self.allowed_tools[tool_name](**args)
+            if isinstance(output, ToolResult):
+                return output
+            return ToolResult(tool_name, str(output))
         except Exception as exc:  # pragma: no cover - defensive catch
-            return f"Error executing {tool_name}: {exc}"
+            return ToolResult(tool_name, f"Error executing {tool_name}: {exc}")
 
     def read_file(self, path: str) -> str:
         """Read file contents with truncation."""
@@ -66,34 +70,38 @@ class ToolExecutor:
         content = full_path.read_text(encoding="utf-8")
         return self._truncate_output(content)
 
-    def write_file(self, path: str, content: str) -> str:
+    def write_file(self, path: str, content: str) -> ToolResult:
         """Write content to file, creating parent directories as needed."""
         full_path = self._resolve_path(path)
         if isinstance(full_path, str):
-            return full_path
+            return ToolResult("write_file", full_path)
 
+        previous_content = full_path.read_text(encoding="utf-8") if full_path.exists() else ""
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content, encoding="utf-8")
-        return f"Successfully wrote {len(content)} bytes to {path}"
+        metadata = self._build_change_metadata(path, previous_content, content)
+        return ToolResult("write_file", f"Successfully wrote {len(content)} bytes to {path}", metadata)
 
-    def edit_file(self, path: str, edits: List[Dict[str, str]]) -> str:
+    def edit_file(self, path: str, edits: List[Dict[str, str]]) -> ToolResult:
         """Apply search-replace edits to a file."""
         full_path = self._ensure_file(path)
         if isinstance(full_path, str):
-            return full_path
+            return ToolResult("edit_file", full_path)
 
-        content = full_path.read_text(encoding="utf-8")
+        original_content = full_path.read_text(encoding="utf-8")
+        content = original_content
         applied = 0
         for edit in edits:
             old = edit.get("old", "")
             new = edit.get("new", "")
             if old not in content:
-                return f"Error: Could not find text to replace: {old[:50]}..."
+                return ToolResult("edit_file", f"Error: Could not find text to replace: {old[:50]}...")
             content = content.replace(old, new, 1)
             applied += 1
 
         full_path.write_text(content, encoding="utf-8")
-        return f"Successfully applied {applied} edit(s) to {path}"
+        metadata = self._build_change_metadata(path, original_content, content)
+        return ToolResult("edit_file", f"Successfully applied {applied} edit(s) to {path}", metadata)
 
     def search_code(self, query: str, regex: bool = False, file_pattern: str | None = None) -> str:
         """Search for code in the workspace using ripgrep when available."""
@@ -194,41 +202,44 @@ class ToolExecutor:
         full_path.mkdir(parents=True, exist_ok=True)
         return f"Created directory: {path}"
 
-    def delete_file(self, path: str) -> str:
+    def delete_file(self, path: str) -> ToolResult:
         """Delete a file if it exists."""
         full_path = self._resolve_path(path)
         if isinstance(full_path, str):
-            return full_path
+            return ToolResult("delete_file", full_path)
 
         if not full_path.exists():
-            return f"Error: File not found: {path}"
+            return ToolResult("delete_file", f"Error: File not found: {path}")
         if full_path.is_dir():
-            return f"Error: {path} is a directory; delete_file only handles files"
+            return ToolResult("delete_file", f"Error: {path} is a directory; delete_file only handles files")
 
+        previous = full_path.read_text(encoding="utf-8")
         full_path.unlink()
-        return f"Deleted file: {path}"
+        metadata = {"path": str(Path(path)), "previous_content": previous}
+        return ToolResult("delete_file", f"Deleted file: {path}", metadata)
 
-    def rename_file(self, old_path: str, new_path: str) -> str:
+    def rename_file(self, old_path: str, new_path: str) -> ToolResult:
         """Rename or move a file inside the workspace."""
         source = self._resolve_path(old_path)
         target = self._resolve_path(new_path)
         if isinstance(source, str):
-            return source
+            return ToolResult("rename_file", source)
         if isinstance(target, str):
-            return target
+            return ToolResult("rename_file", target)
 
         if not source.exists():
-            return f"Error: File not found: {old_path}"
+            return ToolResult("rename_file", f"Error: File not found: {old_path}")
 
         target.parent.mkdir(parents=True, exist_ok=True)
         source.rename(target)
-        return f"Renamed {old_path} to {new_path}"
+        metadata = {"path": str(Path(new_path)), "previous_path": str(Path(old_path))}
+        return ToolResult("rename_file", f"Renamed {old_path} to {new_path}", metadata)
 
-    def run_command(self, command: str, cwd: str | None = None) -> str:
+    def run_command(self, command: str, cwd: str | None = None) -> ToolResult:
         """Run a shell command within the workspace."""
         work_dir = self._resolve_path(cwd) if cwd else self.workspace
         if isinstance(work_dir, str):
-            return work_dir
+            return ToolResult("run_command", work_dir)
 
         safe_command = apply_command_sandbox(command)
         result = subprocess.run(
@@ -240,9 +251,10 @@ class ToolExecutor:
             timeout=60,
         )
         output = (result.stdout or "") + (result.stderr or "")
-        return self._truncate_output(output or f"Command exited with code {result.returncode} (no output)")
+        truncated = self._truncate_output(output or f"Command exited with code {result.returncode} (no output)")
+        return ToolResult("run_command", truncated)
 
-    def run_python(self, code: str) -> str:
+    def run_python(self, code: str) -> ToolResult:
         """Execute Python code in a subprocess."""
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -252,7 +264,8 @@ class ToolExecutor:
             timeout=60,
         )
         output = (result.stdout or "") + (result.stderr or "")
-        return self._truncate_output(output or f"Python exited with code {result.returncode} (no output)")
+        truncated = self._truncate_output(output or f"Python exited with code {result.returncode} (no output)")
+        return ToolResult("run_python", truncated)
 
     def _ensure_file(self, path: str) -> Path | str:
         full_path = self._resolve_path(path)
@@ -284,3 +297,54 @@ class ToolExecutor:
         if len(text) <= MAX_OUTPUT_LENGTH:
             return text
         return text[:MAX_OUTPUT_LENGTH] + "\n\n[truncated]"
+
+    def _build_change_metadata(
+        self,
+        path: str,
+        previous_content: str | None,
+        new_content: str,
+        *,
+        previous_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate metadata including a unified diff for UI display."""
+
+        import difflib
+
+        before = (previous_content or "").splitlines()
+        after = new_content.splitlines()
+        diff_lines = difflib.unified_diff(
+            before,
+            after,
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            lineterm="",
+        )
+        diff_text = "\n".join(diff_lines)
+        metadata: dict[str, Any] = {
+            "path": str(Path(path)),
+            "diff": diff_text,
+            "previous_content": previous_content,
+            "new_content": new_content,
+        }
+        if previous_path:
+            metadata["previous_path"] = previous_path
+        return metadata
+
+    def undo_change(self, metadata: dict[str, Any]) -> ToolResult:
+        """Restore a file to its previous contents when available."""
+
+        path = metadata.get("path")
+        if not path:
+            return ToolResult("undo", "Error: No path provided for undo")
+
+        previous_content = metadata.get("previous_content")
+        if previous_content is None:
+            return ToolResult("undo", "Error: No previous content available to restore")
+
+        full_path = self._resolve_path(path)
+        if isinstance(full_path, str):
+            return ToolResult("undo", full_path)
+
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(str(previous_content), encoding="utf-8")
+        return ToolResult("undo", f"Restored {path}")

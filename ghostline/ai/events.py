@@ -20,6 +20,14 @@ class EventType(str, Enum):
     DONE = "done"
 
 
+class ApprovalMode(str, Enum):
+    """Levels of user approval required before executing tools."""
+
+    AUTO = "auto"
+    WRITE_APPROVAL = "write"
+    ALL_APPROVAL = "all"
+
+
 @dataclass
 class Event:
     """Base event class for type hints."""
@@ -60,12 +68,14 @@ class ToolResultEvent(Event):
     call_id: str
     name: str
     output: str
+    metadata: Optional[Dict[str, Any]]
 
-    def __init__(self, call_id: str, name: str, output: str):
+    def __init__(self, call_id: str, name: str, output: str, metadata: Optional[Dict[str, Any]] = None):
         super().__init__(EventType.TOOL_RESULT)
         self.call_id = call_id
         self.name = name
         self.output = output
+        self.metadata = metadata
 
 
 @dataclass
