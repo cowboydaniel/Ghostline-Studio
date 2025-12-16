@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from importlib import import_module
 from typing import Any, Dict, Generator, Iterable, List, Optional
 
@@ -80,9 +81,33 @@ class AnthropicProvider:
                     stop_reason = getattr(event, "stop_reason", None)
                     for data in tool_uses.values():
                         parsed_args: Dict[str, Any]
+                        raw_arguments = data.get("arguments") or ""
+
+                        # Log what Anthropic actually returned
+                        logging.debug(
+                            "Anthropic tool call - name: %s, raw_arguments: %r, call_id: %s",
+                            data.get("name"),
+                            raw_arguments,
+                            data.get("id"),
+                        )
+
                         try:
-                            parsed_args = json.loads(data.get("arguments") or "{}")
+                            parsed_args = json.loads(raw_arguments or "{}")
                         except json.JSONDecodeError:
-                            parsed_args = {"raw": data.get("arguments", "")}
+                            logging.warning(
+                                "Failed to parse Anthropic tool arguments for %s: %r",
+                                data.get("name"),
+                                raw_arguments,
+                            )
+                            parsed_args = {"raw": raw_arguments}
+
+                        # Warn if arguments are empty when we expected some
+                        if not parsed_args or parsed_args == {}:
+                            logging.warning(
+                                "Anthropic returned empty arguments for tool call: %s (call_id: %s)",
+                                data.get("name"),
+                                data.get("id"),
+                            )
+
                         yield ToolCallEvent(call_id=data.get("id", ""), name=data.get("name", ""), arguments=parsed_args)
                     yield DoneEvent(text="".join(accumulated_text), stop_reason=stop_reason)
