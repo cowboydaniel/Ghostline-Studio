@@ -1599,7 +1599,11 @@ class _AgenticRequestWorker(QObject):
                     accumulated = event.text or accumulated
             self.finished.emit(self.prompt, accumulated)
         except Exception as exc:  # noqa: BLE001
-            self.failed.emit(str(exc))
+            import logging
+            import traceback
+
+            logging.exception("Agentic request failed", exc_info=exc)
+            self.failed.emit(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
 
 
 class AIChatPanel(QWidget):
@@ -2549,6 +2553,8 @@ class AIChatPanel(QWidget):
     def _on_worker_failed(self, error: str) -> None:
         if not self._active_thread or not self._active_worker:
             return
+        logger = logging.getLogger(__name__)
+        logger.error("Agentic worker failed: %s", error)
         message = f"Error: {error}"
         if self._active_response_card:
             self._active_response_card.set_text(message)
