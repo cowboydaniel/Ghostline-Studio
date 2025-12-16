@@ -310,7 +310,6 @@ class MainWindow(QMainWindow):
         Qt.Key_B,
         Qt.Key_A,
     ]
-    konami_index: int = 0
 
     def __init__(
         self, config: ConfigManager, theme: ThemeManager, workspace_manager: WorkspaceManager
@@ -378,6 +377,10 @@ class MainWindow(QMainWindow):
         self.left_docks: list[QDockWidget] = []
         self.bottom_docks: list[QDockWidget] = []
         self.right_docks: list[QDockWidget] = []
+        self._konami_index = 0
+        self._konami_reset_timer = QTimer(self)
+        self._konami_reset_timer.setSingleShot(True)
+        self._konami_reset_timer.timeout.connect(self._reset_konami_index)
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -1836,14 +1839,21 @@ class MainWindow(QMainWindow):
             return
 
         key = event.key()
-        expected_key = self.konami_sequence[self.konami_index]
+        self._konami_reset_timer.start(4000)
+        expected_key = self.konami_sequence[self._konami_index]
         if key == expected_key:
-            self.konami_index += 1
-            if self.konami_index == len(self.konami_sequence):
-                self.konami_index = 0
-                self._on_konami_code()
+            self._konami_index += 1
+            if self._konami_index == len(self.konami_sequence):
+                self._konami_index = 0
+                self.show_konami_easter_egg()
         else:
-            self.konami_index = 1 if key == self.konami_sequence[0] else 0
+            self._konami_index = 1 if key == self.konami_sequence[0] else 0
+
+    def _reset_konami_index(self) -> None:
+        self._konami_index = 0
+
+    def show_konami_easter_egg(self) -> None:
+        self._on_konami_code()
 
     def _on_konami_code(self) -> None:
         logger.info("Konami code detected")
