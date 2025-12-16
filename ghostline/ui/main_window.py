@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.events import CommandDescriptor, CommandRegistry
+from ghostline.core.resources import load_icon
 from ghostline.core.theme import ThemeManager
 from ghostline.lang.diagnostics import DiagnosticsModel
 from ghostline.lang.lsp_manager import LSPManager
@@ -129,7 +130,7 @@ class GhostlineTitleBar(QWidget):
 
         icon_button = QToolButton(left_container)
         icon_button.setObjectName("TitleIconButton")
-        icon_button.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+        icon_button.setIcon(load_icon("ghostline_logo.svg"))
         icon_button.setAutoRaise(True)
         icon_button.setToolTip("Ghostline Studio")
         left_layout.addWidget(icon_button)
