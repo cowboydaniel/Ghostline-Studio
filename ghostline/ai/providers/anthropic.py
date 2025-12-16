@@ -25,7 +25,19 @@ class AnthropicProvider:
             role = message.get("role", "user")
             content = message.get("content")
             tool_calls = message.get("tool_calls")
-            if tool_calls:
+
+            # Handle tool response messages (convert from OpenAI format to Anthropic format)
+            if role == "tool":
+                # Anthropic expects tool results as user messages with tool_result content blocks
+                formatted.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": message.get("tool_call_id"),
+                        "content": content or "",
+                    }]
+                })
+            elif tool_calls:
                 # Anthropic expects the tool calls as content blocks on the assistant message
                 content_blocks: List[Dict[str, Any]] = []
                 if content:
