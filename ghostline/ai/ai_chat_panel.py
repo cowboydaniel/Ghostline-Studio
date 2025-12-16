@@ -952,6 +952,7 @@ class _MessageCard(QWidget):
         self.insert_handler = insert_handler
         self._role = role
         self._is_user = role.lower() in ("you", "user")
+        self._list_item: QListWidgetItem | None = None  # Reference for resize during streaming
 
         # Main layout with horizontal alignment
         main_layout = QHBoxLayout(self)
@@ -1001,11 +1002,11 @@ class _MessageCard(QWidget):
         title.setStyleSheet("font-size: 10px; opacity: 0.7;")
         bubble_layout.addWidget(title)
 
-        # Context preamble - show as subtle hint only if context exists
+        # Context preamble - show referenced files
         if context and len(context) > 0:
-            context_count = len(context)
-            preamble = QLabel(f"📎 {context_count} file{'s' if context_count > 1 else ''} referenced", self._bubble)
-            preamble.setStyleSheet("font-size: 9px; opacity: 0.5; font-style: italic;")
+            preamble = QLabel("\n".join([chunk.title for chunk in context]), self._bubble)
+            preamble.setWordWrap(True)
+            preamble.setStyleSheet("font-size: 10px; opacity: 0.6;")
             bubble_layout.addWidget(preamble)
 
         self._content_layout = QVBoxLayout()
@@ -1093,6 +1094,18 @@ class _MessageCard(QWidget):
             body.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self._content_layout.addWidget(body)
 
+        # Update list item size hint for streaming resize
+        self._update_list_item_size()
+
+    def _update_list_item_size(self) -> None:
+        """Update the parent list item's size hint to match current content."""
+        if self._list_item is not None:
+            self.adjustSize()
+            self._list_item.setSizeHint(self.sizeHint())
+            # Force the list widget to update
+            if self._list_item.listWidget():
+                self._list_item.listWidget().doItemsLayout()
+
     def sizeHint(self) -> QSize:
         """Return size hint based on content."""
         hint = super().sizeHint()
@@ -1111,6 +1124,7 @@ class _CreatorMessageCard(QWidget):
     ) -> None:
         super().__init__(parent)
         self.insert_handler = insert_handler
+        self._list_item: QListWidgetItem | None = None  # Reference for resize during streaming
 
         # Main layout - AI messages are left-aligned
         main_layout = QHBoxLayout(self)
@@ -1180,6 +1194,15 @@ class _CreatorMessageCard(QWidget):
     def set_text(self, text: str) -> None:
         """Update the message text."""
         self._body.setText(text)
+        self._update_list_item_size()
+
+    def _update_list_item_size(self) -> None:
+        """Update the parent list item's size hint to match current content."""
+        if self._list_item is not None:
+            self.adjustSize()
+            self._list_item.setSizeHint(self.sizeHint())
+            if self._list_item.listWidget():
+                self._list_item.listWidget().doItemsLayout()
 
     def sizeHint(self) -> QSize:
         """Return size hint based on content."""
@@ -1977,6 +2000,8 @@ class AIChatPanel(QWidget):
     ) -> _MessageCard:
         card = _MessageCard(role, text, context, insert_handler=self.insert_handler, parent=self)
         item = QListWidgetItem(self.transcript_list)
+        # Store list item reference for dynamic resize during streaming
+        card._list_item = item
         # Compute proper size hint for the card
         card.adjustSize()
         item.setSizeHint(card.sizeHint())
@@ -2254,6 +2279,8 @@ class AIChatPanel(QWidget):
         """Append a special AI response with a hidden sticker."""
         card = _CreatorMessageCard(text, sticker_path, insert_handler=self.insert_handler, parent=self)
         item = QListWidgetItem(self.transcript_list)
+        # Store list item reference for dynamic resize during streaming
+        card._list_item = item
         # Compute proper size hint for the card
         card.adjustSize()
         item.setSizeHint(card.sizeHint())
