@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections import deque
 from datetime import datetime, timedelta
+import logging
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -101,6 +102,7 @@ class ToolExecutor:
                 result = ToolResult(tool_name, str(output))
             return result
         except Exception as exc:  # pragma: no cover - defensive catch
+            logging.exception("Tool execution failed for %s", tool_name)
             result = ToolResult(tool_name, f"Error executing {tool_name}: {exc}")
         finally:
             self._record_history(tool_name, args, locals().get("result"))
@@ -476,3 +478,15 @@ class ToolExecutor:
         if result:
             entry["output_preview"] = str(result.output)[:200]
         self.call_history.append(entry)
+
+        self._log_if_error(tool_name, sanitized_args, result)
+
+    def _log_if_error(self, tool_name: str, args: Dict[str, Any], result: ToolResult | None) -> None:
+        if not result:
+            return
+
+        output_text = str(result.output)
+        if not output_text.startswith("Error"):
+            return
+
+        logging.error("Tool %s failed with args=%s: %s", tool_name, args, output_text)
