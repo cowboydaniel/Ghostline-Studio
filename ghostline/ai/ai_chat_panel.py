@@ -54,6 +54,7 @@ class ChatSession:
     title: str
     messages: list[ChatMessage]
     created_at: datetime
+    id: str | None = None  # Unique session ID for persistence
 
 
 class _SuggestionCard(QFrame):
@@ -1254,7 +1255,6 @@ class AIChatPanel(QWidget):
 
         # Initialize chat history persistence
         self.chat_history_manager = ChatHistoryManager()
-        self._session_ids: dict[ChatSession, str] = {}  # Maps sessions to their IDs
         self._load_chat_history_from_disk()
 
         self.model_registry = ModelRegistry(self.client.config)
@@ -1757,7 +1757,6 @@ class AIChatPanel(QWidget):
         sessions = self.chat_history_manager.load_all_sessions()
         for session_id, session in sessions:
             self.chat_history.append(session)
-            self._session_ids[session] = session_id
 
     def _derive_title(self, messages: list[ChatMessage]) -> str:
         for message in messages:
@@ -1780,17 +1779,14 @@ class AIChatPanel(QWidget):
         if self.chat_history and self.chat_history[0].created_at == session.created_at:
             # Updating existing session
             old_session = self.chat_history[0]
-            session_id = self._session_ids.get(old_session)
+            session_id = old_session.id
             self.chat_history[0] = session
-            if session_id:
-                self._session_ids.pop(old_session, None)
         else:
             # Creating new session
             self.chat_history.insert(0, session)
 
-        # Save to disk
-        session_id = self.chat_history_manager.save_session(session, session_id)
-        self._session_ids[session] = session_id
+        # Save to disk (this will set session.id if not already set)
+        self.chat_history_manager.save_session(session, session_id)
 
     def _toggle_plus_menu(self) -> None:
         if self.plus_menu and self.plus_menu.isVisible():
@@ -2029,10 +2025,8 @@ class AIChatPanel(QWidget):
         session = item.data(Qt.UserRole)
         if session in self.chat_history:
             # Delete from disk
-            session_id = self._session_ids.get(session)
-            if session_id:
-                self.chat_history_manager.delete_session(session_id)
-                self._session_ids.pop(session, None)
+            if session.id:
+                self.chat_history_manager.delete_session(session.id)
             # Delete from in-memory list
             self.chat_history.remove(session)
         row = list_widget.row(item)
