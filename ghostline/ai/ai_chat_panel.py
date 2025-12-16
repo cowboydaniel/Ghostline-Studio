@@ -2530,14 +2530,15 @@ class AIChatPanel(QWidget):
     def _on_worker_finished(self, prompt: str, text: str) -> None:
         if not self._active_thread or not self._active_worker:
             return
+        final_text = text or self._active_response_text
         if self._active_response_card:
-            self._active_response_card.set_text(text)
+            self._active_response_card.set_text(final_text)
         else:
-            self._append("AI", text, context=self._last_chunks)
-        self._current_messages.append(ChatMessage("AI", text, list(self._last_chunks)))
-        self._active_response_text = text
+            self._append("AI", final_text, context=self._last_chunks)
+        self._current_messages.append(ChatMessage("AI", final_text, list(self._last_chunks)))
+        self._active_response_text = final_text
         if self.command_adapter:
-            self.command_adapter.handle_response(text)
+            self.command_adapter.handle_response(final_text)
         self._cleanup_thread(self._active_thread, self._active_worker)
         self._set_busy(False)
         self.input.clear()
