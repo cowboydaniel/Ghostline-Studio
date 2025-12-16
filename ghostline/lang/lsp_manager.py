@@ -497,13 +497,13 @@ class LSPManager(QObject):
             self._pending[request_id] = callback
         return request_id
 
-    def supports_semantic_tokens(self, path: Any) -> bool:
+    def supports_semantic_tokens(self, path: Any, *, language: str | None = None) -> bool:
         """Return True when the language server advertises semantic token support."""
         """Check whether the active client exposes semantic token support."""
         normalized = self._normalize_path(path)
         if not normalized:
             return False
-        language = self._language_for_file(normalized)
+        language = language or self._language_for_file(normalized)
         client = self._get_client(language) if language else None
         return bool(client and getattr(client, "semantic_tokens_capable", False))
 
@@ -512,12 +512,14 @@ class LSPManager(QObject):
         path: Any,
         callback: Callable[[dict, list[str]], None] | None = None,
         range_params: dict | None = None,
+        *,
+        language: str | None = None,
     ) -> bool:
         normalized = self._normalize_path(path)
         if not normalized:
             logger.debug("Semantic tokens bypassed: could not normalize path %s", path)
             return False
-        language = self._language_for_file(normalized)
+        language = language or self._language_for_file(normalized)
         if not language:
             logger.debug("Semantic tokens bypassed for %s: no language detected", normalized)
             return False

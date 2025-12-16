@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import builtins
 import keyword
+from functools import partial
 import re
 import tokenize
 from io import StringIO
@@ -660,6 +661,7 @@ class CodeEditor(QPlainTextEdit):
         self._language_override: str | None = None
         self._language: str | None = None
         self._semantic_provider: SemanticTokenProvider | None = None
+        self._semantic_legends: dict[str, list[str]] = {}
         self._highlighter: QSyntaxHighlighter | None = None
         self._lsp_sync_timer = QTimer(self)
         self._lsp_sync_timer.setSingleShot(True)
@@ -763,8 +765,13 @@ class CodeEditor(QPlainTextEdit):
             return
 
         self._language = resolved
+        self._semantic_legends.clear()
 
         if hasattr(self, "_highlighter") and self._highlighter:
+            try:
+                self._highlighter.set_semantic_tokens([])  # type: ignore[attr-defined]
+            except Exception:
+                pass
             self._highlighter.deleteLater()
 
         highlighter, semantic_provider = create_highlighting(
@@ -1387,7 +1394,8 @@ class CodeEditor(QPlainTextEdit):
         if current_revision == self._last_semantic_revision:
             return
 
-        if not (self.lsp_manager and self.path):
+        language = self._language or self._language_for_context()
+        if not (self.lsp_manager and self.path and language):
             self._highlighter.set_semantic_tokens([])
             self._last_semantic_revision = current_revision
             return
@@ -1396,11 +1404,12 @@ class CodeEditor(QPlainTextEdit):
             self._open_in_lsp()
 
         try:
-            if self.lsp_manager.supports_semantic_tokens(self.path):
+            if self.lsp_manager.supports_semantic_tokens(self.path, language=language):
                 if self.lsp_manager.request_semantic_tokens(
                     self.path,
-                    callback=self._apply_semantic_tokens,
+                    callback=partial(self._apply_semantic_tokens, language),
                     range_params=self._visible_range_params(),
+                    language=language,
                 ):
                     self._semantic_request_pending = True
                     return
@@ -1408,10 +1417,12 @@ class CodeEditor(QPlainTextEdit):
             return
 
         # No semantic tokens available, but mark this revision as processed
+        if language:
+            self._semantic_legends.pop(language, None)
         self._highlighter.set_semantic_tokens([])
         self._last_semantic_revision = current_revision
 
-    def _apply_semantic_tokens(self, result: dict, legend: list[str]) -> None:
+    def _apply_semantic_tokens(self, language: str, result: dict, legend: list[str]) -> None:
         # Clear the pending flag
         self._semantic_request_pending = False
 
@@ -1419,7 +1430,13 @@ class CodeEditor(QPlainTextEdit):
         if not hasattr(self, '_highlighter') or self._highlighter is None:
             return
 
-        tokens = SemanticTokenProvider.from_lsp(result, legend)
+        if language != self._language:
+            return
+
+        self._semantic_legends[language] = legend or []
+        active_legend = self._semantic_legends.get(language, [])
+
+        tokens = SemanticTokenProvider.from_lsp(result, active_legend)
         if not tokens and self._semantic_provider:
             tokens = self._semantic_provider.custom_tokens(self.toPlainText())
         # set_semantic_tokens already calls rehighlight(), don't call it again
