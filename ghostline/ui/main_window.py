@@ -217,6 +217,10 @@ class GhostlineTitleBar(QWidget):
             #GhostlineTitleBar QWidget {
                 background: transparent;
             }
+            #GhostlineTitleBar QMenuBar {
+                background: transparent;
+                border: none;
+            }
             #GhostlineTitleBar QToolBar {
                 background: transparent;
                 border: none;
