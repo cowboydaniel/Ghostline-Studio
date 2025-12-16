@@ -1110,22 +1110,30 @@ class _MessageCard(QWidget):
 
     def _update_list_item_size(self) -> None:
         """Update the parent list item's size hint to match current content."""
-        if self._list_item is not None and self._list_item.listWidget():
-            list_widget = self._list_item.listWidget()
-            # Calculate width available for the item
-            available_width = list_widget.viewport().width() - 20
-            # Calculate required height for word-wrapped content
-            self._bubble.setFixedWidth(min(available_width, 600) if not self._is_user else min(available_width, 400))
-            self._bubble.adjustSize()
-            self.adjustSize()
-            # Get height using heightForWidth for proper word-wrap calculation
-            height = self.heightForWidth(available_width)
-            if height < 0:
-                height = self.sizeHint().height()
-            self._list_item.setSizeHint(QSize(available_width, height + 16))
-            # Force the list widget to update
-            list_widget.doItemsLayout()
-            list_widget.scrollToBottom()
+        if self._list_item is None or not self._list_item.listWidget():
+            return
+
+        list_widget = self._list_item.listWidget()
+        available_width = max(200, list_widget.viewport().width() - 20)
+        bubble_width = min(available_width, 600)
+
+        self._bubble.setFixedWidth(bubble_width)
+
+        if self._bubble.layout():
+            self._bubble.layout().activate()
+        self._bubble.adjustSize()
+
+        if self.layout():
+            self.layout().activate()
+        self.adjustSize()
+
+        height = self.sizeHint().height()
+        self._list_item.setSizeHint(QSize(available_width, height + 16))
+
+        list_widget.doItemsLayout()
+        list_widget.scrollToBottom()
+
+
 
     def sizeHint(self) -> QSize:
         """Return size hint based on content."""
