@@ -2661,6 +2661,13 @@ class AIChatPanel(QWidget):
         messages: list[dict[str, object]] = []
         if instructions:
             messages.append({"role": "system", "content": instructions})
+        else:
+            discovery_prompt = (
+                "If you are missing a path, use discovery tools like list_directory, "
+                "search_code, or get_file_info to locate it before calling read_file "
+                "or other path-dependent tools."
+            )
+            messages.append({"role": "system", "content": discovery_prompt})
         for message in self._current_messages:
             role = "user" if message.role.lower() in {"you", "user"} else "assistant"
             messages.append({"role": role, "content": message.text})
