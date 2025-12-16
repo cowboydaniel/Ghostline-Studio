@@ -83,6 +83,7 @@ class AnthropicProvider:
 
         with self.client.messages.stream(  # type: ignore[attr-defined]
             model=self.model,
+            max_tokens=4096,  # Required by Anthropic API
             messages=formatted_messages,
             tools=tools,
             temperature=self.temperature,
