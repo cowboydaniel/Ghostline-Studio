@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QGroupBox,
     QHBoxLayout,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.core.events import CommandDescriptor, CommandRegistry
+from ghostline.core.theme import ThemeManager
 from ghostline.ai.navigation_assistant import NavigationAssistant, PredictiveContext
 from ghostline.ui.dialogs.credits_dialog import CreditsDialog
 
@@ -35,6 +37,7 @@ class CommandPalette(QDialog):
         self.open_file_callback = None
         self.pending_commands: list[CommandDescriptor] = []
         self._credits_dialog: CreditsDialog | None = None
+        self.theme: ThemeManager | None = None
 
         self.input = QLineEdit(self)
         self.input.setPlaceholderText("Type a command...")
@@ -80,6 +83,9 @@ class CommandPalette(QDialog):
 
     def set_open_file_handler(self, handler) -> None:
         self.open_file_callback = handler
+
+    def set_theme_manager(self, theme: ThemeManager) -> None:
+        self.theme = theme
 
     def open_palette(self) -> None:
         self._refresh_list()
@@ -152,6 +158,10 @@ class CommandPalette(QDialog):
 
     def _execute_selected(self) -> None:
         query = self.input.text().strip()
+        normalized_query = query.lower()
+        # Hidden easter egg: entering "ghost night" toggles the secret theme.
+        if self._activate_ghost_night(normalized_query):
+            return
         # Hidden easter egg: entering "about:ghosts" opens the credits dialog instead of running a command.
         if self._handle_easter_egg(query):
             return
@@ -235,6 +245,18 @@ class CommandPalette(QDialog):
             descriptor.callback(**descriptor.arguments)
 
     # Easter egg -------------------------------------------------------
+    def _activate_ghost_night(self, normalized_query: str) -> bool:
+        if normalized_query != "ghost night":
+            return False
+
+        # Easter egg trigger path for the secret Ghost Night theme.
+        if self.theme:
+            self.theme.set_theme("ghost_night")
+            app = QApplication.instance()
+            if app:
+                self.theme.apply(app)
+        return True
+
     def _handle_easter_egg(self, query: str) -> bool:
         if query != EASTER_EGG_QUERY:
             return False

@@ -541,6 +541,7 @@ class MainWindow(QMainWindow):
         self.command_palette.set_autoflow_mode("passive")
         self.command_palette.set_file_provider(self._search_workspace_files)
         self.command_palette.set_open_file_handler(self.open_file)
+        self.command_palette.set_theme_manager(self.theme)
         self.ai_command_adapter = AICommandAdapter(self.command_registry, self.command_palette)
         self._create_actions()
         self._create_menus()
