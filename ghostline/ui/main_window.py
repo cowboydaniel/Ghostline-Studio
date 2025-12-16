@@ -387,7 +387,7 @@ class MainWindow(QMainWindow):
         editor_layout.setSpacing(0)
         editor_layout.addWidget(self.editor_tabs, 1)
 
-        self.welcome_portal = WelcomePortal(self)
+        self.welcome_portal = WelcomePortal(self, config=self.config)
         self.welcome_portal.openFolderRequested.connect(self._prompt_open_folder)
         self.welcome_portal.openCommandPaletteRequested.connect(lambda: self.show_command_palette())
         self.welcome_portal.openAIChatRequested.connect(self.toggle_ai_dock)

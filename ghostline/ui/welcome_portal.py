@@ -1,11 +1,10 @@
 """Full-window welcome portal with Windsurf-style design."""
 from __future__ import annotations
 
-from pathlib import Path
-
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -14,6 +13,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ghostline.core.config import ConfigManager
 
 
 class WelcomePortal(QWidget):
@@ -24,9 +25,14 @@ class WelcomePortal(QWidget):
     openAIChatRequested = Signal()
     openRecentRequested = Signal(str)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, config: ConfigManager | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("WelcomePortal")
+        self.config = config
+        self._story_dialog: QDialog | None = None
+        self._ascii_timer: QTimer | None = None
+        self._ascii_frames: list[str] = []
+        self._ascii_frame_index = 0
 
         # Main layout - centered content
         main_layout = QVBoxLayout(self)
@@ -45,25 +51,32 @@ class WelcomePortal(QWidget):
         content_layout.setAlignment(Qt.AlignCenter)
 
         # Title section
-        title = QLabel("Ghostline Studio", self)
-        title.setObjectName("WelcomeTitle")
-        title.setAlignment(Qt.AlignCenter)
+        self.title = QLabel("Ghostline Studio", self)
+        self.title.setObjectName("WelcomeTitle")
+        self.title.setAlignment(Qt.AlignCenter)
         title_font = QFont()
         title_font.setPointSize(48)
         title_font.setBold(True)
-        title.setFont(title_font)
+        self.title.setFont(title_font)
 
-        subtitle = QLabel("Getting started with Ghostline Studio", self)
-        subtitle.setObjectName("WelcomeSubtitle")
-        subtitle.setAlignment(Qt.AlignCenter)
+        self.subtitle = QLabel("Getting started with Ghostline Studio", self)
+        self.subtitle.setObjectName("WelcomeSubtitle")
+        self.subtitle.setAlignment(Qt.AlignCenter)
         subtitle_font = QFont()
         subtitle_font.setPointSize(14)
-        subtitle.setFont(subtitle_font)
+        self.subtitle.setFont(subtitle_font)
+
+        self.title.installEventFilter(self)
+        self.subtitle.installEventFilter(self)
+        if self._insider_hint_enabled():
+            hint_text = "double-click for a surprise"
+            self.title.setToolTip(hint_text)
+            self.subtitle.setToolTip(hint_text)
 
         # Add spacing after subtitle
-        content_layout.addWidget(title)
+        content_layout.addWidget(self.title)
         content_layout.addSpacing(8)
-        content_layout.addWidget(subtitle)
+        content_layout.addWidget(self.subtitle)
         content_layout.addSpacing(40)
 
         # Quick actions container
@@ -78,19 +91,19 @@ class WelcomePortal(QWidget):
             actions_layout,
             "Code with Ghostline AI",
             "Ctrl+L",
-            self.openAIChatRequested.emit
+            self.openAIChatRequested.emit,
         )
         self._add_quick_action(
             actions_layout,
             "Open Command Palette",
             "Ctrl+Shift+P",
-            self.openCommandPaletteRequested.emit
+            self.openCommandPaletteRequested.emit,
         )
         self._add_quick_action(
             actions_layout,
             "Open Folder",
             "Ctrl+K Ctrl+O",
-            self.openFolderRequested.emit
+            self.openFolderRequested.emit,
         )
 
         content_layout.addWidget(actions_container, alignment=Qt.AlignCenter)
@@ -129,7 +142,7 @@ class WelcomePortal(QWidget):
         layout: QVBoxLayout,
         label_text: str,
         shortcut_text: str,
-        callback
+        callback,
     ) -> None:
         """Add a quick action row with label and keyboard shortcut."""
         action_widget = QWidget()
@@ -163,3 +176,97 @@ class WelcomePortal(QWidget):
         action_layout.addWidget(shortcut_label)
 
         layout.addWidget(action_widget)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # type: ignore[override]
+        if event.type() == QEvent.MouseButtonDblClick and watched in {self.title, self.subtitle}:
+            self._show_story_dialog()
+            return True
+        return super().eventFilter(watched, event)
+
+    def _show_story_dialog(self) -> None:
+        if self._story_dialog and self._story_dialog.isVisible():
+            self._story_dialog.raise_()
+            self._story_dialog.activateWindow()
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Ghostline Lore")
+        dialog.setModal(False)
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        art_label = QLabel(dialog)
+        art_label.setAlignment(Qt.AlignCenter)
+        art_font = QFont("monospace")
+        art_font.setStyleHint(QFont.Monospace)
+        art_font.setPointSize(11)
+        art_label.setFont(art_font)
+        art_label.setObjectName("GhostlineAsciiArt")
+
+        story = QLabel(
+            "An engineer named Echo traced spectral logs through midnight terminals, "
+            "teaching a curious ghost to read code and whisper refactors back. "
+            "That apprentice spirit became Ghostline—guiding builders through every haunted stack.",
+            dialog,
+        )
+        story.setWordWrap(True)
+        story.setAlignment(Qt.AlignCenter)
+
+        layout.addWidget(art_label)
+        layout.addWidget(story)
+
+        base_frame = "\n".join(
+            [
+                "  .-.",
+                " (o o)",
+                " | O \\",
+                "  \\   \\",
+                "   `~~~'",
+            ]
+        )
+        trailing_frame = "\n".join(
+            [
+                "  .-.",
+                " (o o)",
+                " | O \\",
+                "  \\   \\",
+                "   `~~~'   ~",
+            ]
+        )
+        self._ascii_frames = [base_frame, trailing_frame]
+        self._ascii_frame_index = 0
+        art_label.setText(self._ascii_frames[self._ascii_frame_index])
+
+        self._ascii_timer = QTimer(dialog)
+        self._ascii_timer.timeout.connect(lambda: self._cycle_ascii_frame(art_label))
+        self._ascii_timer.start(420)
+
+        dialog.finished.connect(self._teardown_story_dialog)
+
+        self._story_dialog = dialog
+        dialog.show()
+
+    def _cycle_ascii_frame(self, art_label: QLabel) -> None:
+        if not self._ascii_frames:
+            return
+        self._ascii_frame_index = (self._ascii_frame_index + 1) % len(self._ascii_frames)
+        art_label.setText(self._ascii_frames[self._ascii_frame_index])
+
+    def _teardown_story_dialog(self) -> None:
+        if self._ascii_timer:
+            self._ascii_timer.stop()
+            self._ascii_timer = None
+        self._story_dialog = None
+        self._ascii_frames = []
+        self._ascii_frame_index = 0
+
+    def _insider_hint_enabled(self) -> bool:
+        if not self.config:
+            return False
+        debug_cfg = self.config.get("debug", {})
+        if isinstance(debug_cfg, dict) and debug_cfg.get("insider"):
+            return True
+        return bool(self.config.get("insider", False))
