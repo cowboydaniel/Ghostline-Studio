@@ -938,7 +938,7 @@ class AgentsDropdownPanel(QFrame):
 
 
 class _MessageCard(QWidget):
-    """Render a chat message with code block controls and context info."""
+    """Render a chat message as a bubble with code block controls and context info."""
 
     def __init__(
         self,
@@ -950,18 +950,67 @@ class _MessageCard(QWidget):
     ) -> None:
         super().__init__(parent)
         self.insert_handler = insert_handler
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        title = QLabel(f"<b>{role}</b>", self)
-        layout.addWidget(title)
+        self._role = role
+        self._is_user = role.lower() in ("you", "user")
 
-        preamble = QLabel("\n".join([chunk.title for chunk in context or []]), self)
-        preamble.setWordWrap(True)
+        # Main layout with horizontal alignment
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(8, 4, 8, 4)
+
+        # Add stretch on left for user messages (right-aligned)
+        if self._is_user:
+            main_layout.addStretch()
+
+        # Bubble container
+        self._bubble = QFrame(self)
+        self._bubble.setObjectName("chatBubble")
+        bubble_layout = QVBoxLayout(self._bubble)
+        bubble_layout.setContentsMargins(12, 8, 12, 8)
+        bubble_layout.setSpacing(4)
+
+        # Apply bubble styling based on role
+        if self._is_user:
+            self._bubble.setStyleSheet("""
+                QFrame#chatBubble {
+                    background-color: #3b82f6;
+                    border-radius: 12px;
+                    border-bottom-right-radius: 4px;
+                }
+                QLabel { color: white; }
+            """)
+            self._bubble.setMaximumWidth(400)
+        else:
+            self._bubble.setStyleSheet("""
+                QFrame#chatBubble {
+                    background-color: palette(alternate-base);
+                    border-radius: 12px;
+                    border-bottom-left-radius: 4px;
+                    border: 1px solid palette(mid);
+                }
+            """)
+
+        # Role title (hidden for cleaner look, but kept for accessibility)
+        title = QLabel(f"<b>{role}</b>", self._bubble)
+        title.setStyleSheet("font-size: 10px; opacity: 0.7;")
+        bubble_layout.addWidget(title)
+
+        # Context preamble
         if context:
-            layout.addWidget(preamble)
+            preamble = QLabel("\n".join([chunk.title for chunk in context]), self._bubble)
+            preamble.setWordWrap(True)
+            preamble.setStyleSheet("font-size: 10px; opacity: 0.6;")
+            bubble_layout.addWidget(preamble)
 
         self._content_layout = QVBoxLayout()
-        layout.addLayout(self._content_layout)
+        self._content_layout.setSpacing(6)
+        bubble_layout.addLayout(self._content_layout)
+
+        main_layout.addWidget(self._bubble)
+
+        # Add stretch on right for AI messages (left-aligned)
+        if not self._is_user:
+            main_layout.addStretch()
+
         self.set_text(text)
 
     def _clear_content(self) -> None:
@@ -976,26 +1025,71 @@ class _MessageCard(QWidget):
     def set_text(self, text: str) -> None:
         self._clear_content()
         code_blocks = re.findall(r"```(?:[\w#+-]+)?\n(.*?)```", text, flags=re.DOTALL)
-        rendered_code = False
-        for block in code_blocks:
-            rendered_code = True
-            code_edit = QTextEdit(block.strip(), self)
-            code_edit.setReadOnly(True)
-            btn_row = QHBoxLayout()
-            copy_btn = QPushButton("Copy", self)
-            copy_btn.clicked.connect(lambda _=None, b=block: QApplication.clipboard().setText(b))
-            btn_row.addWidget(copy_btn)
-            if self.insert_handler:
-                insert_btn = QPushButton("Insert at cursor", self)
-                insert_btn.clicked.connect(lambda _=None, b=block: self.insert_handler(b))
-                btn_row.addWidget(insert_btn)
-            self._content_layout.addWidget(code_edit)
-            self._content_layout.addLayout(btn_row)
 
-        if not rendered_code:
-            body = QTextEdit(text, self)
-            body.setReadOnly(True)
+        if code_blocks:
+            # Split text by code blocks and render mixed content
+            parts = re.split(r"```(?:[\w#+-]+)?\n.*?```", text, flags=re.DOTALL)
+            block_idx = 0
+
+            for i, part in enumerate(parts):
+                # Render text part if not empty
+                part = part.strip()
+                if part:
+                    body = QLabel(part, self._bubble)
+                    body.setWordWrap(True)
+                    body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                    self._content_layout.addWidget(body)
+
+                # Render code block if available
+                if block_idx < len(code_blocks):
+                    block = code_blocks[block_idx]
+                    block_idx += 1
+
+                    code_edit = QTextEdit(block.strip(), self._bubble)
+                    code_edit.setReadOnly(True)
+                    code_edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                    code_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                    # Auto-size to content
+                    doc = code_edit.document()
+                    doc.setTextWidth(code_edit.viewport().width())
+                    height = int(doc.size().height()) + 10
+                    code_edit.setFixedHeight(max(height, 40))
+                    code_edit.setStyleSheet("""
+                        QTextEdit {
+                            background-color: #1e1e1e;
+                            color: #d4d4d4;
+                            border-radius: 6px;
+                            padding: 8px;
+                            font-family: monospace;
+                        }
+                    """)
+
+                    btn_row = QHBoxLayout()
+                    btn_row.setSpacing(4)
+                    copy_btn = QPushButton("Copy", self._bubble)
+                    copy_btn.setFixedHeight(24)
+                    copy_btn.clicked.connect(lambda _=None, b=block: QApplication.clipboard().setText(b))
+                    btn_row.addWidget(copy_btn)
+                    if self.insert_handler:
+                        insert_btn = QPushButton("Insert", self._bubble)
+                        insert_btn.setFixedHeight(24)
+                        insert_btn.clicked.connect(lambda _=None, b=block: self.insert_handler(b))
+                        btn_row.addWidget(insert_btn)
+                    btn_row.addStretch()
+
+                    self._content_layout.addWidget(code_edit)
+                    self._content_layout.addLayout(btn_row)
+        else:
+            # No code blocks - simple text message
+            body = QLabel(text, self._bubble)
+            body.setWordWrap(True)
+            body.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self._content_layout.addWidget(body)
+
+    def sizeHint(self) -> QSize:
+        """Return size hint based on content."""
+        hint = super().sizeHint()
+        return QSize(hint.width(), hint.height() + 8)
 
 
 class _CreatorMessageCard(QWidget):
@@ -1010,17 +1104,35 @@ class _CreatorMessageCard(QWidget):
     ) -> None:
         super().__init__(parent)
         self.insert_handler = insert_handler
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
+
+        # Main layout - AI messages are left-aligned
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(8, 4, 8, 4)
+
+        # Bubble container with special creator styling
+        self._bubble = QFrame(self)
+        self._bubble.setObjectName("creatorBubble")
+        self._bubble.setStyleSheet("""
+            QFrame#creatorBubble {
+                background-color: rgba(167, 139, 250, 0.1);
+                border-radius: 12px;
+                border-bottom-left-radius: 4px;
+                border: 1px solid #a78bfa;
+            }
+        """)
+        bubble_layout = QVBoxLayout(self._bubble)
+        bubble_layout.setContentsMargins(12, 8, 12, 8)
+        bubble_layout.setSpacing(4)
 
         # Header row with "AI" title and hidden sticker
         header = QHBoxLayout()
-        title = QLabel("<b>AI</b>", self)
+        title = QLabel("<b>AI</b>", self._bubble)
+        title.setStyleSheet("font-size: 10px; opacity: 0.7; color: #a78bfa;")
         header.addWidget(title)
         header.addStretch()
 
         # Hidden sticker - appears on hover
-        self.sticker_label = QLabel(self)
+        self.sticker_label = QLabel(self._bubble)
         self.sticker_label.setObjectName("creatorSticker")
         if sticker_path.exists():
             from PySide6.QtGui import QPixmap
@@ -1038,29 +1150,31 @@ class _CreatorMessageCard(QWidget):
             }
         """)
         header.addWidget(self.sticker_label)
+        bubble_layout.addLayout(header)
 
-        layout.addLayout(header)
-
-        # Message body with special styling
-        body = QTextEdit(text, self)
-        body.setReadOnly(True)
-        body.setStyleSheet("""
-            QTextEdit {
+        # Message body with special styling - using QLabel for non-scrollable content
+        self._body = QLabel(text, self._bubble)
+        self._body.setWordWrap(True)
+        self._body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._body.setStyleSheet("""
+            QLabel {
                 font-style: italic;
                 color: #a78bfa;
-                background: transparent;
-                border: none;
             }
         """)
-        layout.addWidget(body)
+        bubble_layout.addWidget(self._body)
+
+        main_layout.addWidget(self._bubble)
+        main_layout.addStretch()  # Left-aligned (AI message)
 
     def set_text(self, text: str) -> None:
         """Update the message text."""
-        for i in range(self.layout().count()):
-            item = self.layout().itemAt(i)
-            if item and item.widget() and isinstance(item.widget(), QTextEdit):
-                item.widget().setPlainText(text)
-                break
+        self._body.setText(text)
+
+    def sizeHint(self) -> QSize:
+        """Return size hint based on content."""
+        hint = super().sizeHint()
+        return QSize(hint.width(), hint.height() + 8)
 
 
 class _AIRequestWorker(QObject):
@@ -1304,6 +1418,10 @@ class AIChatPanel(QWidget):
         self.transcript_list.setObjectName("chatTranscript")
         self.transcript_list.setFrameShape(QFrame.NoFrame)
         self.transcript_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.transcript_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.transcript_list.setWordWrap(True)
+        self.transcript_list.setSpacing(4)
+        self.transcript_list.setResizeMode(QListWidget.Adjust)
 
         self.transcript_stack = QStackedLayout()
         self.transcript_stack.addWidget(self.placeholder)
@@ -1849,10 +1967,14 @@ class AIChatPanel(QWidget):
     ) -> _MessageCard:
         card = _MessageCard(role, text, context, insert_handler=self.insert_handler, parent=self)
         item = QListWidgetItem(self.transcript_list)
+        # Compute proper size hint for the card
+        card.adjustSize()
         item.setSizeHint(card.sizeHint())
         self.transcript_list.addItem(item)
         self.transcript_list.setItemWidget(item, card)
         self.transcript_stack.setCurrentWidget(self.transcript_list)
+        # Scroll to bottom to show newest message
+        self.transcript_list.scrollToBottom()
         return card
 
     def _reset_chat(self) -> None:
@@ -2122,9 +2244,13 @@ class AIChatPanel(QWidget):
         """Append a special AI response with a hidden sticker."""
         card = _CreatorMessageCard(text, sticker_path, insert_handler=self.insert_handler, parent=self)
         item = QListWidgetItem(self.transcript_list)
+        # Compute proper size hint for the card
+        card.adjustSize()
         item.setSizeHint(card.sizeHint())
         self.transcript_list.addItem(item)
         self.transcript_list.setItemWidget(item, card)
+        # Scroll to bottom to show newest message
+        self.transcript_list.scrollToBottom()
         return card
 
     def _open_context_dialog(self) -> None:
