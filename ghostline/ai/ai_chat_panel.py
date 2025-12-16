@@ -976,7 +976,10 @@ class _MessageCard(QWidget):
                     border-radius: 12px;
                     border-bottom-right-radius: 4px;
                 }
-                QLabel { color: white; }
+                QFrame#chatBubble QLabel {
+                    color: white;
+                    background: transparent;
+                }
             """)
             self._bubble.setMaximumWidth(400)
         else:
@@ -986,6 +989,9 @@ class _MessageCard(QWidget):
                     border-radius: 12px;
                     border-bottom-left-radius: 4px;
                     border: 1px solid palette(mid);
+                }
+                QFrame#chatBubble QLabel {
+                    background: transparent;
                 }
             """)
 
@@ -1118,6 +1124,9 @@ class _CreatorMessageCard(QWidget):
                 border-radius: 12px;
                 border-bottom-left-radius: 4px;
                 border: 1px solid #a78bfa;
+            }
+            QFrame#creatorBubble QLabel {
+                background: transparent;
             }
         """)
         bubble_layout = QVBoxLayout(self._bubble)
