@@ -500,7 +500,9 @@ class ToolExecutor:
         for name, param in signature.parameters.items():
             if param.kind in {param.VAR_POSITIONAL, param.VAR_KEYWORD}:
                 continue
-            if param.default is param.empty and name not in args:
+            if param.default is param.empty and (
+                name not in args or args.get(name) is None
+            ):
                 missing.append(name)
 
         if missing:

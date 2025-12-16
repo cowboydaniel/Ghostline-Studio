@@ -38,3 +38,16 @@ def test_execute_handles_missing_required_args(tmp_path):
     history = executor.get_history()
     assert history[-1]["tool"] == "read_file"
     assert history[-1]["status"] == "error"
+
+
+def test_execute_treats_none_as_missing(tmp_path):
+    executor = ToolExecutor(tmp_path)
+
+    result = executor.execute("read_file", {"path": None})
+
+    assert "Missing required parameter(s)" in result.output
+    assert result.output.endswith("path")
+
+    history = executor.get_history()
+    assert history[-1]["tool"] == "read_file"
+    assert history[-1]["status"] == "error"
