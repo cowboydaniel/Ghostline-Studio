@@ -4,7 +4,7 @@ This is a deliberately simple, safe implementation. It restores:
 
 - A `SemanticToken` dataclass that the highlighter understands.
 - A `SemanticTokenProvider` that can:
-  * produce custom tokens (currently none)
+  * produce custom tokens using lightweight, language-aware overrides
   * translate LSP `documentSemanticTokens` into our flat tokens.
 
 No regex wizardry, no recursion tricks.
@@ -12,7 +12,7 @@ No regex wizardry, no recursion tricks.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 from PySide6.QtGui import QColor, QFont, QTextCharFormat
 
@@ -32,9 +32,33 @@ class SemanticTokenProvider:
     simple line based tokens for the syntax highlighter.
     """
 
-    def __init__(self, language: str, theme: ThemeManager | None = None) -> None:
+    LANGUAGE_FORMAT_OVERRIDES: Mapping[str, Dict[str, tuple[str, bool] | str]] = {
+        # Doc-comment tokens are often emitted separately from regular comments
+        "python": {"comment.documentation": "comment"},
+        "typescript": {"comment.documentation": "comment", "annotation": "decorator"},
+        "rust": {"comment.documentation": "comment"},
+    }
+
+    def __init__(
+        self,
+        language: str,
+        theme: ThemeManager | None = None,
+        *,
+        format_overrides: Mapping[str, tuple[str, bool] | str] | None = None,
+        custom_token_factories: Mapping[str, Any] | None = None,
+    ) -> None:
         self.language = language
         self.theme = theme or ThemeManager()
+        self._format_overrides: dict[str, tuple[str, bool] | str] = {}
+        self._format_overrides.update(self.LANGUAGE_FORMAT_OVERRIDES.get(language, {}))
+        if format_overrides:
+            self._format_overrides.update(format_overrides)
+        self._custom_token_factory = None
+        if custom_token_factories and language in custom_token_factories:
+            self._custom_token_factory = custom_token_factories[language]
+        elif language in self._default_custom_factories():
+            self._custom_token_factory = self._default_custom_factories()[language]
+
         self._formats = self._build_formats()
 
     def _build_formats(self) -> dict[str, QTextCharFormat]:
@@ -50,7 +74,7 @@ class SemanticTokenProvider:
                 fmt.setFontWeight(QFont.Weight.Bold)
             return fmt
 
-        return {
+        formats = {
             # Types, classes, interfaces → #4EC9B0 (cyan/teal)
             "namespace": _fmt(self.theme.syntax_color("import")),
             "type": _fmt(self.theme.syntax_color("class")),
@@ -91,6 +115,20 @@ class SemanticTokenProvider:
             "decorator": _fmt(self.theme.syntax_color("decorator")),
         }
 
+        for token_type, override in self._format_overrides.items():
+            if isinstance(override, QTextCharFormat):
+                formats[token_type] = override
+                continue
+            color_key: str
+            bold = False
+            if isinstance(override, tuple):
+                color_key, bold = override
+            else:
+                color_key = override
+            formats[token_type] = _fmt(self.theme.syntax_color(color_key), bold=bold)
+
+        return formats
+
     def format_for(self, token_type: str) -> QTextCharFormat:
         """Return a QTextCharFormat for a semantic token type."""
         if token_type in self._formats:
@@ -113,6 +151,8 @@ class SemanticTokenProvider:
         We can add smarter rules later (f-strings, TODO markers, etc)
         once the rest of the editor is rock solid.
         """
+        if callable(self._custom_token_factory):
+            return self._custom_token_factory(text)
         return []
 
     @staticmethod
@@ -159,6 +199,52 @@ class SemanticTokenProvider:
             )
 
         return tokens
+
+    @staticmethod
+    def _default_custom_factories() -> dict[str, Any]:
+        def decorator_tokens(text: str) -> list[SemanticToken]:
+            tokens: list[SemanticToken] = []
+            for line_no, line in enumerate(text.splitlines()):
+                stripped = line.lstrip()
+                if stripped.startswith("@"):  # Python, TS, etc.
+                    start = len(line) - len(stripped)
+                    tokens.append(
+                        SemanticToken(
+                            line=line_no,
+                            start=start,
+                            length=len(stripped.split()[0]),
+                            token_type="decorator",
+                        )
+                    )
+            return tokens
+
+        def doc_comment_tokens(prefixes: tuple[str, ...]) -> Any:
+            def _factory(text: str) -> list[SemanticToken]:
+                tokens: list[SemanticToken] = []
+                for line_no, line in enumerate(text.splitlines()):
+                    stripped = line.lstrip()
+                    for prefix in prefixes:
+                        if stripped.startswith(prefix):
+                            start = len(line) - len(stripped)
+                            length = len(stripped)
+                            tokens.append(
+                                SemanticToken(
+                                    line=line_no,
+                                    start=start,
+                                    length=length,
+                                    token_type="comment.documentation",
+                                )
+                            )
+                            break
+                return tokens
+
+            return _factory
+
+        return {
+            "python": decorator_tokens,
+            "typescript": decorator_tokens,
+            "rust": doc_comment_tokens(("//!", "///")),
+        }
 
 
 __all__ = ["SemanticToken", "SemanticTokenProvider"]
