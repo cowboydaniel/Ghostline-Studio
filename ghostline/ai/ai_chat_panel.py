@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QStackedLayout,
     QStyle,
+    QMessageBox,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
@@ -32,9 +33,11 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.ai.ai_client import AIClient, ProactiveSuggestion
+from ghostline.ai.agentic_client import AgenticClient
 from ghostline.ai.chat_history_manager import ChatHistoryManager
 from ghostline.ai.context_engine import ContextChunk, ContextEngine
 from ghostline.ai.creator_easter_egg import is_creator_query, get_random_response, get_sticker_path
+from ghostline.ai.events import ApprovalMode, DoneEvent, EventType, TextDeltaEvent, ToolCallEvent, ToolResultEvent
 from ghostline.ai.model_registry import ModelDescriptor, ModelRegistry
 
 
@@ -55,6 +58,13 @@ class ChatSession:
     messages: list[ChatMessage]
     created_at: datetime
     id: str | None = None  # Unique session ID for persistence
+
+
+@dataclass
+class _ApprovalRequest:
+    call: ToolCallEvent
+    decision: threading.Event
+    approved: bool | None = None
 
 
 class _SuggestionCard(QFrame):
@@ -1123,6 +1133,115 @@ class _MessageCard(QWidget):
         return QSize(hint.width(), hint.height() + 8)
 
 
+class _ToolCallBlock(QFrame):
+    """Visual block showing a tool call, its arguments, and results."""
+
+    undo_requested = Signal(dict)
+
+    def __init__(self, call: ToolCallEvent, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.call = call
+        self.metadata: dict | None = None
+        self.setObjectName("toolCallBlock")
+        self.setStyleSheet(
+            """
+            QFrame#toolCallBlock {
+                background: palette(base);
+                border: 1px solid palette(mid);
+                border-radius: 8px;
+            }
+            QLabel#toolTitle {
+                font-weight: 600;
+            }
+            QLabel#toolArgs {
+                font-family: monospace;
+            }
+            """
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        self.icon_label = QLabel(self._icon_for_tool(call.name), self)
+        header.addWidget(self.icon_label)
+        self.title_label = QLabel(call.name, self)
+        self.title_label.setObjectName("toolTitle")
+        header.addWidget(self.title_label)
+        header.addStretch()
+        self.summary_label = QLabel("Pending", self)
+        self.summary_label.setStyleSheet("color: palette(dark); font-size: 11px;")
+        header.addWidget(self.summary_label)
+        layout.addLayout(header)
+
+        self.args_label = QLabel(self._format_args(call.arguments), self)
+        self.args_label.setObjectName("toolArgs")
+        self.args_label.setWordWrap(True)
+        layout.addWidget(self.args_label)
+
+        self.output_label = QLabel("", self)
+        self.output_label.setWordWrap(True)
+        self.output_label.hide()
+        layout.addWidget(self.output_label)
+
+        self.diff_view = QTextEdit(self)
+        self.diff_view.setReadOnly(True)
+        self.diff_view.hide()
+        self.diff_view.setStyleSheet("font-family: monospace; background: palette(alternate-base);")
+        layout.addWidget(self.diff_view)
+
+        self.undo_button = QPushButton("Undo", self)
+        self.undo_button.hide()
+        self.undo_button.clicked.connect(self._emit_undo)
+        layout.addWidget(self.undo_button, 0, Qt.AlignLeft)
+
+    def _icon_for_tool(self, name: str) -> str:
+        if name in {"write_file", "edit_file"}:
+            return "✏️"
+        if name in {"delete_file", "rename_file"}:
+            return "🛠️"
+        if name in {"run_command", "run_python"}:
+            return "⚙️"
+        return "🔍"
+
+    def _format_args(self, args: dict) -> str:
+        import json
+
+        try:
+            return json.dumps(args, indent=2)
+        except Exception:
+            return str(args)
+
+    def set_pending(self, text: str) -> None:
+        self.summary_label.setText(text)
+
+    def set_result(self, result: ToolResultEvent) -> None:
+        self.metadata = result.metadata
+        self.summary_label.setText(self._summarize_change(result))
+        self.output_label.setText(result.output)
+        self.output_label.show()
+
+        if result.metadata and result.metadata.get("diff"):
+            self.diff_view.setPlainText(result.metadata.get("diff", ""))
+            self.diff_view.show()
+            self.undo_button.show()
+
+    def _summarize_change(self, result: ToolResultEvent) -> str:
+        if not result.metadata:
+            return "Completed"
+        diff = result.metadata.get("diff", "")
+        added = sum(1 for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
+        removed = sum(1 for line in diff.splitlines() if line.startswith("-") and not line.startswith("---"))
+        if added or removed:
+            return f"+{added} / -{removed}"
+        return "Completed"
+
+    def _emit_undo(self) -> None:
+        if self.metadata:
+            self.undo_requested.emit(self.metadata)
+
+
 class _CreatorMessageCard(QWidget):
     """Special message card for creator easter egg with hidden sticker."""
 
@@ -1271,6 +1390,47 @@ class _AIRequestWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class _AgenticRequestWorker(QObject):
+    """Background worker for streaming agentic events."""
+
+    finished = Signal(str, str)
+    failed = Signal(str)
+    partial = Signal(str)
+    tool_call = Signal(object)
+    tool_result = Signal(object)
+
+    def __init__(
+        self,
+        client: AgenticClient,
+        messages: list[dict[str, object]],
+        prompt: str,
+        approval_callback,
+    ) -> None:
+        super().__init__()
+        self.client = client
+        self.messages = messages
+        self.prompt = prompt
+        self.approval_callback = approval_callback
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            accumulated = ""
+            for event in self.client.stream(self.messages, approval_callback=self.approval_callback):
+                if event.type == EventType.TEXT_DELTA and isinstance(event, TextDeltaEvent):
+                    accumulated += event.text
+                    self.partial.emit(event.text)
+                elif event.type == EventType.TOOL_CALL and isinstance(event, ToolCallEvent):
+                    self.tool_call.emit(event)
+                elif event.type == EventType.TOOL_RESULT and isinstance(event, ToolResultEvent):
+                    self.tool_result.emit(event)
+                elif event.type == EventType.DONE and isinstance(event, DoneEvent):
+                    accumulated = event.text or accumulated
+            self.finished.emit(self.prompt, accumulated)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
 class AIChatPanel(QWidget):
     def __init__(self, client: AIClient, context_engine: ContextEngine | None = None, parent=None) -> None:
         super().__init__(parent)
@@ -1293,6 +1453,10 @@ class AIChatPanel(QWidget):
         self._current_messages: list[ChatMessage] = []
         self._current_chat_started_at: datetime = datetime.now()
         self.chat_history: list[ChatSession] = []
+        self.approval_mode: ApprovalMode = ApprovalMode.AUTO
+        self._approval_requests: dict[str, _ApprovalRequest] = {}
+        self._active_tool_blocks: dict[str, _ToolCallBlock] = {}
+        self._agentic_client: AgenticClient | None = None
 
         # Initialize chat history persistence
         self.chat_history_manager = ChatHistoryManager()
@@ -1396,6 +1560,21 @@ class AIChatPanel(QWidget):
         )
         self.tools_button.setMenu(tools_menu)
 
+        self.approval_button = QToolButton(self)
+        _style_toolbar_button(self.approval_button)
+        self.approval_button.setPopupMode(QToolButton.InstantPopup)
+        self.approval_button.setText("Auto")
+        approval_menu = QMenu(self.approval_button)
+        for mode, label in (
+            (ApprovalMode.AUTO, "Auto execute"),
+            (ApprovalMode.WRITE_APPROVAL, "Ask before writes"),
+            (ApprovalMode.ALL_APPROVAL, "Ask before all tools"),
+        ):
+            action = approval_menu.addAction(label)
+            action.triggered.connect(lambda _=None, m=mode: self._set_approval_mode(m))
+        self.approval_button.setMenu(approval_menu)
+        self._set_approval_mode(self.approval_mode)
+
         self.overflow_button = QToolButton(self)
         _style_toolbar_button(self.overflow_button)
         self.overflow_button.setPopupMode(QToolButton.InstantPopup)
@@ -1444,6 +1623,7 @@ class AIChatPanel(QWidget):
         top_layout.addStretch()
         top_layout.addWidget(self.new_chat_button)
         top_layout.addWidget(self.history_button)
+        top_layout.addWidget(self.approval_button)
         top_layout.addWidget(self.tools_button)
         top_layout.addWidget(self.overflow_button)
 
@@ -2157,6 +2337,7 @@ class AIChatPanel(QWidget):
             self.agents_button,
             self.new_chat_button,
             self.history_button,
+            self.approval_button,
             self.tools_button,
             self.overflow_button,
         ):
@@ -2205,7 +2386,7 @@ class AIChatPanel(QWidget):
         self._set_busy(False)
         self._active_response_card = None
 
-    def _cleanup_thread(self, thread: QThread, worker: _AIRequestWorker) -> None:
+    def _cleanup_thread(self, thread: QThread, worker: QObject) -> None:
         worker.deleteLater()
         thread.quit()
         # Don't call wait() from the main thread - let Qt handle cleanup asynchronously
@@ -2243,14 +2424,21 @@ class AIChatPanel(QWidget):
             ChatMessage("You", prompt, list(self._last_chunks))
         )
         self._set_busy(True)
+        self._active_tool_blocks.clear()
+        self._approval_requests.clear()
+
+        agentic_client = self._ensure_agentic_client()
+        messages = self._build_agentic_messages(prompt, context)
 
         thread = QThread(self)
-        worker = _AIRequestWorker(self.client, prompt, context, self.current_model_descriptor)
+        worker = _AgenticRequestWorker(agentic_client, messages, prompt, self._approval_decider)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_worker_finished, Qt.QueuedConnection)
         worker.failed.connect(self._on_worker_failed, Qt.QueuedConnection)
         worker.partial.connect(self._on_worker_partial, Qt.QueuedConnection)
+        worker.tool_call.connect(self._on_tool_call, Qt.QueuedConnection)
+        worker.tool_result.connect(self._on_tool_result, Qt.QueuedConnection)
         thread.start()
         self._active_thread = thread
         self._active_worker = worker
@@ -2270,6 +2458,105 @@ class AIChatPanel(QWidget):
         context, chunks = self._gather_context(prompt)
         self._last_chunks = chunks
         self._start_request(prompt, context)
+
+    def _ensure_agentic_client(self) -> AgenticClient:
+        model = self.current_model_descriptor.id if self.current_model_descriptor else "gpt-4.1"
+        provider = (self.current_model_descriptor.provider if self.current_model_descriptor else "openai").lower()
+        api_key = ""
+        provider_name = provider
+        if provider == "claude":
+            provider_name = "anthropic"
+            api_key = self.model_registry._claude_settings().get("api_key", "")  # noqa: SLF001
+        elif provider in {"openai", "gpt"}:
+            provider_name = "openai"
+            api_key = self.model_registry._openai_settings().get("api_key", "")  # noqa: SLF001
+        elif provider == "ollama":
+            provider_name = "ollama"
+
+        if not self._agentic_client or self._agentic_client.model != model:
+            self._agentic_client = AgenticClient(provider_name, model, api_key=api_key, workspace_root=Path.cwd())
+        return self._agentic_client
+
+    def _build_agentic_messages(self, prompt: str, context: str | None) -> list[dict[str, object]]:
+        messages: list[dict[str, object]] = []
+        for message in self._current_messages:
+            role = "user" if message.role.lower() in {"you", "user"} else "assistant"
+            messages.append({"role": role, "content": message.text})
+
+        content = prompt if not context else f"{context}\n\n{prompt}"
+        messages.append({"role": "user", "content": content})
+        return messages
+
+    def _requires_approval(self, call: ToolCallEvent) -> bool:
+        destructive = {"write_file", "edit_file", "delete_file", "rename_file", "run_command", "run_python"}
+        if self.approval_mode == ApprovalMode.ALL_APPROVAL:
+            return True
+        if self.approval_mode == ApprovalMode.WRITE_APPROVAL and call.name in destructive:
+            return True
+        return False
+
+    def _approval_decider(self, call: ToolCallEvent) -> bool:
+        request = self._approval_requests.get(call.call_id)
+        if not request:
+            approved = not self._requires_approval(call)
+            req = _ApprovalRequest(call, threading.Event(), approved)
+            self._approval_requests[call.call_id] = req
+            req.decision.set()
+            return approved
+
+        if request.approved is None:
+            request.decision.wait()
+        return bool(request.approved)
+
+    def _prompt_approval(self, request: _ApprovalRequest) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle("Approve tool call")
+        dialog.setText(f"Allow {request.call.name}?\n{request.call.arguments}")
+        dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        result = dialog.exec()
+        request.approved = result == QMessageBox.Yes
+        request.decision.set()
+        if not request.approved:
+            block = self._active_tool_blocks.get(request.call.call_id)
+            if block:
+                block.set_pending("Declined")
+
+    @Slot(object)
+    def _on_tool_call(self, call: ToolCallEvent) -> None:
+        if not self._active_response_card:
+            self._active_response_card = self._append("AI", "", context=self._last_chunks)
+        block = _ToolCallBlock(call, parent=self._active_response_card)
+        block.undo_requested.connect(self._handle_undo_request)
+        self._active_tool_blocks[call.call_id] = block
+        if self._active_response_card:
+            self._active_response_card._content_layout.addWidget(block)
+            self._active_response_card._update_list_item_size()
+        req = _ApprovalRequest(call, threading.Event())
+        self._approval_requests[call.call_id] = req
+        if self._requires_approval(call):
+            self._prompt_approval(req)
+        else:
+            req.approved = True
+            req.decision.set()
+
+    @Slot(object)
+    def _on_tool_result(self, result: ToolResultEvent) -> None:
+        block = self._active_tool_blocks.get(result.call_id)
+        if block:
+            block.set_result(result)
+            if self._active_response_card:
+                self._active_response_card._update_list_item_size()
+
+    @Slot(dict)
+    def _handle_undo_request(self, metadata: dict) -> None:
+        if not self._agentic_client:
+            return
+        outcome = self._agentic_client.tool_executor.undo_change(metadata)
+        for block in self._active_tool_blocks.values():
+            if block.metadata == metadata:
+                block.output_label.setText(f"{block.output_label.text()}\nUndo: {outcome.output}")
+                break
 
     def _handle_creator_easter_egg(self, prompt: str) -> None:
         """Display a lore-rich response with hidden sticker for creator queries."""
@@ -2413,6 +2700,16 @@ class AIChatPanel(QWidget):
     def _update_pinned_badge(self, count: int) -> None:
         tooltip_suffix = f" ({count} pinned)" if count else ""
         self.tools_button.setToolTip(f"Context and tools{tooltip_suffix}")
+
+    def _set_approval_mode(self, mode: ApprovalMode) -> None:
+        self.approval_mode = mode
+        label = {
+            ApprovalMode.AUTO: "Auto",
+            ApprovalMode.WRITE_APPROVAL: "Write-approve",
+            ApprovalMode.ALL_APPROVAL: "Approve all",
+        }.get(mode, "Auto")
+        self.approval_button.setText(label)
+        self.approval_button.setToolTip(f"Approval mode: {label}")
 
     @Slot(str)
     def _on_worker_partial(self, delta: str) -> None:

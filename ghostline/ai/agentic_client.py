@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Generator, Iterable, List, Optional
+from typing import Any, Callable, Dict, Generator, Iterable, List, Optional
 
 from ghostline.ai.events import DoneEvent, Event, EventType, TextDeltaEvent, ToolCallEvent, ToolResultEvent
 from ghostline.ai.providers import AnthropicProvider, OpenAIProvider, OllamaProvider
@@ -44,6 +44,7 @@ class AgenticClient:
         self,
         messages: Iterable[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        approval_callback: Callable[[ToolCallEvent], bool] | None = None,
     ) -> Generator[Event, None, None]:
         """Stream events through multi-round tool execution."""
 
@@ -91,13 +92,21 @@ class AgenticClient:
                 conversation.append(assistant_message)
 
             for call in pending_calls:
-                result_text = self.tool_executor.execute(call.name, call.arguments)
-                yield ToolResultEvent(call_id=call.call_id, name=call.name, output=result_text)
+                if approval_callback and not approval_callback(call):
+                    continue
+
+                result = self.tool_executor.execute(call.name, call.arguments)
+                yield ToolResultEvent(
+                    call_id=call.call_id,
+                    name=call.name,
+                    output=result.output,
+                    metadata=result.metadata,
+                )
                 conversation.append({
                     "role": "tool",
                     "tool_call_id": call.call_id,
                     "name": call.name,
-                    "content": result_text,
+                    "content": result.output,
                 })
 
             round_index += 1
