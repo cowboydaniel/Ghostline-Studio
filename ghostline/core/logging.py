@@ -11,8 +11,25 @@ LOG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "gh
 LOG_FILE = LOG_DIR / "ghostline.log"
 
 
-def configure_logging(level: int = logging.INFO) -> None:
-    """Configure both console and rotating file logging."""
+def configure_logging(level: int | None = None) -> None:
+    """Configure both console and rotating file logging.
+
+    Args:
+        level: Logging level (defaults to INFO, can be overridden by GHOSTLINE_LOG_LEVEL env var)
+    """
+    # Check environment variable first
+    if level is None:
+        env_level = os.environ.get("GHOSTLINE_LOG_LEVEL", "").upper()
+        if env_level == "DEBUG":
+            level = logging.DEBUG
+        elif env_level == "INFO":
+            level = logging.INFO
+        elif env_level == "WARNING":
+            level = logging.WARNING
+        elif env_level == "ERROR":
+            level = logging.ERROR
+        else:
+            level = logging.INFO
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 

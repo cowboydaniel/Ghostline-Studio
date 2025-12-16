@@ -26,7 +26,9 @@ class GhostlineApplication:
 
     def __init__(self) -> None:
         self.args = self._parse_args()
-        configure_logging()
+        # Configure logging based on command-line args
+        log_level = getattr(logging, self.args.log_level.upper(), logging.INFO)
+        configure_logging(level=log_level)
         self.logger = get_logger(__name__)
         self.qt_app = QApplication(sys.argv)
         self.qt_app.setWindowIcon(load_icon("ghostline_logo.svg"))
@@ -48,6 +50,19 @@ class GhostlineApplication:
     def _parse_args(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(description="Ghostline Studio")
         parser.add_argument("path", nargs="?", help="File or folder to open")
+        parser.add_argument(
+            "--log-level",
+            default="info",
+            choices=["debug", "info", "warning", "error"],
+            help="Set the logging level (default: info)",
+        )
+        parser.add_argument(
+            "--debug",
+            action="store_const",
+            const="debug",
+            dest="log_level",
+            help="Enable DEBUG logging (equivalent to --log-level=debug)",
+        )
         return parser.parse_args()
 
     def _show_splash(self) -> None:
