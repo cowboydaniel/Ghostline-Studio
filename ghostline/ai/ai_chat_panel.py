@@ -2650,8 +2650,22 @@ class AIChatPanel(QWidget):
         self._start_request(prompt, instructions)
 
     def _ensure_agentic_client(self) -> AgenticClient:
-        model = self.current_model_descriptor.id if self.current_model_descriptor else "gpt-4.1"
-        provider = (self.current_model_descriptor.provider if self.current_model_descriptor else "openai").lower()
+        # Determine model and provider - prefer current selection, then check for Claude API key, then fallback to OpenAI
+        if self.current_model_descriptor:
+            model = self.current_model_descriptor.id
+            provider = self.current_model_descriptor.provider.lower()
+        else:
+            # Check if Claude is configured (prefer Claude over OpenAI if API key exists)
+            claude_api_key = self.model_registry._claude_settings().get("api_key", "")  # noqa: SLF001
+            if claude_api_key:
+                # Use Claude as default if API key is configured
+                model = self.model_registry._claude_settings().get("default_model", "claude-haiku-4-5-20251001")  # noqa: SLF001
+                provider = "claude"
+            else:
+                # Fallback to OpenAI
+                model = "gpt-4.1"
+                provider = "openai"
+
         api_key = ""
         provider_name = provider
         if provider == "claude":
