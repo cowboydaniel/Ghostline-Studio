@@ -16,6 +16,17 @@ class ThemeManager:
     """Applies and exposes the Ghostline Studio theme."""
 
     DEFAULT_THEME = "ghost_dark"
+    DEFAULT_EDITOR_COLORS: dict[str, str] = {
+        "line_number": "#858585",  # Inactive line numbers
+        "active_line_number": "#C6C6C6",  # Active line number
+        "gutter_background": "#1E1E1E",
+        "gutter_divider": "#2D2D30",
+        "current_line": "#2A2D2E",
+        "cursor": "#AEAFAD",
+        "selection": "rgba(38, 79, 120, 160)",
+        "bracket_match": "rgba(80, 120, 200, 120)",
+        "multi_cursor": "rgba(90, 90, 120, 80)",
+    }
     THEMES: dict[str, dict[str, dict[str, str]]] = {
         "ghost_dark": {
             "palette": {
@@ -53,6 +64,7 @@ class ThemeManager:
                 "variable": "#9CDCFE",
                 "constant": "#4FC1FF",
             },
+            "editor": DEFAULT_EDITOR_COLORS,
         },
         "ghost_night": {
             "palette": {
@@ -90,6 +102,17 @@ class ThemeManager:
                 "operator": "#dcead7",
                 "variable": "#a4f4c4",
                 "constant": "#54f0b7",
+            },
+            "editor": {
+                "line_number": "#6c8a74",
+                "active_line_number": "#d5e8d6",
+                "gutter_background": "#0e120f",
+                "gutter_divider": "#1b2a23",
+                "current_line": "rgba(15, 163, 107, 45)",
+                "cursor": "#f5fff8",
+                "selection": "rgba(15, 163, 107, 160)",
+                "bracket_match": "rgba(47, 191, 159, 120)",
+                "multi_cursor": "rgba(47, 191, 159, 80)",
             },
         },
     }
@@ -131,13 +154,9 @@ class ThemeManager:
 
     def editor_color(self, key: str) -> QColor:
         """Get editor-specific colors (line numbers, gutter, etc)."""
-        editor_colors = {
-            "line_number": QColor("#858585"),  # Inactive line numbers
-            "active_line_number": QColor("#C6C6C6"),  # Active line number
-            "gutter_background": QColor("#1E1E1E"),
-            "gutter_divider": QColor("#2D2D30"),
-        }
-        return editor_colors.get(key, QColor(200, 200, 200))
+        editor_def = self._theme_definition().get("editor", {})
+        value = editor_def.get(key, self.DEFAULT_EDITOR_COLORS.get(key))
+        return QColor(value) if value else QColor(200, 200, 200)
 
     def _theme_definition(self) -> dict[str, dict[str, str]]:
         return self.THEMES.get(self.theme_name, self.THEMES[self.DEFAULT_THEME])
