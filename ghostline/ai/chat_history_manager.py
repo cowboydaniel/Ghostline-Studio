@@ -88,6 +88,7 @@ class ChatHistoryManager:
             "title": session.title,
             "messages": [message_to_dict(msg) for msg in session.messages],
             "created_at": session.created_at.isoformat(),
+            "id": session.id,
         }
 
     def _dict_to_session(self, data: dict):
@@ -127,6 +128,7 @@ class ChatHistoryManager:
                 title: str
                 messages: list
                 created_at: datetime
+                id: str | None = None
 
         def dict_to_message(msg_data: dict):
             context = None
@@ -151,6 +153,7 @@ class ChatHistoryManager:
             title=data["title"],
             messages=[dict_to_message(msg) for msg in data["messages"]],
             created_at=datetime.fromisoformat(data["created_at"]),
+            id=data.get("id"),
         )
 
     def save_session(self, session: ChatSession, session_id: str | None = None) -> str:
@@ -159,13 +162,17 @@ class ChatHistoryManager:
 
         Args:
             session: The ChatSession to save
-            session_id: Optional session ID. If None, generates a new UUID.
+            session_id: Optional session ID. If None, uses session.id or generates a new UUID.
 
         Returns:
             The session ID used for storage
         """
         if session_id is None:
-            session_id = str(uuid.uuid4())
+            session_id = session.id or str(uuid.uuid4())
+
+        # Update the session's ID if it's not set
+        if session.id is None:
+            session.id = session_id
 
         # Save session data
         session_path = self.storage_dir / f"{session_id}.json"
@@ -226,6 +233,9 @@ class ChatHistoryManager:
         for session_id in self._index.keys():
             session = self.load_session(session_id)
             if session:
+                # Ensure the session has its ID set (for backwards compatibility)
+                if session.id is None:
+                    session.id = session_id
                 sessions.append((session_id, session))
 
         # Sort by created_at, newest first
