@@ -51,12 +51,31 @@ class AnthropicProvider:
 
         formatted_messages = self._format_messages(messages)
 
+        # Extract system message (Anthropic requires it as a separate parameter)
+        system_message = None
+        non_system_messages = []
+        for msg in formatted_messages:
+            if msg.get("role") == "system":
+                # Combine multiple system messages if present
+                content = msg.get("content", "")
+                if system_message:
+                    system_message += "\n\n" + content
+                else:
+                    system_message = content
+            else:
+                non_system_messages.append(msg)
+
         # Log the request details for debugging
-        logging.debug("Anthropic API request - model: %s, num_messages: %d, num_tools: %d",
-                     self.model, len(formatted_messages), len(tools) if tools else 0)
+        logging.debug("Anthropic API request - model: %s, num_messages: %d, num_tools: %d, has_system: %s",
+                     self.model, len(non_system_messages), len(tools) if tools else 0, bool(system_message))
+
+        # Log system message if present
+        if system_message:
+            system_preview = system_message[:200] + "..." if len(system_message) > 200 else system_message
+            logging.debug("Anthropic system message: %r", system_preview)
 
         # Log the messages (truncated for readability)
-        for i, msg in enumerate(formatted_messages):
+        for i, msg in enumerate(non_system_messages):
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, str):
@@ -81,13 +100,23 @@ class AnthropicProvider:
         tool_uses: Dict[str, Dict[str, Any]] = {}
         accumulated_text: List[str] = []
 
-        with self.client.messages.stream(  # type: ignore[attr-defined]
-            model=self.model,
-            max_tokens=4096,  # Required by Anthropic API
-            messages=formatted_messages,
-            tools=tools,
-            temperature=self.temperature,
-        ) as stream:
+        # Build API call parameters
+        api_params: Dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "messages": non_system_messages,
+            "temperature": self.temperature,
+        }
+
+        # Add system parameter if we have a system message
+        if system_message:
+            api_params["system"] = system_message
+
+        # Add tools if provided
+        if tools:
+            api_params["tools"] = tools
+
+        with self.client.messages.stream(**api_params) as stream:  # type: ignore[attr-defined]
             for event in stream:
                 event_type = getattr(event, "type", None)
                 if event_type == "content_block_delta":
