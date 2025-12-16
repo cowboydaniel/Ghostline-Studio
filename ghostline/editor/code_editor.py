@@ -688,6 +688,17 @@ class CodeEditor(QPlainTextEdit):
         self._trigger_characters = set(trigger_chars) if isinstance(trigger_chars, list) else {'.', ':', '>', '(', '[', '"', "'", '/', '@'}
         self._min_chars_for_completion = intellisense_config.get("min_chars", 1)
 
+        # Auto-closing brackets configuration
+        editor_config = self.config.get("editor", {}) if self.config else {}
+        self._auto_close_brackets = editor_config.get("auto_close_brackets", True)
+        self._bracket_pairs = {
+            '(': ')',
+            '[': ']',
+            '{': '}',
+            '"': '"',
+            "'": "'",
+        }
+
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
         self.setFont(QFont(font_family, font_size))
@@ -940,6 +951,64 @@ class CodeEditor(QPlainTextEdit):
             self._extra_cursors.clear()
             self._highlight_current_line()
             return
+
+        # Handle auto-closing brackets
+        if self._auto_close_brackets and event.text() and not event.modifiers():
+            char = event.text()
+            cursor = self.textCursor()
+
+            # Check if typing a closing bracket that's already there (skip over it)
+            if char in self._bracket_pairs.values():
+                next_char = self._get_next_char(cursor)
+                if next_char == char:
+                    cursor.movePosition(QTextCursor.MoveOperation.Right)
+                    self.setTextCursor(cursor)
+                    return
+
+            # Auto-close opening brackets
+            if char in self._bracket_pairs:
+                closing_char = self._bracket_pairs[char]
+
+                # If there's a selection, wrap it
+                if cursor.hasSelection():
+                    selected_text = cursor.selectedText()
+                    cursor.insertText(char + selected_text + closing_char)
+                    # Move cursor before closing bracket
+                    pos = cursor.position()
+                    cursor.setPosition(pos - 1)
+                    self.setTextCursor(cursor)
+                    return
+                else:
+                    # For quotes, check if we should close them
+                    if char in ('"', "'"):
+                        # Don't auto-close quotes in the middle of a word
+                        prev_char = self._get_prev_char(cursor)
+                        next_char = self._get_next_char(cursor)
+                        if prev_char.isalnum() or next_char.isalnum():
+                            # Let the normal behavior happen
+                            super().keyPressEvent(event)
+                            return
+
+                    # Insert the pair
+                    cursor.insertText(char + closing_char)
+                    # Move cursor between the pair
+                    cursor.movePosition(QTextCursor.MoveOperation.Left)
+                    self.setTextCursor(cursor)
+                    return
+
+        # Handle backspace for auto-paired brackets
+        if self._auto_close_brackets and event.key() == Qt.Key_Backspace:
+            cursor = self.textCursor()
+            if not cursor.hasSelection():
+                prev_char = self._get_prev_char(cursor)
+                next_char = self._get_next_char(cursor)
+                # Check if we're between a bracket pair
+                if prev_char in self._bracket_pairs and self._bracket_pairs[prev_char] == next_char:
+                    # Delete both brackets
+                    cursor.deletePreviousChar()
+                    cursor.deleteChar()
+                    return
+
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
             cursor = self.textCursor()
             cursor.select(QTextCursor.LineUnderCursor)
@@ -1394,6 +1463,22 @@ class CodeEditor(QPlainTextEdit):
                 self.completion_widget.show_completions(items, prefix)
 
         self.lsp_manager.request_completions(str(self.path), position, callback=_show_completions)
+
+    def _get_prev_char(self, cursor: QTextCursor) -> str:
+        """Get the character before the cursor position."""
+        if cursor.position() == 0:
+            return ""
+        prev_cursor = QTextCursor(cursor)
+        prev_cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.KeepAnchor, 1)
+        return prev_cursor.selectedText()
+
+    def _get_next_char(self, cursor: QTextCursor) -> str:
+        """Get the character after the cursor position."""
+        if cursor.atEnd():
+            return ""
+        next_cursor = QTextCursor(cursor)
+        next_cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+        return next_cursor.selectedText()
 
     def apply_unified_patch(self, patch: str) -> None:
         """Apply a unified diff to the current buffer as a single undo step."""
