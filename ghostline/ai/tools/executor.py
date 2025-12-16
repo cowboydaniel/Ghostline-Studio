@@ -7,17 +7,30 @@ provider token budgets.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timedelta
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Deque, Dict, Iterable, List
 
 from .sandbox import apply_command_sandbox
 
 
 MAX_OUTPUT_LENGTH = 4000
+MAX_FILE_READ_BYTES = 200_000
+SENSITIVE_FILENAMES = {
+    ".env",
+    ".env.local",
+    "id_rsa",
+    "id_dsa",
+    "credentials",
+    "secrets",
+    "aws_access_keys",
+    "google_application_credentials.json",
+}
+SENSITIVE_DIR_PARTS = {".ssh", ".aws", ".git"}
 
 
 @dataclass
@@ -30,9 +43,26 @@ class ToolResult:
 class ToolExecutor:
     """Execute tools requested by AI agents."""
 
-    def __init__(self, workspace_root: Path | str):
+    def __init__(
+        self,
+        workspace_root: Path | str,
+        *,
+        allowed_roots: Iterable[Path | str] | None = None,
+        max_calls_per_minute: int | None = None,
+        output_budget: int | None = None,
+    ):
         workspace = Path(workspace_root).resolve()
         self.workspace = workspace
+        self.allowed_roots: list[Path] = [workspace]
+        if allowed_roots:
+            for root in allowed_roots:
+                root_path = Path(root).resolve()
+                if root_path not in self.allowed_roots:
+                    self.allowed_roots.append(root_path)
+        self.max_calls_per_minute = max_calls_per_minute
+        self.output_budget = output_budget
+        self.call_history: Deque[dict[str, Any]] = deque(maxlen=200)
+        self.call_timestamps: Deque[datetime] = deque()
         self.allowed_tools: Dict[str, Callable[..., str]] = {
             "read_file": self.read_file,
             "write_file": self.write_file,
@@ -51,21 +81,44 @@ class ToolExecutor:
     def execute(self, tool_name: str, args: Dict[str, Any]) -> ToolResult:
         """Execute a tool and return the result payload."""
         if tool_name not in self.allowed_tools:
-            return ToolResult(tool_name, f"Error: Unknown tool '{tool_name}'")
+            result = ToolResult(tool_name, f"Error: Unknown tool '{tool_name}'")
+            self._record_history(tool_name, args, result)
+            return result
+
+        rate_limit_error = self._check_rate_limit()
+        if rate_limit_error:
+            result = ToolResult(tool_name, rate_limit_error)
+            self._record_history(tool_name, args, result)
+            return result
+
+        self._register_call_timestamp()
 
         try:
             output = self.allowed_tools[tool_name](**args)
             if isinstance(output, ToolResult):
-                return output
-            return ToolResult(tool_name, str(output))
+                result = output
+            else:
+                result = ToolResult(tool_name, str(output))
+            return result
         except Exception as exc:  # pragma: no cover - defensive catch
-            return ToolResult(tool_name, f"Error executing {tool_name}: {exc}")
+            result = ToolResult(tool_name, f"Error executing {tool_name}: {exc}")
+        finally:
+            self._record_history(tool_name, args, locals().get("result"))
+
+        return result
 
     def read_file(self, path: str) -> str:
         """Read file contents with truncation."""
         full_path = self._ensure_file(path)
         if isinstance(full_path, str):
             return full_path
+
+        size = full_path.stat().st_size
+        if size > MAX_FILE_READ_BYTES:
+            content = full_path.read_text(encoding="utf-8")[:MAX_FILE_READ_BYTES]
+            return self._truncate_output(
+                content + "\n\n[file truncated due to size and token budget limits]"
+            )
 
         content = full_path.read_text(encoding="utf-8")
         return self._truncate_output(content)
@@ -236,19 +289,22 @@ class ToolExecutor:
         return ToolResult("rename_file", f"Renamed {old_path} to {new_path}", metadata)
 
     def run_command(self, command: str, cwd: str | None = None) -> ToolResult:
-        """Run a shell command within the workspace."""
+        """Run a shell command within the workspace using sandboxed policies."""
         work_dir = self._resolve_path(cwd) if cwd else self.workspace
         if isinstance(work_dir, str):
             return ToolResult("run_command", work_dir)
 
-        safe_command = apply_command_sandbox(command)
+        sandboxed = apply_command_sandbox(command)
+        if isinstance(sandboxed, str):
+            return ToolResult("run_command", sandboxed)
+
         result = subprocess.run(
-            safe_command,
-            shell=True,
+            sandboxed.argv,
+            shell=sandboxed.shell,
             cwd=work_dir,
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=sandboxed.timeout,
         )
         output = (result.stdout or "") + (result.stderr or "")
         truncated = self._truncate_output(output or f"Command exited with code {result.returncode} (no output)")
@@ -286,17 +342,27 @@ class ToolExecutor:
         candidate = candidate if candidate.is_absolute() else (self.workspace / candidate)
         resolved = candidate.resolve()
 
-        try:
-            resolved.relative_to(self.workspace)
-        except ValueError:
+        if not any(self._is_subpath(resolved, root) for root in self.allowed_roots):
             return "Error: Access outside of workspace is not allowed"
+
+        if self._is_sensitive_path(resolved):
+            return "Error: Access to sensitive files is blocked"
 
         return resolved
 
     def _truncate_output(self, text: str) -> str:
-        if len(text) <= MAX_OUTPUT_LENGTH:
-            return text
-        return text[:MAX_OUTPUT_LENGTH] + "\n\n[truncated]"
+        max_allowed = MAX_OUTPUT_LENGTH
+        if self.output_budget is not None:
+            max_allowed = min(max_allowed, max(self.output_budget, 0))
+        if max_allowed <= 0:
+            return "[output suppressed: token budget exhausted]"
+
+        truncated = text
+        if len(truncated) > max_allowed:
+            truncated = truncated[:max_allowed] + "\n\n[truncated]"
+
+        self._consume_output_budget(len(truncated))
+        return truncated
 
     def _build_change_metadata(
         self,
@@ -348,3 +414,65 @@ class ToolExecutor:
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(str(previous_content), encoding="utf-8")
         return ToolResult("undo", f"Restored {path}")
+
+    def get_history(self) -> list[dict[str, Any]]:
+        """Return the tool invocation history as a list for downstream consumers."""
+
+        return list(self.call_history)
+
+    def _consume_output_budget(self, length: int) -> None:
+        if self.output_budget is None:
+            return
+        self.output_budget = max(self.output_budget - length, 0)
+
+    def _is_subpath(self, path: Path, parent: Path) -> bool:
+        try:
+            path.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    def _is_sensitive_path(self, path: Path) -> bool:
+        parts = {part.lower() for part in path.parts}
+        if any(sensitive_part.lower() in parts for sensitive_part in SENSITIVE_DIR_PARTS):
+            return True
+
+        filename = path.name.lower()
+        return filename in {name.lower() for name in SENSITIVE_FILENAMES}
+
+    def _check_rate_limit(self) -> str | None:
+        if not self.max_calls_per_minute:
+            return None
+
+        self._prune_timestamps()
+        if len(self.call_timestamps) >= self.max_calls_per_minute:
+            return "Error: Tool rate limit exceeded; please wait before sending more tool calls."
+
+        return None
+
+    def _register_call_timestamp(self) -> None:
+        if self.max_calls_per_minute:
+            self.call_timestamps.append(datetime.utcnow())
+
+    def _prune_timestamps(self) -> None:
+        cutoff = datetime.utcnow() - timedelta(minutes=1)
+        while self.call_timestamps and self.call_timestamps[0] < cutoff:
+            self.call_timestamps.popleft()
+
+    def _record_history(self, tool_name: str, args: Dict[str, Any], result: ToolResult | None) -> None:
+        sanitized_args = {}
+        for key, value in args.items():
+            if isinstance(value, str) and len(value) > 200:
+                sanitized_args[key] = value[:200] + "..."
+            else:
+                sanitized_args[key] = value
+
+        entry = {
+            "tool": tool_name,
+            "args": sanitized_args,
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "ok" if result and not str(result.output).startswith("Error") else "error",
+        }
+        if result:
+            entry["output_preview"] = str(result.output)[:200]
+        self.call_history.append(entry)

@@ -24,6 +24,11 @@ class ContextChunk:
 class ContextEngine:
     """Collects contextual snippets for AI prompts."""
 
+    # NOTE: The agentic tool system is becoming the default for models with
+    # native tool support. This legacy context engine remains as a fallback for
+    # providers or models without tools; once capability detection is complete
+    # we can retire this path and route everything else through agentic flows.
+
     def __init__(
         self,
         indexer: WorkspaceIndexer,
