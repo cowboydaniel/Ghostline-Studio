@@ -15,19 +15,107 @@ from ghostline.core.resources import icons_dir
 class ThemeManager:
     """Applies and exposes the Ghostline Studio theme."""
 
-    def __init__(self) -> None:
-        self._palette = self._build_dark_palette()
+    DEFAULT_THEME = "ghost_dark"
+    THEMES: dict[str, dict[str, dict[str, str]]] = {
+        "ghost_dark": {
+            "palette": {
+                "window": "#101113",
+                "window_text": "#D4D4D4",
+                "base": "#101113",
+                "alternate_base": "#15171a",
+                "tool_tip_base": "#101113",
+                "tool_tip_text": "#D4D4D4",
+                "text": "#D4D4D4",
+                "button": "#101113",
+                "button_text": "#D4D4D4",
+                "bright_text": "#ffffff",
+                "highlight": "#264F78",
+                "highlighted_text": "#ffffff",
+                "link": "#569CD6",
+                "link_visited": "#C586C0",
+                "dark": "#0d0e10",
+            },
+            "syntax": {
+                "keyword": "#569CD6",
+                "string": "#CE9178",
+                "comment": "#6A9955",
+                "number": "#B5CEA8",
+                "builtin": "#4EC9B0",
+                "definition": "#9CDCFE",
+                "function": "#DCDCAA",
+                "class": "#4EC9B0",
+                "import": "#C586C0",
+                "literal": "#B5CEA8",
+                "dunder": "#4EC9B0",
+                "typehint": "#4EC9B0",
+                "decorator": "#C586C0",
+                "operator": "#D4D4D4",
+                "variable": "#9CDCFE",
+                "constant": "#4FC1FF",
+            },
+        },
+        "ghost_night": {
+            "palette": {
+                "window": "#0b0d0c",
+                "window_text": "#d5e8d6",
+                "base": "#050605",
+                "alternate_base": "#0e120f",
+                "tool_tip_base": "#0b0d0c",
+                "tool_tip_text": "#d5e8d6",
+                "text": "#d5e8d6",
+                "button": "#0b0d0c",
+                "button_text": "#d5e8d6",
+                "bright_text": "#f4fff5",
+                "highlight": "#0fa36b",
+                "highlighted_text": "#f5fff8",
+                "link": "#28c58a",
+                "link_visited": "#4fbf9d",
+                "dark": "#070808",
+            },
+            # Easter egg trigger: hidden ghost night palette
+            "syntax": {
+                "keyword": "#39c46a",
+                "string": "#9edfae",
+                "comment": "#5f8763",
+                "number": "#7ddbb3",
+                "builtin": "#2fbf9f",
+                "definition": "#8fe8c1",
+                "function": "#cde8a2",
+                "class": "#48d597",
+                "import": "#90e0d1",
+                "literal": "#b0f0b4",
+                "dunder": "#2fbf9f",
+                "typehint": "#2fbf9f",
+                "decorator": "#6fffd4",
+                "operator": "#dcead7",
+                "variable": "#a4f4c4",
+                "constant": "#54f0b7",
+            },
+        },
+    }
+
+    def __init__(self, theme_name: str | None = None) -> None:
+        self.theme_name = theme_name or self.DEFAULT_THEME
+        self._palette = self._build_palette()
         self._syntax_colors = self._load_syntax_colors()
 
     def apply(self, app: QApplication) -> None:
         """Apply the dark theme, fonts, and stylesheet to the application."""
         app.setStyle("Fusion")
-        self._palette = self._build_dark_palette()
+        self._palette = self._build_palette()
         app.setPalette(self._palette)
         app.setFont(self._preferred_font())
         stylesheet = self._load_stylesheet()
         if stylesheet:
             app.setStyleSheet(stylesheet)
+        self._syntax_colors = self._load_syntax_colors()
+
+    def set_theme(self, theme_name: str) -> None:
+        """Switch to a new theme when it exists."""
+        if theme_name not in self.THEMES:
+            return
+        self.theme_name = theme_name
+        self._palette = self._build_palette()
         self._syntax_colors = self._load_syntax_colors()
 
     def color(self, role: QPalette.ColorRole) -> QColor:
@@ -46,27 +134,29 @@ class ThemeManager:
         }
         return editor_colors.get(key, QColor(200, 200, 200))
 
-    def _build_dark_palette(self) -> QPalette:
+    def _theme_definition(self) -> dict[str, dict[str, str]]:
+        return self.THEMES.get(self.theme_name, self.THEMES[self.DEFAULT_THEME])
+
+    def _build_palette(self) -> QPalette:
         palette = QPalette()
-        # VS Code Dark+ theme colors
-        palette.setColor(QPalette.Window, QColor("#101113"))
-        palette.setColor(QPalette.WindowText, QColor("#D4D4D4"))
-        # Editor base and current line background
-        palette.setColor(QPalette.Base, QColor("#101113"))
+        palette_def = self._theme_definition().get("palette", {})
+        palette.setColor(QPalette.Window, QColor(palette_def.get("window", "#101113")))
+        palette.setColor(QPalette.WindowText, QColor(palette_def.get("window_text", "#D4D4D4")))
+        palette.setColor(QPalette.Base, QColor(palette_def.get("base", "#101113")))
         # Current line highlight - using solid color, alpha applied in code_editor.py
-        palette.setColor(QPalette.AlternateBase, QColor("#15171a"))  # Will have alpha applied
-        palette.setColor(QPalette.ToolTipBase, QColor("#101113"))
-        palette.setColor(QPalette.ToolTipText, QColor("#D4D4D4"))
-        palette.setColor(QPalette.Text, QColor("#D4D4D4"))
-        palette.setColor(QPalette.Button, QColor("#101113"))
-        palette.setColor(QPalette.ButtonText, QColor("#D4D4D4"))
-        palette.setColor(QPalette.BrightText, QColor("#ffffff"))
-        palette.setColor(QPalette.Highlight, QColor("#264F78"))  # Selection background
-        palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-        palette.setColor(QPalette.Link, QColor("#569CD6"))
-        palette.setColor(QPalette.LinkVisited, QColor("#C586C0"))
+        palette.setColor(QPalette.AlternateBase, QColor(palette_def.get("alternate_base", "#15171a")))
+        palette.setColor(QPalette.ToolTipBase, QColor(palette_def.get("tool_tip_base", "#101113")))
+        palette.setColor(QPalette.ToolTipText, QColor(palette_def.get("tool_tip_text", "#D4D4D4")))
+        palette.setColor(QPalette.Text, QColor(palette_def.get("text", "#D4D4D4")))
+        palette.setColor(QPalette.Button, QColor(palette_def.get("button", "#101113")))
+        palette.setColor(QPalette.ButtonText, QColor(palette_def.get("button_text", "#D4D4D4")))
+        palette.setColor(QPalette.BrightText, QColor(palette_def.get("bright_text", "#ffffff")))
+        palette.setColor(QPalette.Highlight, QColor(palette_def.get("highlight", "#264F78")))
+        palette.setColor(QPalette.HighlightedText, QColor(palette_def.get("highlighted_text", "#ffffff")))
+        palette.setColor(QPalette.Link, QColor(palette_def.get("link", "#569CD6")))
+        palette.setColor(QPalette.LinkVisited, QColor(palette_def.get("link_visited", "#C586C0")))
         # Used for gutter divider etc
-        palette.setColor(QPalette.Dark, QColor("#0d0e10"))
+        palette.setColor(QPalette.Dark, QColor(palette_def.get("dark", "#0d0e10")))
         return palette
 
     def _preferred_font(self) -> QFont:
@@ -99,7 +189,7 @@ class ThemeManager:
 
     def _load_syntax_colors(self) -> dict[str, QColor]:
         theme_path = Path(__file__).resolve().parent.parent / "settings" / "default_theme.json"
-        if theme_path.exists():
+        if self.theme_name == self.DEFAULT_THEME and theme_path.exists():
             try:
                 data = json.loads(theme_path.read_text(encoding="utf-8"))
                 syntax = data.get("syntax", {}) if isinstance(data, dict) else {}
@@ -109,22 +199,5 @@ class ThemeManager:
         return self._default_syntax_colors()
 
     def _default_syntax_colors(self) -> dict[str, QColor]:
-        # VS Code Dark+ theme syntax colors
-        return {
-            "keyword": QColor("#569CD6"),  # Keywords (if, return, import, etc)
-            "string": QColor("#CE9178"),   # Strings (single, double, f-strings, docstrings)
-            "comment": QColor("#6A9955"),  # Comments
-            "number": QColor("#B5CEA8"),   # Numbers
-            "builtin": QColor("#4EC9B0"),  # Builtins / types (list, dict, type names)
-            "definition": QColor("#9CDCFE"), # Variables / identifiers
-            "function": QColor("#DCDCAA"),   # Function names
-            "class": QColor("#4EC9B0"),      # Class names
-            "import": QColor("#C586C0"),     # Import statements
-            "literal": QColor("#B5CEA8"),    # Literals (number literals, custom literals)
-            "dunder": QColor("#4EC9B0"),     # Dunder methods
-            "typehint": QColor("#4EC9B0"),   # Type hints
-            "decorator": QColor("#C586C0"),  # Decorators (@something)
-            "operator": QColor("#D4D4D4"),   # Operators (default foreground)
-            "variable": QColor("#9CDCFE"),   # Variables
-            "constant": QColor("#4FC1FF"),   # Constants / enum members
-        }
+        syntax = self._theme_definition().get("syntax", {})
+        return {key: QColor(value) for key, value in syntax.items()}
