@@ -1165,7 +1165,11 @@ class CodeEditor(QPlainTextEdit):
         if not self.isReadOnly():
             selection = QTextEdit.ExtraSelection()
             # VS Code Dark+ current line highlight color - subtle background overlay
-            line_color = QColor(0x2A, 0x2D, 0x2E)  # #2A2D2E
+            line_color = (
+                self.theme.editor_color("current_line")
+                if self.theme
+                else QColor(0x2A, 0x2D, 0x2E)
+            )
             selection.format.setBackground(line_color)
             selection.format.setProperty(QTextFormat.FullWidthSelection, True)
             selection.cursor = self.textCursor()
@@ -1244,7 +1248,12 @@ class CodeEditor(QPlainTextEdit):
         cursor.setPosition(position)
         cursor.setPosition(position + 1, QTextCursor.KeepAnchor)
         selection.cursor = cursor
-        selection.format.setBackground(QColor(80, 120, 200, 120))
+        color = (
+            self.theme.editor_color("bracket_match")
+            if self.theme
+            else QColor(80, 120, 200, 120)
+        )
+        selection.format.setBackground(color)
         return selection
 
     def _block_and_column(self, position: int) -> tuple[int, int]:
@@ -1258,7 +1267,12 @@ class CodeEditor(QPlainTextEdit):
             sel = QTextEdit.ExtraSelection()
             sel.cursor = cursor
             sel.format.setProperty(QTextFormat.FullWidthSelection, True)
-            sel.format.setBackground(QColor(90, 90, 120, 80))
+            color = (
+                self.theme.editor_color("multi_cursor")
+                if self.theme
+                else QColor(90, 90, 120, 80)
+            )
+            sel.format.setBackground(color)
             selections.append(sel)
         return selections
 
