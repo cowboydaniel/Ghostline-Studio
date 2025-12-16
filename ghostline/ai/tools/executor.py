@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import logging
 import subprocess
 import sys
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Iterable, List
@@ -89,6 +90,14 @@ class ToolExecutor:
         rate_limit_error = self._check_rate_limit()
         if rate_limit_error:
             result = ToolResult(tool_name, rate_limit_error)
+            self._record_history(tool_name, args, result)
+            return result
+
+        validation_error = self._validate_required_args(
+            self.allowed_tools[tool_name], args
+        )
+        if validation_error:
+            result = ToolResult(tool_name, validation_error)
             self._record_history(tool_name, args, result)
             return result
 
@@ -480,6 +489,25 @@ class ToolExecutor:
         self.call_history.append(entry)
 
         self._log_if_error(tool_name, sanitized_args, result)
+
+    def _validate_required_args(
+        self, tool: Callable[..., Any], args: Dict[str, Any]
+    ) -> str | None:
+        """Ensure required parameters are provided before invoking a tool."""
+
+        signature = inspect.signature(tool)
+        missing: list[str] = []
+        for name, param in signature.parameters.items():
+            if param.kind in {param.VAR_POSITIONAL, param.VAR_KEYWORD}:
+                continue
+            if param.default is param.empty and name not in args:
+                missing.append(name)
+
+        if missing:
+            joined = ", ".join(missing)
+            return f"Error: Missing required parameter(s) for {tool.__name__}: {joined}"
+
+        return None
 
     def _log_if_error(self, tool_name: str, args: Dict[str, Any], result: ToolResult | None) -> None:
         if not result:
