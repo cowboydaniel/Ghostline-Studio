@@ -1599,7 +1599,11 @@ class _AgenticRequestWorker(QObject):
                     accumulated = event.text or accumulated
             self.finished.emit(self.prompt, accumulated)
         except Exception as exc:  # noqa: BLE001
-            self.failed.emit(str(exc))
+            import logging
+            import traceback
+
+            logging.exception("Agentic request failed", exc_info=exc)
+            self.failed.emit(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
 
 
 class AIChatPanel(QWidget):
@@ -2530,14 +2534,15 @@ class AIChatPanel(QWidget):
     def _on_worker_finished(self, prompt: str, text: str) -> None:
         if not self._active_thread or not self._active_worker:
             return
+        final_text = text or self._active_response_text
         if self._active_response_card:
-            self._active_response_card.set_text(text)
+            self._active_response_card.set_text(final_text)
         else:
-            self._append("AI", text, context=self._last_chunks)
-        self._current_messages.append(ChatMessage("AI", text, list(self._last_chunks)))
-        self._active_response_text = text
+            self._append("AI", final_text, context=self._last_chunks)
+        self._current_messages.append(ChatMessage("AI", final_text, list(self._last_chunks)))
+        self._active_response_text = final_text
         if self.command_adapter:
-            self.command_adapter.handle_response(text)
+            self.command_adapter.handle_response(final_text)
         self._cleanup_thread(self._active_thread, self._active_worker)
         self._set_busy(False)
         self.input.clear()
@@ -2548,6 +2553,8 @@ class AIChatPanel(QWidget):
     def _on_worker_failed(self, error: str) -> None:
         if not self._active_thread or not self._active_worker:
             return
+        logger = logging.getLogger(__name__)
+        logger.error("Agentic worker failed: %s", error)
         message = f"Error: {error}"
         if self._active_response_card:
             self._active_response_card.set_text(message)

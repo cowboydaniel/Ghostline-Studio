@@ -78,6 +78,8 @@ class AgenticClient:
 
             tool_calls_payload: List[Dict[str, Any]] = []
             for call in pending_calls:
+                if not call.name:
+                    continue
                 tool_calls_payload.append(
                     {
                         "id": call.call_id,
@@ -92,6 +94,8 @@ class AgenticClient:
                 conversation.append(assistant_message)
 
             for call in pending_calls:
+                if not call.name:
+                    continue
                 if approval_callback and not approval_callback(call):
                     continue
 

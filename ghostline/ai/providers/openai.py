@@ -77,7 +77,7 @@ class OpenAIProvider:
             for call in tool_calls:
                 call_id = getattr(call, "id", None) or str(getattr(call, "index", len(pending_calls)))
                 function = getattr(call, "function", None)
-                name = getattr(function, "name", "") if function else ""
+                name = getattr(function, "name", None) or ""
                 arguments_chunk = getattr(function, "arguments", "") if function else ""
                 call_state = pending_calls.setdefault(call_id, {"id": call_id, "name": name, "arguments": ""})
                 if name:
@@ -90,6 +90,9 @@ class OpenAIProvider:
                 parsed_args = json.loads(data.get("arguments") or "{}")
             except json.JSONDecodeError:
                 parsed_args = {"raw": data.get("arguments", "")}
-            yield ToolCallEvent(call_id=data.get("id", ""), name=data.get("name", ""), arguments=parsed_args)
+            name = data.get("name") or ""
+            if not name:
+                continue
+            yield ToolCallEvent(call_id=data.get("id", ""), name=name, arguments=parsed_args)
 
         yield DoneEvent(text="".join(accumulated_text), stop_reason=finish_reason)
