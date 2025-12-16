@@ -31,10 +31,26 @@ def create_highlighting(
     normalized = (language or "python").lower()
     semantic_provider = SemanticTokenProvider(normalized, theme=theme)
 
-    # Lazy import to avoid circular dependency when CodeEditor pulls the factory.
+    # Lazy imports to avoid circular dependency when CodeEditor pulls the factory.
     from ghostline.editor.code_editor import PythonHighlighter
+    from ghostline.editor.highlighting.base import (
+        CCppHighlighter,
+        JavaHighlighter,
+        RustHighlighter,
+        TypeScriptHighlighter,
+    )
 
-    highlighter = PythonHighlighter(
+    mapping = {
+        "python": PythonHighlighter,
+        "typescript": TypeScriptHighlighter,
+        "javascript": TypeScriptHighlighter,
+        "c_cpp": CCppHighlighter,
+        "java": JavaHighlighter,
+        "rust": RustHighlighter,
+    }
+
+    highlighter_cls = mapping.get(normalized, PythonHighlighter)
+    highlighter = highlighter_cls(
         document,
         theme,
         token_provider=semantic_provider,
