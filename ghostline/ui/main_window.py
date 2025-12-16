@@ -74,6 +74,7 @@ from ghostline.ui.layout_manager import LayoutManager
 from ghostline.ui.editor.split_area import SplitEditorArea
 from ghostline.ui.workspace_dashboard import WorkspaceDashboard
 from ghostline.ui.welcome_portal import WelcomePortal
+from ghostline.ui.widgets.ghost_terminal import GhostTerminalWidget
 from ghostline.visual3d.architecture_dock import ArchitectureDock
 from ghostline.ui.docks.build_panel import BuildPanel
 from ghostline.ui.docks.agent_console import AgentConsole
@@ -1162,6 +1163,10 @@ class MainWindow(QMainWindow):
         self.action_about = QAction("About Ghostline Studio", self)
         self.action_about.triggered.connect(self._show_about)
 
+        self.action_ghost_terminal = QAction("Ghost Terminal...", self)
+        self.action_ghost_terminal.setVisible(False)
+        self.action_ghost_terminal.triggered.connect(self._open_ghost_terminal)
+
     def _create_menus(self) -> None:
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
@@ -1229,6 +1234,9 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self.action_docs)
         help_menu.addAction(self.action_report_issue)
         help_menu.addAction(self.action_about)
+        # Hidden easter egg: hold Shift while opening the Help menu to reveal Ghost Terminal.
+        help_menu.aboutToShow.connect(self._on_help_menu_about_to_show)
+        help_menu.addAction(self.action_ghost_terminal)
 
     def _search_workspace_files(self, query: str):
         workspace = self.workspace_manager.current_workspace
@@ -2129,6 +2137,26 @@ class MainWindow(QMainWindow):
             cursor.movePosition(cursor.Start)
             cursor.movePosition(cursor.Down, cursor.MoveAnchor, line)
             editor.setTextCursor(cursor)
+
+    def _on_help_menu_about_to_show(self) -> None:
+        reveal_easter_egg = QApplication.keyboardModifiers() & Qt.ShiftModifier
+        self.action_ghost_terminal.setVisible(bool(reveal_easter_egg))
+
+    def _open_ghost_terminal(self) -> None:
+        if not hasattr(self, "_ghost_terminal_dialog"):
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Ghost Terminal")
+            layout = QVBoxLayout(dialog)
+            self._ghost_terminal_widget = GhostTerminalWidget(dialog)
+            layout.addWidget(self._ghost_terminal_widget)
+            dialog.setLayout(layout)
+            dialog.resize(480, 320)
+            self._ghost_terminal_dialog = dialog
+
+        self._ghost_terminal_dialog.show()
+        self._ghost_terminal_dialog.raise_()
+        self._ghost_terminal_dialog.activateWindow()
+        self._ghost_terminal_widget.reset_game()
 
     def _show_about(self) -> None:
         QMessageBox.information(
