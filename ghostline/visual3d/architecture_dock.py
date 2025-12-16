@@ -114,6 +114,10 @@ class ArchitectureDock(QDockWidget):
         self.scene.layout_changed.connect(self._on_layout_changed)
         self.scene.animation_finished.connect(self._on_animation_finished)
 
+        # Connect camera control buttons (deferred until self.scene exists)
+        self.reset_btn.clicked.connect(self.scene.reset_view)
+        self.fit_btn.clicked.connect(self.scene.zoom_to_fit)
+
     def _create_layout_controls(self) -> QWidget:
         """Create layout algorithm selector."""
         group = QWidget(self)
@@ -198,16 +202,14 @@ class ArchitectureDock(QDockWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        # Reset camera button
+        # Reset camera button (signal connected later after self.scene is created)
         self.reset_btn = QPushButton("Reset", self)
         self.reset_btn.setToolTip("Reset camera to default position")
-        self.reset_btn.clicked.connect(self.scene.reset_view)
         layout.addWidget(self.reset_btn)
 
-        # Fit to view button
+        # Fit to view button (signal connected later after self.scene is created)
         self.fit_btn = QPushButton("Fit", self)
         self.fit_btn.setToolTip("Fit all nodes in view")
-        self.fit_btn.clicked.connect(self.scene.zoom_to_fit)
         layout.addWidget(self.fit_btn)
 
         # Export button with menu
