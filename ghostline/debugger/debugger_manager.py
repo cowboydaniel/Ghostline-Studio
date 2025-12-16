@@ -30,8 +30,30 @@ class DebuggerManager(QObject):
         self.logger = get_logger(__name__)
         self.runtime_inspector: RuntimeInspector | None = None
 
+        # Register cleanup handler for subprocess cleanup
+        import atexit
+        atexit.register(self._cleanup_process)
+
     def set_runtime_inspector(self, inspector: RuntimeInspector) -> None:
         self.runtime_inspector = inspector
+
+    def _cleanup_process(self) -> None:
+        """Cleanup debugger subprocess to prevent resource leaks."""
+        if self.process and self.process.poll() is None:
+            try:
+                self.logger.info("Terminating debugger process (PID: %s)", self.process.pid)
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=3)
+                    self.logger.info("Debugger process terminated gracefully")
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("Debugger process did not terminate, killing it")
+                    self.process.kill()
+                    self.process.wait()
+            except Exception as exc:
+                self.logger.error("Failed to cleanup debugger process: %s", exc)
+            finally:
+                self.process = None
 
     def launch(self, script: str, args: Iterable[str] | None = None) -> None:
         command = [sys.executable, "-m", "debugpy", "--listen", "5678", script]
@@ -53,10 +75,10 @@ class DebuggerManager(QObject):
             self.output.emit("debugpy not available. Install with `pip install debugpy`.")
 
     def stop(self) -> None:
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-            self.state_changed.emit("stopped")
-            self.output.emit("Debug session terminated")
+        """Stop the debugger session cleanly."""
+        self._cleanup_process()
+        self.state_changed.emit("stopped")
+        self.output.emit("Debug session terminated")
 
     def pause(self) -> None:
         # Placeholder hook for future DAP integration.

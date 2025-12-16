@@ -85,13 +85,28 @@ class LSPClient(QObject):
         self.started.emit()
 
     def _on_ready_read(self) -> None:
-        self._buffer += bytes(self.process.readAllStandardOutput())
-        while True:
-            message, rest = self._extract_message(self._buffer)
-            if message is None:
-                break
-            self._buffer = rest
-            self._handle_message(message)
+        """Handle incoming data from LSP process with safety checks."""
+        # Validate process is still valid and running
+        if not isValid(self.process):
+            logger.warning("Received data from invalid LSP process")
+            return
+
+        if self.process.state() != QProcess.Running:
+            logger.debug("Received data from non-running LSP process")
+            return
+
+        try:
+            data = bytes(self.process.readAllStandardOutput())
+            self._buffer += data
+
+            while True:
+                message, rest = self._extract_message(self._buffer)
+                if message is None:
+                    break
+                self._buffer = rest
+                self._handle_message(message)
+        except Exception:
+            logger.exception("Error reading LSP output")
 
     def _extract_message(self, data: bytes) -> tuple[dict[str, Any] | None, bytes]:
         header_end = data.find(b"\r\n\r\n")

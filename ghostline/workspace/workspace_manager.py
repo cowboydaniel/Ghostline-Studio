@@ -14,7 +14,27 @@ class WorkspaceManager:
         self.recent_items: list[str] = self._load_recents()
 
     def open_workspace(self, folder: str | Path) -> None:
-        path = Path(folder)
+        """Open a workspace with path validation to prevent path traversal attacks."""
+        # Resolve to absolute path to prevent traversal
+        path = Path(folder).resolve()
+
+        # Validate the path exists and is a directory
+        if not path.exists():
+            raise ValueError(f"Workspace path does not exist: {path}")
+
+        if not path.is_dir():
+            raise ValueError(f"Workspace path is not a directory: {path}")
+
+        # Optional: Additional security - ensure path doesn't contain suspicious patterns
+        # This helps prevent accidental or malicious access to sensitive directories
+        path_str = str(path)
+        if any(suspicious in path_str for suspicious in ['/etc/', '/sys/', '/proc/', '/dev/']):
+            # Log warning but allow if user explicitly wants system directories
+            import logging
+            logging.getLogger(__name__).warning(
+                "Opening system directory as workspace: %s. This may pose security risks.", path
+            )
+
         self.current_workspace = path
         self.register_recent(str(path))
 

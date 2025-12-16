@@ -56,24 +56,56 @@ class SemanticIndexManager:
         self._notify(path)
 
     def _index_file(self, path: Path) -> None:
-        try:
-            content = path.read_text(encoding="utf-8")
-        except OSError:
-            logger.warning("Failed to read %s", path)
+        """Index a file with fallback encoding support."""
+        content = None
+        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']
+
+        for encoding in encodings:
+            try:
+                content = path.read_text(encoding=encoding)
+                if encoding != 'utf-8':
+                    logger.info("Indexed %s using %s encoding", path, encoding)
+                break
+            except (OSError, UnicodeDecodeError):
+                continue
+
+        if content is None:
+            logger.warning("Failed to read %s with any supported encoding", path)
             return
+
         try:
             tree = ast.parse(content)
         except SyntaxError:
             logger.debug("Skipping non-parseable file %s", path)
             return
+
         visitor = _ASTVisitor(path, self.graph)
         visitor.visit(tree)
 
     def _remove_file(self, path: Path) -> None:
+        """Remove all nodes and edges associated with a file."""
         nodes_to_remove = [node for node in self.graph.nodes() if node.file == path]
+
+        if not nodes_to_remove:
+            return
+
+        # Remove nodes (accessing private attribute, but necessary for cleanup)
         for node in nodes_to_remove:
             self.graph._nodes.discard(node)
-        self.graph._edges = {edge for edge in self.graph.edges() if edge.source.file != path and edge.target.file != path}
+
+        # Remove edges associated with this file
+        edges_to_remove = [
+            edge for edge in self.graph.edges()
+            if edge.source.file == path or edge.target.file == path
+        ]
+        for edge in edges_to_remove:
+            self.graph._edges.discard(edge)
+
+        logger.info("Removed %d nodes and %d edges for %s",
+                    len(nodes_to_remove), len(edges_to_remove), path)
+
+        # Notify observers about removal
+        self._notify(path)
 
     def recent_paths(self) -> list[Path]:
         """Return recently indexed paths for UI and AI consumers."""

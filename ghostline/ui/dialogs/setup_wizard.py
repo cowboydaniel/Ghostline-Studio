@@ -51,6 +51,7 @@ class SetupWizardDialog(QDialog):
         self._openai_valid = False
         self._ollama_available = False
         self._ollama_models: list[str] = []
+        self._active_processes: list[subprocess.Popen] = []  # Track subprocesses for cleanup
 
         layout = QVBoxLayout(self)
         self.stack = QStackedLayout()
@@ -375,22 +376,28 @@ class SetupWizardDialog(QDialog):
             stderr=subprocess.STDOUT,
             text=True,
         )
+        self._active_processes.append(process)  # Track for cleanup
 
         def monitor() -> None:
-            assert process.stdout
-            for line in process.stdout:
-                cleaned = line.strip()
-                if cleaned:
-                    QTimer.singleShot(0, lambda txt=cleaned: self.ollama_logs.append(txt))
-            process.wait()
-            if process.returncode == 0:
-                QTimer.singleShot(0, lambda: self.ollama_logs.append(f"{model} ready."))
-                self.ollama_status_changed.emit(f"Ollama ready with {model}.")
-                QTimer.singleShot(200, self._refresh_ollama_models)
-            else:
-                QTimer.singleShot(0, lambda: self.ollama_logs.append(f"Failed to pull {model}."))
-            QTimer.singleShot(200, lambda: self.pull_model_btn.setEnabled(True))
-            QTimer.singleShot(200, lambda: self.ollama_model_combo.setEnabled(True))
+            try:
+                assert process.stdout
+                for line in process.stdout:
+                    cleaned = line.strip()
+                    if cleaned:
+                        QTimer.singleShot(0, lambda txt=cleaned: self.ollama_logs.append(txt))
+                process.wait()
+                if process.returncode == 0:
+                    QTimer.singleShot(0, lambda: self.ollama_logs.append(f"{model} ready."))
+                    self.ollama_status_changed.emit(f"Ollama ready with {model}.")
+                    QTimer.singleShot(200, self._refresh_ollama_models)
+                else:
+                    QTimer.singleShot(0, lambda: self.ollama_logs.append(f"Failed to pull {model}."))
+                QTimer.singleShot(200, lambda: self.pull_model_btn.setEnabled(True))
+                QTimer.singleShot(200, lambda: self.ollama_model_combo.setEnabled(True))
+            finally:
+                # Remove from active processes list when complete
+                if process in self._active_processes:
+                    self._active_processes.remove(process)
 
         threading.Thread(target=monitor, daemon=True).start()
 
@@ -406,17 +413,23 @@ class SetupWizardDialog(QDialog):
                 stderr=subprocess.STDOUT,
                 text=True,
             )
+            self._active_processes.append(process)  # Track for cleanup
 
             def monitor_install() -> None:
-                assert process.stdout
-                for line in process.stdout:
-                    cleaned = line.strip()
-                    if cleaned:
-                        QTimer.singleShot(0, lambda txt=cleaned: self.ollama_logs.append(txt))
-                process.wait()
-                QTimer.singleShot(0, lambda: self.install_ollama_btn.setEnabled(True))
-                QTimer.singleShot(0, lambda: self.refresh_ollama_btn.setEnabled(True))
-                QTimer.singleShot(500, self._check_ollama)
+                try:
+                    assert process.stdout
+                    for line in process.stdout:
+                        cleaned = line.strip()
+                        if cleaned:
+                            QTimer.singleShot(0, lambda txt=cleaned: self.ollama_logs.append(txt))
+                    process.wait()
+                    QTimer.singleShot(0, lambda: self.install_ollama_btn.setEnabled(True))
+                    QTimer.singleShot(0, lambda: self.refresh_ollama_btn.setEnabled(True))
+                    QTimer.singleShot(500, self._check_ollama)
+                finally:
+                    # Remove from active processes list when complete
+                    if process in self._active_processes:
+                        self._active_processes.remove(process)
 
             threading.Thread(target=monitor_install, daemon=True).start()
             return
@@ -476,4 +489,20 @@ class SetupWizardDialog(QDialog):
     # Utilities for embedding
     def selected_settings(self) -> tuple[str, str]:
         return self.selected_backend, self.openai_model.currentText() if self.selected_backend == "openai" else self.ollama_model_combo.currentText()
+
+    def closeEvent(self, event) -> None:
+        """Clean up active subprocesses when dialog closes."""
+        for process in list(self._active_processes):
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                except Exception:
+                    pass  # Ignore errors during cleanup
+        self._active_processes.clear()
+        super().closeEvent(event)
 

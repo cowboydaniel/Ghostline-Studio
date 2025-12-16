@@ -42,6 +42,7 @@ class AISettingsDialog(QDialog):
         self.setWindowTitle("AI Settings")
         self._openai_models: list[ModelDescriptor] = self.registry.openai_models()
         self._model_checkboxes: dict[str, QCheckBox] = {}
+        self._active_processes: list[subprocess.Popen] = []  # Track subprocesses for cleanup
 
         layout = QVBoxLayout(self)
         scroll_area = QScrollArea(self)
@@ -516,19 +517,25 @@ class AISettingsDialog(QDialog):
             return
         self.ollama_logs.append(f"Pulling {model}...")
         process = subprocess.Popen(["ollama", "pull", model], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self._active_processes.append(process)  # Track for cleanup
 
         def monitor() -> None:
-            assert process.stdout
-            for line in process.stdout:
-                cleaned = line.strip()
-                if cleaned:
-                    QTimer.singleShot(0, lambda txt=cleaned: self.ollama_logs.append(txt))
-            process.wait()
-            if process.returncode == 0:
-                QTimer.singleShot(0, lambda: self.ollama_logs.append(f"{model} ready."))
-                QTimer.singleShot(200, self._refresh_ollama_models)
-            else:
-                QTimer.singleShot(0, lambda: self.ollama_logs.append("Pull failed."))
+            try:
+                assert process.stdout
+                for line in process.stdout:
+                    cleaned = line.strip()
+                    if cleaned:
+                        QTimer.singleShot(0, lambda txt=cleaned: self.ollama_logs.append(txt))
+                process.wait()
+                if process.returncode == 0:
+                    QTimer.singleShot(0, lambda: self.ollama_logs.append(f"{model} ready."))
+                    QTimer.singleShot(200, self._refresh_ollama_models)
+                else:
+                    QTimer.singleShot(0, lambda: self.ollama_logs.append("Pull failed."))
+            finally:
+                # Remove from active processes list when complete
+                if process in self._active_processes:
+                    self._active_processes.remove(process)
 
         threading.Thread(target=monitor, daemon=True).start()
 
@@ -582,4 +589,20 @@ class AISettingsDialog(QDialog):
             ).to_dict()
         self.config.save()
         self.accept()
+
+    def closeEvent(self, event) -> None:
+        """Clean up active subprocesses when dialog closes."""
+        for process in list(self._active_processes):
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                except Exception:
+                    pass  # Ignore errors during cleanup
+        self._active_processes.clear()
+        super().closeEvent(event)
 
