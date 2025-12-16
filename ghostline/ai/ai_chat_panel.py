@@ -6,7 +6,7 @@ from datetime import datetime
 import re
 import threading
 from pathlib import Path
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize, QPoint, QTimer
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize, QPoint, QTimer, QTime
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -1111,66 +1111,161 @@ class _MessageCard(QWidget):
             self._content_layout.addWidget(body)
 
         # Schedule resize after Qt has processed the new layout
-        self._schedule_resize()
+        self._schedule_resize(is_final=True)
 
-    def _schedule_resize(self) -> None:
-        # Throttle to avoid murdering the UI during token streaming
+    def _schedule_resize(self, is_final: bool = False) -> None:
+        # During streaming, only schedule updates every 50ms to reduce jitter
+        current_time = int(QTime.currentTime().msecsSinceStartOfDay())
         if not self._resize_timer.isActive():
-            self._resize_timer.start(0)  # next event loop tick
+            # Disconnect any existing connections to prevent duplicates
+            try:
+                self._resize_timer.timeout.disconnect()
+            except RuntimeError:
+                pass
+                
+            # Connect the appropriate handler
+            if is_final:
+                self._resize_timer.timeout.connect(
+                    lambda: self._update_list_item_size(True), 
+                    Qt.QueuedConnection
+                )
+            else:
+                self._resize_timer.timeout.connect(
+                    lambda: self._update_list_item_size(False),
+                    Qt.QueuedConnection
+                )
+            
+            # Use a slightly longer delay during streaming to reduce jitter
+            delay = 50 if is_final else 100
+            self._resize_timer.start(delay)
 
-    def _update_list_item_size(self) -> None:
+    def _update_list_item_size(self, is_final: bool = False) -> None:
         if self._list_item is None:
             return
+            
         list_widget = self._list_item.listWidget()
         if list_widget is None:
             return
 
+        # Get available width from list widget
         available_width = max(240, list_widget.viewport().width() - 20)
-        self.setFixedWidth(available_width)
-
+        
+        # Only update widths if they've changed
+        if self.width() != available_width:
+            self.setFixedWidth(available_width)
+        
+        # Calculate bubble width with appropriate max width
         bubble_cap = 400 if self._is_user else 600
         bubble_width = min(available_width, bubble_cap)
-        self._bubble.setFixedWidth(bubble_width)
-
-        # Force child widgets to wrap at the bubble's *inner* width
+        
+        # Only update bubble width if it's changed
+        if self._bubble.width() != bubble_width:
+            self._bubble.setFixedWidth(bubble_width)
+        
+        # Calculate inner width for content
         bubble_layout = self._bubble.layout()
-        if bubble_layout is not None:
-            m = bubble_layout.contentsMargins()
-            inner_width = max(80, bubble_width - (m.left() + m.right()))
-        else:
-            inner_width = max(80, bubble_width - 24)
+        m = bubble_layout.contentsMargins() if bubble_layout else None
+        inner_width = max(80, bubble_width - (m.left() + m.right() + 4) if m else bubble_width - 24)
 
-        # Apply width constraints to content widgets so their heightForWidth works
-        for i in range(self._content_layout.count()):
-            item = self._content_layout.itemAt(i)
-            w = item.widget()
-            if w is None:
-                continue
+        # Only update content during final pass or if we haven't set a width yet
+        needs_full_update = is_final or not hasattr(self, '_last_inner_width')
+        
+        if needs_full_update or inner_width != getattr(self, '_last_inner_width', None):
+            # Update all child widgets
+            for i in range(self._content_layout.count()):
+                item = self._content_layout.itemAt(i)
+                if not item or not item.widget():
+                    continue
+                    
+                w = item.widget()
+                if isinstance(w, QLabel):
+                    if w.width() != inner_width:
+                        w.setFixedWidth(inner_width)
+                        w.adjustSize()
+                elif isinstance(w, QTextEdit):
+                    if w.width() != inner_width:
+                        w.setFixedWidth(inner_width)
+                        doc = w.document()
+                        doc.setTextWidth(inner_width)
+                        h = int(doc.size().height()) + 12
+                        w.setFixedHeight(max(h, 40))
 
-            if isinstance(w, QLabel):
-                w.setFixedWidth(inner_width)
-            elif isinstance(w, QTextEdit):
-                w.setFixedWidth(inner_width)
-                # Recompute doc height for code blocks
-                doc = w.document()
-                doc.setTextWidth(max(1, w.viewport().width()))
-                h = int(doc.size().height()) + 12
-                w.setFixedHeight(max(h, 40))
-
-        # Now recompute geometry properly
-        if bubble_layout:
-            bubble_layout.activate()
-        if self.layout():
-            self.layout().activate()
-
-        self._bubble.adjustSize()
-        self.adjustSize()
-
-        height = self.sizeHint().height()
-        self._list_item.setSizeHint(QSize(available_width, height + 8))
-
-        list_widget.doItemsLayout()
-        list_widget.scrollToBottom()
+            self._last_inner_width = inner_width
+        
+        # Only do full layout updates during final pass
+        if is_final:
+            if bubble_layout:
+                bubble_layout.activate()
+            if self.layout():
+                self.layout().activate()
+        
+        # Calculate size hint
+        hint = self.sizeHint()
+        new_height = hint.height()
+        
+        # Only update if height changed significantly (more than 1px)
+        current_hint = self._list_item.sizeHint()
+        if (not current_hint.isValid() or 
+            abs(current_hint.height() - (new_height + 8)) > 1 or
+            current_hint.width() != available_width):
+            
+            self._list_item.setSizeHint(QSize(available_width, new_height + 8))
+            
+            # Only force full layout during final pass
+            if is_final:
+                list_widget.doItemsLayout()
+                QTimer.singleShot(50, self._finalize_resize)
+            else:
+                # During streaming, just update this item
+                list_widget.updateGeometry()
+                
+        # Always scroll to bottom during streaming
+        if not is_final:
+            list_widget.scrollToBottom()
+            
+    def _finalize_resize(self) -> None:
+        """Final resize pass to ensure everything is properly sized."""
+        if not self._list_item:
+            return
+            
+        list_widget = self._list_item.listWidget()
+        if not list_widget or not list_widget.isVisible():
+            return
+            
+        try:
+            # Update geometry
+            self.updateGeometry()
+            
+            # Calculate final size hint
+            hint = self.sizeHint()
+            available_width = max(240, list_widget.viewport().width() - 20)
+            
+            # Set the final size hint
+            self._list_item.setSizeHint(QSize(available_width, hint.height() + 8))
+            
+            # Force a full layout update
+            list_widget.setUpdatesEnabled(False)
+            list_widget.doItemsLayout()
+            list_widget.setUpdatesEnabled(True)
+            
+            # Ensure we're scrolled to the bottom
+            list_widget.scrollToBottom()
+            
+            # One more update after a short delay to catch any remaining layout issues
+            QTimer.singleShot(100, lambda: self._ensure_final_layout())
+            
+        except RuntimeError:
+            # Widget might have been deleted
+            pass
+            
+    def _ensure_final_layout(self) -> None:
+        """One last check to ensure layout is correct."""
+        try:
+            if self._list_item and self._list_item.listWidget():
+                self._list_item.listWidget().doItemsLayout()
+                self._list_item.listWidget().scrollToBottom()
+        except RuntimeError:
+            pass
 
 
     def sizeHint(self) -> QSize:
@@ -2259,7 +2354,8 @@ class AIChatPanel(QWidget):
         item.setSizeHint(card.sizeHint())
         self.transcript_list.addItem(item)
         self.transcript_list.setItemWidget(item, card)
-        card._schedule_resize()
+        # Schedule initial resize with a small delay
+        QTimer.singleShot(100, lambda: card._schedule_resize(is_final=True))
         self.transcript_stack.setCurrentWidget(self.transcript_list)
         # Scroll to bottom to show newest message
         self.transcript_list.scrollToBottom()
@@ -2645,7 +2741,8 @@ class AIChatPanel(QWidget):
         item.setSizeHint(card.sizeHint())
         self.transcript_list.addItem(item)
         self.transcript_list.setItemWidget(item, card)
-        card._schedule_resize()
+        # Schedule initial resize with a small delay
+        QTimer.singleShot(100, lambda: card._schedule_resize(is_final=True))
         # Scroll to bottom to show newest message
         self.transcript_list.scrollToBottom()
         return card
