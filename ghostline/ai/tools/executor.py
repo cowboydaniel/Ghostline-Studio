@@ -93,11 +93,16 @@ class ToolExecutor:
             self._record_history(tool_name, args, result)
             return result
 
-        validation_error = self._validate_required_args(
+        validation_error, missing_params = self._validate_required_args(
             self.allowed_tools[tool_name], args
         )
         if validation_error:
-            result = ToolResult(tool_name, validation_error)
+            sanitized_args = self._sanitize_args(args)
+            metadata = {
+                "missing_parameters": missing_params,
+                "provided_args": sanitized_args,
+            }
+            result = ToolResult(tool_name, validation_error, metadata)
             self._record_history(tool_name, args, result)
             return result
 
@@ -471,12 +476,7 @@ class ToolExecutor:
             self.call_timestamps.popleft()
 
     def _record_history(self, tool_name: str, args: Dict[str, Any], result: ToolResult | None) -> None:
-        sanitized_args = {}
-        for key, value in args.items():
-            if isinstance(value, str) and len(value) > 200:
-                sanitized_args[key] = value[:200] + "..."
-            else:
-                sanitized_args[key] = value
+        sanitized_args = self._sanitize_args(args)
 
         entry = {
             "tool": tool_name,
@@ -492,7 +492,7 @@ class ToolExecutor:
 
     def _validate_required_args(
         self, tool: Callable[..., Any], args: Dict[str, Any]
-    ) -> str | None:
+    ) -> tuple[str | None, list[str]]:
         """Ensure required parameters are provided before invoking a tool."""
 
         signature = inspect.signature(tool)
@@ -507,9 +507,21 @@ class ToolExecutor:
 
         if missing:
             joined = ", ".join(missing)
-            return f"Error: Missing required parameter(s) for {tool.__name__}: {joined}"
+            return (
+                f"Error: Missing required parameter(s) for {tool.__name__}: {joined}",
+                missing,
+            )
 
-        return None
+        return None, []
+
+    def _sanitize_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        sanitized_args: Dict[str, Any] = {}
+        for key, value in args.items():
+            if isinstance(value, str) and len(value) > 200:
+                sanitized_args[key] = value[:200] + "..."
+            else:
+                sanitized_args[key] = value
+        return sanitized_args
 
     def _log_if_error(self, tool_name: str, args: Dict[str, Any], result: ToolResult | None) -> None:
         if not result:
