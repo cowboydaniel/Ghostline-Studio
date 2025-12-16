@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex, QSize
-from PySide6.QtGui import QAction, QDesktopServices, QIcon
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -297,6 +297,20 @@ class GhostlineTitleBar(QWidget):
 
 class MainWindow(QMainWindow):
     """Hosts docks, tabs, and menus."""
+
+    konami_sequence = [
+        Qt.Key_Up,
+        Qt.Key_Up,
+        Qt.Key_Down,
+        Qt.Key_Down,
+        Qt.Key_Left,
+        Qt.Key_Right,
+        Qt.Key_Left,
+        Qt.Key_Right,
+        Qt.Key_B,
+        Qt.Key_A,
+    ]
+    konami_index: int = 0
 
     def __init__(
         self, config: ConfigManager, theme: ThemeManager, workspace_manager: WorkspaceManager
@@ -1812,6 +1826,27 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange and hasattr(self, "title_bar"):
             self.title_bar.update_maximize_icon()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        self.handle_konami(event)
+        super().keyPressEvent(event)
+
+    def handle_konami(self, event: QKeyEvent) -> None:
+        if event.type() != QEvent.KeyPress:
+            return
+
+        key = event.key()
+        expected_key = self.konami_sequence[self.konami_index]
+        if key == expected_key:
+            self.konami_index += 1
+            if self.konami_index == len(self.konami_sequence):
+                self.konami_index = 0
+                self._on_konami_code()
+        else:
+            self.konami_index = 1 if key == self.konami_sequence[0] else 0
+
+    def _on_konami_code(self) -> None:
+        logger.info("Konami code detected")
 
     # Command registration
     def _register_core_commands(self) -> None:
