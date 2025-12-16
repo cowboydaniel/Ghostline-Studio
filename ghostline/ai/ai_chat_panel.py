@@ -2535,6 +2535,16 @@ class AIChatPanel(QWidget):
         if not self._active_thread or not self._active_worker:
             return
         final_text = text or self._active_response_text
+        if not final_text and self._active_tool_blocks:
+            tool_outputs = [
+                block.output_label.text().strip()
+                for block in self._active_tool_blocks.values()
+                if block.output_label.text().strip()
+            ]
+            if tool_outputs:
+                final_text = "\n\n".join(tool_outputs)
+            else:
+                final_text = "Tools executed without a final message. See the tool blocks above for details."
         if self._active_response_card:
             self._active_response_card.set_text(final_text)
         else:
@@ -2663,9 +2673,9 @@ class AIChatPanel(QWidget):
             messages.append({"role": "system", "content": instructions})
         else:
             discovery_prompt = (
-                "If you are missing a path, use discovery tools like list_directory, "
-                "search_code, or get_file_info to locate it before calling read_file "
-                "or other path-dependent tools."
+                "You cannot see the workspace by default. Use discovery tools (list_directory, "
+                "search_code, get_file_info) to find files and pass explicit relative paths from "
+                f"{Path.cwd()} when calling read_file or any path-dependent tool."
             )
             messages.append({"role": "system", "content": discovery_prompt})
         for message in self._current_messages:
