@@ -525,10 +525,43 @@ class PTYTerminal(QTextEdit):
         return now.hour == 0 and now.minute == 0
 
     def _play_ghost_animation(self, prompt_text: str) -> None:
-        """Display a short ANSI-colored ghost animation before the next prompt."""
-        sway_offsets = [0, 2, 4, 6, 8, 6, 4, 2, 0, 1, 3, 5, 3, 1]
-        face_variants = ["(o o)", "(O o)", "(o O)", "(O O)", "(o o)"]
-        tail_variants = ["'~~~'", "'~.~'", "'~~~'", "'~*~'", "'~~~'"]
+        """Display a richer ANSI-colored ghost animation before the next prompt."""
+
+        def build_frame(index: int) -> list[str]:
+            sway_offsets = [0, 2, 4, 6, 8, 6, 4, 2, 0, 1, 3, 5, 3, 1, 0, 2]
+            float_offsets = [0, 0, 1, 1, 2, 1, 1, 0, 0, 1, 2, 1, 0, 0, 1, 2]
+            face_variants = ["(o o)", "(O o)", "(o O)", "(O O)", "(o o)"]
+            mouth_variants = ["/  O  \\", "/  v  \\", "/  O  \\", "/  w  \\", "/  O  \\"]
+            tail_variants = ["`~~~~~`", "`~.~.~`", "`~~~~~`", "`~*~*~`", "`~~~~~`"]
+            halo_variants = ["  .-.", "  ( )", "  <*>", "  ( )", "  .-."]
+            sparkle_cycle = [" ✨", "  *", " ✶", "  +", " ✨", "   "]
+            sway = sway_offsets[index % len(sway_offsets)]
+            rise = float_offsets[index % len(float_offsets)]
+            face = face_variants[index % len(face_variants)]
+            mouth = mouth_variants[index % len(mouth_variants)]
+            tail = tail_variants[index % len(tail_variants)]
+            halo = halo_variants[index % len(halo_variants)]
+            sparkle_left = sparkle_cycle[index % len(sparkle_cycle)]
+            sparkle_right = sparkle_cycle[(index + 3) % len(sparkle_cycle)]
+
+            indent = " " * sway
+            float_pad = [""] * rise
+
+            ghost_body = [
+                f"{indent}{halo}",
+                f"{indent} /   \\",
+                f"{indent}{face}",
+                f"{indent}{mouth}",
+                f"{indent}|  - -  |",
+                f"{indent}|       |",
+                f"{indent} \     /",
+                f"{indent}  {tail}",
+            ]
+
+            trail = f"{sparkle_left}{' ' * (max(sway - 1, 0) + 1)}~{' ' * (max(sway - 1, 0) + 1)}{sparkle_right}"
+
+            return float_pad + ghost_body + [trail]
+
         colors = [
             "\x1b[95;1m",  # bright magenta
             "\x1b[94;1m",  # bright blue
@@ -536,35 +569,33 @@ class PTYTerminal(QTextEdit):
             "\x1b[92;1m",  # bright green
             "\x1b[38;5;213m",  # pastel magenta
             "\x1b[38;5;159m",  # pastel cyan
+            "\x1b[38;5;191m",  # soft yellow
+            "\x1b[38;5;207m",  # vivid pink
         ]
 
-        frames: list[list[str]] = []
-        for index, offset in enumerate(sway_offsets):
-            face = face_variants[index % len(face_variants)]
-            tail = tail_variants[index % len(tail_variants)]
-            indent = " " * offset
-            trailing_star = " " * max(offset - 2, 0) + "*" if index % 3 == 0 else ""
+        frames: list[list[str]] = [build_frame(i) for i in range(18)]
+        interval_ms = 95
 
-            frames.append(
-                [
-                    f"{indent}    .-.    ",
-                    f"{indent}   {face}   ",
-                    f"{indent}  /  O  \\  ",
-                    f"{indent}  |     |  ",
-                    f"{indent}  |     |  ",
-                    f"{indent}   {tail}   ",
-                    f"{trailing_star}",
-                ]
-            )
+        start_pos = self.textCursor().position()
 
-        interval_ms = 110
+        def render_block(raw_text: str) -> None:
+            cursor = self.textCursor()
+            cursor.setPosition(start_pos)
+            cursor.movePosition(QTextCursor.End, QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            cursor.setPosition(start_pos)
+            self.setTextCursor(cursor)
+
+            for text_segment, fmt in self.ansi_parser.parse(raw_text):
+                if text_segment:
+                    cursor.insertText(text_segment, fmt)
+
+            self.input_start_pos = self.textCursor().position()
+            self.ensureCursorVisible()
 
         for index, frame_lines in enumerate(frames):
-            frame = "\n" + "\n".join(line.rstrip() for line in frame_lines if line) + "\n"
+            frame = "\n" + "\n".join(line.rstrip(" ") for line in frame_lines if line) + "\n"
             color = colors[index % len(colors)]
-            QTimer.singleShot(
-                interval_ms * index,
-                lambda f=frame, c=color: self._append_output(f"{c}{f}\x1b[0m"),
-            )
+            QTimer.singleShot(interval_ms * index, lambda f=frame, c=color: render_block(f"{c}{f}\x1b[0m"))
 
-        QTimer.singleShot(interval_ms * len(frames), lambda: self._append_output(prompt_text))
+        QTimer.singleShot(interval_ms * len(frames), lambda: render_block(prompt_text))
