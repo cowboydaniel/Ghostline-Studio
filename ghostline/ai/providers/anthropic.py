@@ -158,11 +158,11 @@ class AnthropicProvider:
                             block_index_to_id[index] = tool_id
                         # Check if input is already provided (for small tool calls)
                         input_data = getattr(block, "input", None)
-                        if input_data is not None:
-                            # Input provided immediately, serialize it
+                        if input_data:
+                            # Input provided immediately (and not empty), serialize it
                             tool_uses[tool_id] = {"id": tool_id, "name": getattr(block, "name", ""), "arguments": json.dumps(input_data)}
                         else:
-                            # Input will be streamed via input_json_delta events
+                            # Input will be streamed via input_json_delta events or is empty
                             tool_uses[tool_id] = {"id": tool_id, "name": getattr(block, "name", ""), "arguments": ""}
                 elif event_type == "message_stop":
                     stop_reason = getattr(event, "stop_reason", None)
