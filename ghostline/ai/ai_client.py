@@ -82,7 +82,9 @@ def count_tokens(text: str, model_name: str | None = None) -> int:
         return len(encoding.encode(text))
     except Exception:
         # Fallback to rough estimate if tiktoken fails (1 token ≈ 4 chars)
-        return len(text) // 4
+        # Use ceiling division to avoid underestimating (max ensures at least 1 token)
+        import math
+        return max(1, math.ceil(len(text) / 4))
 
 
 def get_model_token_limit(backend: object, model_name: str | None = None) -> int:
@@ -104,10 +106,15 @@ def get_model_token_limit(backend: object, model_name: str | None = None) -> int
 
     # Claude models - very large context windows
     if 'claude' in backend_name or 'claude' in model:
-        # Claude API supports up to 1M tokens (Sonnet 4/4.5)
-        # Standard: 200k tokens, Enterprise: 500k, API: 1M
-        # We'll use 150k as a safe default (75% of 200k standard limit)
-        return 150000
+        # Claude model-specific limits (70% of context window for safety)
+        if 'opus' in model:
+            return 700000  # 70% of 1M tokens for Opus 4.5
+        elif 'sonnet' in model:
+            return 140000  # 70% of 200k tokens for Sonnet 4.5
+        elif 'haiku' in model:
+            return 140000  # 70% of 200k tokens for Haiku 4.5
+        # Default to Haiku limits for unknown Claude models
+        return 140000
 
     # OpenAI models - varies by model
     if 'openai' in backend_name or 'gpt' in model:
@@ -554,6 +561,9 @@ class AIClient:
         self.logger = get_logger(__name__)
         self.signals = AIClientSignals()  # Qt signal emitter for thread-safe UI updates
         self._http_error_counts: dict[str, int] = {}
+        self._backends_lock = threading.Lock()  # Protect shared state from race conditions
+        self._analysis_in_progress: set[Path] = set()  # Track files being analyzed
+        self._analysis_lock = threading.Lock()  # Protect analysis deduplication
         self._ollama_process: subprocess.Popen | None = None
         ai_settings = self.config.get("ai", {}) if self.config else {}
         providers = ai_settings.get("providers", {}) if ai_settings else {}
@@ -605,8 +615,12 @@ class AIClient:
 
     def _create_backend(self, backend_type: str | None = None):
         backend = backend_type or self.backend_type
+
+        # Check cache first without lock (optimization for common case)
         if backend in self._backends:
             return self._backends[backend]
+
+        # Create backend instance (can be done without lock)
         if backend == "ollama":
             instance = OllamaBackend(self.config)
         elif backend == "openai":
@@ -617,7 +631,14 @@ class AIClient:
             instance = DummyBackend(self.config)
         setattr(instance, "name", backend)
         setattr(instance, "_client", self)
-        self._backends[backend] = instance
+
+        # Only lock when modifying shared dictionary
+        with self._backends_lock:
+            # Double-check pattern: another thread might have created it
+            if backend in self._backends:
+                return self._backends[backend]
+            self._backends[backend] = instance
+
         return instance
 
     def _get_backend_for_model(self, model_name: str):
@@ -692,21 +713,23 @@ class AIClient:
         if status not in {401, 404} or not backend_name or not isinstance(backend, HTTPBackend):
             return None
 
-        count = self._http_error_counts.get(backend_name, 0) + 1
-        self._http_error_counts[backend_name] = count
+        # Protect shared state with lock to prevent race conditions
+        with self._backends_lock:
+            count = self._http_error_counts.get(backend_name, 0) + 1
+            self._http_error_counts[backend_name] = count
 
-        if count > 1:
-            endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
-            dummy = DummyBackend(self.config)
-            setattr(dummy, "name", backend_name)
-            self._backends[backend_name] = dummy
-            self.logger.warning(
-                "Switching AI backend '%s' to DummyBackend after repeated HTTP %s responses from %s.",
-                backend_name,
-                status,
-                endpoint,
-            )
-            return "Repeated authentication or routing failures detected; switched to the local echo fallback for this session."
+            if count > 1:
+                endpoint = getattr(backend, "endpoint", "the configured AI endpoint")
+                dummy = DummyBackend(self.config)
+                setattr(dummy, "name", backend_name)
+                self._backends[backend_name] = dummy
+                self.logger.warning(
+                    "Switching AI backend '%s' to DummyBackend after repeated HTTP %s responses from %s.",
+                    backend_name,
+                    status,
+                    endpoint,
+                )
+                return "Repeated authentication or routing failures detected; switched to the local echo fallback for this session."
         return None
 
     def send(self, prompt: str, context: str | None = None, model: ModelDescriptor | None = None) -> AIResponse:
@@ -847,32 +870,38 @@ class AIClient:
             self.logger.info("Completed AI file-open job for %s", path)
 
     def _proactive_analysis(self, path: Path, text: str, backend: object) -> None:
-        """Perform proactive analysis on file contents (backend-agnostic)."""
-        # Get model name from backend for accurate token counting
-        model_name = getattr(backend, 'model', None)
-
-        # Count actual tokens
-        token_count = count_tokens(text, model_name)
-
-        # Get model-specific token limit
-        token_limit = get_model_token_limit(backend, model_name)
-
-        self.logger.info("[Proactive] Starting analysis for %s (%d chars, %d tokens, limit: %d)",
-                        path, len(text), token_count, token_limit)
-
-        # Skip if file is too large for the model's context window
-        if token_count > token_limit:
-            self.logger.info("[Proactive] Skipping %s - file too large (%d tokens > %d limit)",
-                           path, token_count, token_limit)
-            return
-
-        # Only analyze code files
-        code_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".go", ".rs", ".rb", ".php"}
-        if path.suffix.lower() not in code_extensions:
-            self.logger.info("[Proactive] Skipping %s - not a code file (extension: %s)", path, path.suffix)
-            return
+        """Perform proactive analysis on file contents with deduplication."""
+        # Check if already analyzing this file (prevent duplicate analysis)
+        with self._analysis_lock:
+            if path in self._analysis_in_progress:
+                self.logger.debug("[Proactive] Already analyzing %s, skipping duplicate", path)
+                return
+            self._analysis_in_progress.add(path)
 
         try:
+            # Get model name from backend for accurate token counting
+            model_name = getattr(backend, 'model', None)
+
+            # Count actual tokens
+            token_count = count_tokens(text, model_name)
+
+            # Get model-specific token limit
+            token_limit = get_model_token_limit(backend, model_name)
+
+            self.logger.info("[Proactive] Starting analysis for %s (%d chars, %d tokens, limit: %d)",
+                            path, len(text), token_count, token_limit)
+
+            # Skip if file is too large for the model's context window
+            if token_count > token_limit:
+                self.logger.info("[Proactive] Skipping %s - file too large (%d tokens > %d limit)",
+                               path, token_count, token_limit)
+                return
+
+            # Only analyze code files
+            code_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".go", ".rs", ".rb", ".php"}
+            if path.suffix.lower() not in code_extensions:
+                self.logger.info("[Proactive] Skipping %s - not a code file (extension: %s)", path, path.suffix)
+                return
             # Quick static analysis to find potential issues
             suggestions = []
 
@@ -941,6 +970,10 @@ Code:
 
         except Exception as exc:
             self.logger.debug("Error in proactive analysis for %s: %s", path, exc)
+        finally:
+            # Remove from in-progress set when done
+            with self._analysis_lock:
+                self._analysis_in_progress.discard(path)
 
     def _parse_and_emit_suggestions(self, text: str, path: Path) -> None:
         """Parse suggestion format from AI response and emit signals."""

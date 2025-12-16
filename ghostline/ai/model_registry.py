@@ -125,9 +125,23 @@ class OllamaModelDiscovery:
                 return []
         else:
             for line in stdout.splitlines():
-                if not line.strip():
+                line = line.strip()
+                # Skip empty lines and header rows
+                if not line or line.startswith('#'):
                     continue
-                models.append(ModelDescriptor(line.split()[0], line.split()[0], "ollama", "code", True))
+
+                parts = line.split()
+                if not parts:  # Additional safety check
+                    continue
+
+                model_name = parts[0]
+                # Skip header row (common in ollama list output)
+                if model_name == "NAME" or not model_name:
+                    continue
+
+                models.append(
+                    ModelDescriptor(model_name, model_name, "ollama", "code", True)
+                )
 
         return models
 
