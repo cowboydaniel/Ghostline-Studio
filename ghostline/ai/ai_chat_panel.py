@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QSize, QPoint, QTimer, QTime
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QDialog,
     QDialogButtonBox,
@@ -1263,8 +1264,13 @@ class _MessageCard(QWidget):
         """One last check to ensure layout is correct."""
         try:
             if self._list_item and self._list_item.listWidget():
-                self._list_item.listWidget().doItemsLayout()
-                self._list_item.listWidget().scrollToBottom()
+                list_widget = self._list_item.listWidget()
+                list_widget.doItemsLayout()
+                list_widget.scrollToBottom()
+                # Ensure the item is fully visible after final layout
+                list_widget.scrollToItem(self._list_item, QAbstractItemView.EnsureVisible)
+                # One more scroll to bottom to handle any final adjustments
+                QTimer.singleShot(50, lambda: list_widget.scrollToBottom() if list_widget else None)
         except RuntimeError:
             pass
 
