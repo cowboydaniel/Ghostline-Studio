@@ -97,6 +97,11 @@ class ToolExecutor:
             self.allowed_tools[tool_name], args
         )
         if validation_error:
+            hint = (
+                " Try using list_directory or search_code to find the right path "
+                "before retrying path-dependent tools like read_file."
+            )
+            validation_error = validation_error + hint if missing_params else validation_error
             sanitized_args = self._sanitize_args(args)
             metadata = {
                 "missing_parameters": missing_params,
