@@ -381,6 +381,8 @@ class MainWindow(QMainWindow):
         self._konami_reset_timer = QTimer(self)
         self._konami_reset_timer.setSingleShot(True)
         self._konami_reset_timer.timeout.connect(self._reset_konami_index)
+        ui_settings = self.config.get("ui", {}) if self.config else {}
+        self.konami_enabled = bool(ui_settings.get("konami_enabled", True))
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -1836,6 +1838,10 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def handle_konami(self, event: QKeyEvent) -> None:
+        """Handle Konami code easter egg; set ui.konami_enabled to false to disable."""
+
+        if not self.konami_enabled:
+            return
         if event.type() != QEvent.KeyPress:
             return
 
