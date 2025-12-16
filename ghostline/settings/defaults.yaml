@@ -79,6 +79,8 @@ ai:
 window:
   maximized: true
   geometry: null
+ui:
+  konami_enabled: true
 formatting:
   on_save: false
   provider: "lsp"
