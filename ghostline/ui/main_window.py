@@ -626,12 +626,9 @@ class MainWindow(QMainWindow):
             self.central_stack.setCurrentWidget(self.editor_container)
         else:
             workspace = self.workspace_manager.current_workspace
-            if workspace:
-                self.workspace_dashboard.set_workspace(workspace, self.workspace_manager.get_recent_files(workspace))
-                self.central_stack.setCurrentWidget(self.workspace_dashboard)
-            else:
-                self.welcome_portal.set_recent_files(self.workspace_manager.get_recent_files())
-                self.central_stack.setCurrentWidget(self.welcome_portal)
+            files = self.workspace_manager.get_recent_files(workspace) if workspace else self.workspace_manager.get_recent_files()
+            self.welcome_portal.set_recent_files(files)
+            self.central_stack.setCurrentWidget(self.welcome_portal)
 
     def _refresh_recent_views(self) -> None:
         workspace = self.workspace_manager.current_workspace
