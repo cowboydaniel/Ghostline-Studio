@@ -71,7 +71,8 @@ from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.activity_bar import ActivityBar
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.layout_manager import LayoutManager
-from ghostline.ui.tabs import EditorTabs
+from ghostline.ui.editor.split_area import SplitEditorArea
+from ghostline.ui.workspace_dashboard import WorkspaceDashboard
 from ghostline.ui.welcome_portal import WelcomePortal
 from ghostline.visual3d.architecture_dock import ArchitectureDock
 from ghostline.ui.docks.build_panel import BuildPanel
@@ -315,6 +316,7 @@ class MainWindow(QMainWindow):
         self.workspace_manager = workspace_manager
         self.git = GitIntegration()
         self.lsp_manager = LSPManager(config, workspace_manager)
+        self.workspace_manager.workspaceChanged.connect(lambda _=None: self._refresh_recent_views())
         self.command_registry = CommandRegistry()
         # Register core commands before creating UI components
         self._register_core_commands()
@@ -357,7 +359,6 @@ class MainWindow(QMainWindow):
         self.layout_manager = LayoutManager(self)
         self.git_service = GitService(self.workspace_manager.current_workspace)
         self.first_run = not bool(self.config.get("first_run_completed", False))
-        self._recent_files_by_workspace: dict[str, list[str]] = {}
         self._restored_workspace: str | None = None
         self.left_docks: list[QDockWidget] = []
         self.bottom_docks: list[QDockWidget] = []
@@ -366,7 +367,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
 
-        self.editor_tabs = EditorTabs(
+        self.editor_tabs = SplitEditorArea(
             self,
             config=self.config,
             theme=self.theme,
@@ -389,9 +390,16 @@ class MainWindow(QMainWindow):
         self.welcome_portal.openFolderRequested.connect(self._prompt_open_folder)
         self.welcome_portal.openCommandPaletteRequested.connect(lambda: self.show_command_palette())
         self.welcome_portal.openAIChatRequested.connect(self.toggle_ai_dock)
+        self.welcome_portal.openRecentRequested.connect(self._open_recent_item)
+
+        self.workspace_dashboard = WorkspaceDashboard(
+            open_file=self.open_file,
+            open_palette=lambda: self.show_command_palette(),
+        )
 
         self.central_stack = QStackedWidget(self)
         self.central_stack.addWidget(self.welcome_portal)
+        self.central_stack.addWidget(self.workspace_dashboard)
         self.central_stack.addWidget(self.editor_container)
 
         self.left_region_container = QWidget(self)
@@ -617,7 +625,17 @@ class MainWindow(QMainWindow):
         if self.editor_tabs.count() > 0:
             self.central_stack.setCurrentWidget(self.editor_container)
         else:
+            workspace = self.workspace_manager.current_workspace
+            files = self.workspace_manager.get_recent_files(workspace) if workspace else self.workspace_manager.get_recent_files()
+            self.welcome_portal.set_recent_files(files)
             self.central_stack.setCurrentWidget(self.welcome_portal)
+
+    def _refresh_recent_views(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        if workspace:
+            files = self.workspace_manager.get_recent_files(workspace)
+            self.workspace_dashboard.set_workspace(workspace, files)
+        self.welcome_portal.set_recent_files(self.workspace_manager.get_recent_files())
 
     def _restore_workspace_tabs(self, workspace_str: str | None) -> None:
         if not workspace_str:
@@ -871,6 +889,12 @@ class MainWindow(QMainWindow):
 
         self._update_view_action_states()
 
+    def _toggle_split_editor(self, enabled: bool) -> None:
+        if enabled != self.editor_tabs.split_active():
+            self.editor_tabs.set_split_active(enabled)
+        self._show_welcome_if_empty()
+        self._update_view_action_states()
+
     def _toggle_bottom_panel_maximize(self) -> None:
         if not hasattr(self, "center_vertical_splitter"):
             return
@@ -950,6 +974,9 @@ class MainWindow(QMainWindow):
                 )
             self.action_toggle_project.setChecked(project_open)
 
+        if hasattr(self, "action_toggle_split_editor"):
+            self.action_toggle_split_editor.setChecked(self.editor_tabs.split_active())
+
         # Terminal region
         if hasattr(self, "action_toggle_terminal"):
             terminal_open = False
@@ -1016,6 +1043,10 @@ class MainWindow(QMainWindow):
         self.action_toggle_project.setCheckable(True)
         self.action_toggle_project.setChecked(True)  # Explorer is visible by default
         self.action_toggle_project.triggered.connect(self._toggle_project)
+
+        self.action_toggle_split_editor = QAction("Split Editor", self)
+        self.action_toggle_split_editor.setCheckable(True)
+        self.action_toggle_split_editor.triggered.connect(self._toggle_split_editor)
 
         self.action_toggle_terminal = QAction("Terminal", self)
         self.action_toggle_terminal.setCheckable(True)
@@ -1154,6 +1185,7 @@ class MainWindow(QMainWindow):
         self.view_menu = menubar.addMenu("View")
         self.view_menu.addAction(self.action_command_palette)
         self.view_menu.addAction(self.action_toggle_project)
+        self.view_menu.addAction(self.action_toggle_split_editor)
         self.view_menu.addAction(self.action_toggle_terminal)
         self.view_menu.addAction(self.action_global_search)
         self.view_menu.addAction(self.action_goto_symbol)
@@ -1247,6 +1279,9 @@ class MainWindow(QMainWindow):
         self.project_view.setTextElideMode(Qt.ElideRight)
         self.project_view.set_model(self.project_model)
         self.project_placeholder = QLabel("No workspace open. Use File → Open Folder…", self)
+        self.workspace_manager.fileChanged.connect(lambda _=None: self.project_model.layoutChanged.emit())
+        self.workspace_manager.fileAdded.connect(lambda _=None: self.project_model.layoutChanged.emit())
+        self.workspace_manager.fileRemoved.connect(lambda _=None: self.project_model.layoutChanged.emit())
         self.project_placeholder.setAlignment(Qt.AlignCenter)
         self.project_placeholder.setWordWrap(True)
         container = QWidget(self)
@@ -1445,12 +1480,8 @@ class MainWindow(QMainWindow):
         self.status.show_path(path)
         self.workspace_manager.register_recent(path)
         workspace = self.workspace_manager.current_workspace
-        if workspace:
-            workspace_str = str(workspace)
-            files = self._recent_files_by_workspace.get(workspace_str, [])
-            files = [p for p in files if p != path]
-            files.insert(0, path)
-            self._recent_files_by_workspace[workspace_str] = files[:5]
+        self.workspace_manager.record_recent_file(path)
+        self._refresh_recent_views()
         if editor:
             editor.textChanged.connect(lambda _=None, e=editor: self._sync_editor_to_index(e))
         self.status.update_git(str(workspace) if workspace else None)
@@ -1485,6 +1516,7 @@ class MainWindow(QMainWindow):
         workspace_str = str(workspace_path) if workspace_path else None
         self.status.update_git(workspace_str)
         self.status.show_message(f"Opened workspace: {folder}")
+        self._refresh_recent_views()
 
         # Make the opened folder the root of the explorer tree,
         # so it behaves like Windsurf and shows just the project.
@@ -1655,10 +1687,31 @@ class MainWindow(QMainWindow):
         if path:
             self.open_file(path)
 
+    def _open_recent_item(self, path: str) -> None:
+        target = Path(path)
+        if target.is_dir():
+            self.open_folder(path)
+        elif target.exists():
+            self.open_file(path)
+
     def _prompt_open_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Open Folder")
         if folder:
             self.open_folder(folder)
+
+    def _prompt_create_template(self) -> None:
+        templates = self.workspace_manager.templates.list_templates()
+        if not templates:
+            self.status.show_message("No templates available")
+            return
+        template, ok = QInputDialog.getItem(self, "Create Workspace", "Template", templates, 0, False)
+        if not ok or not template:
+            return
+        destination = QFileDialog.getExistingDirectory(self, "Choose Destination")
+        if not destination:
+            return
+        workspace_path = self.workspace_manager.templates.create(template, destination)
+        self.open_folder(str(workspace_path))
 
     def _close_folder(self) -> None:
         self.workspace_manager.clear_workspace()
@@ -1671,6 +1724,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "context_engine"):
             self.context_engine.on_workspace_changed(None)
         self._show_welcome_if_empty()
+        self._refresh_recent_views()
 
     def open_file_at(self, path: str, line: int) -> None:
         self.open_file(path)
@@ -1758,6 +1812,11 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("file.save_all", "Save All", "File", self.save_all))
         registry.register_command(CommandDescriptor("view.toggle_project", "Toggle Project", "View", self._toggle_project))
         registry.register_command(CommandDescriptor("view.toggle_terminal", "Toggle Terminal", "View", self._toggle_terminal))
+        registry.register_command(
+            CommandDescriptor(
+                "view.toggle_split", "Toggle Split Editor", "View", lambda: self._toggle_split_editor(not self.editor_tabs.split_active())
+            )
+        )
         registry.register_command(CommandDescriptor("ai.explain_selection", "Explain Selection", "AI", lambda: self._run_ai_command(explain_selection)))
         registry.register_command(CommandDescriptor("ai.refactor_selection", "Refactor Selection", "AI", lambda: self._run_ai_command(refactor_selection)))
         registry.register_command(CommandDescriptor("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode))
@@ -1766,6 +1825,11 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("search.global", "Global Search", "Navigate", self._open_global_search))
         registry.register_command(CommandDescriptor("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker))
         registry.register_command(CommandDescriptor("navigate.file", "Go to File", "Navigate", self._open_file_picker))
+        registry.register_command(
+            CommandDescriptor(
+                "workspace.create_template", "Create Workspace from Template", "Workspace", self._prompt_create_template
+            )
+        )
         registry.register_command(CommandDescriptor("workflow.run", "Run Pipelines", "Automation", self._run_all_pipelines))
         registry.register_command(CommandDescriptor("tasks.run", "Run Task", "Tasks", self._run_task_command))
         registry.register_command(CommandDescriptor("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
