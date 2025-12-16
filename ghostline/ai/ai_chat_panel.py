@@ -2415,7 +2415,7 @@ class AIChatPanel(QWidget):
         self._update_context_state([], instructions or None, instructions)
         return instructions or None, []
 
-    def _start_request(self, prompt: str, context: str | None) -> None:
+    def _start_request(self, prompt: str, instructions: str | None) -> None:
         if self._active_thread:
             return
 
@@ -2428,7 +2428,7 @@ class AIChatPanel(QWidget):
         self._approval_requests.clear()
 
         agentic_client = self._ensure_agentic_client()
-        messages = self._build_agentic_messages(prompt, context)
+        messages = self._build_agentic_messages(prompt, instructions)
 
         thread = QThread(self)
         worker = _AgenticRequestWorker(agentic_client, messages, prompt, self._approval_decider)
@@ -2455,9 +2455,9 @@ class AIChatPanel(QWidget):
             self._handle_creator_easter_egg(prompt)
             return
 
-        context, chunks = self._gather_context(prompt)
-        self._last_chunks = chunks
-        self._start_request(prompt, context)
+        instructions = self.instructions.toPlainText().strip() or None
+        self._update_context_state([], None, instructions)
+        self._start_request(prompt, instructions)
 
     def _ensure_agentic_client(self) -> AgenticClient:
         model = self.current_model_descriptor.id if self.current_model_descriptor else "gpt-4.1"
@@ -2477,14 +2477,15 @@ class AIChatPanel(QWidget):
             self._agentic_client = AgenticClient(provider_name, model, api_key=api_key, workspace_root=Path.cwd())
         return self._agentic_client
 
-    def _build_agentic_messages(self, prompt: str, context: str | None) -> list[dict[str, object]]:
+    def _build_agentic_messages(self, prompt: str, instructions: str | None) -> list[dict[str, object]]:
         messages: list[dict[str, object]] = []
+        if instructions:
+            messages.append({"role": "system", "content": instructions})
         for message in self._current_messages:
             role = "user" if message.role.lower() in {"you", "user"} else "assistant"
             messages.append({"role": role, "content": message.text})
 
-        content = prompt if not context else f"{context}\n\n{prompt}"
-        messages.append({"role": "user", "content": content})
+        messages.append({"role": "user", "content": prompt})
         return messages
 
     def _requires_approval(self, call: ToolCallEvent) -> bool:
