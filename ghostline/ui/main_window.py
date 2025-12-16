@@ -166,6 +166,7 @@ class GhostlineTitleBar(QWidget):
         dock_toggle_bar = getattr(self.window, "dock_toggle_bar", None)
 
         dock_container = QWidget(self)
+        dock_container.setObjectName("DockToggleContainer")
         dock_layout = QHBoxLayout(dock_container)
         dock_layout.setContentsMargins(0, 0, 0, 0)
         dock_layout.setSpacing(0)
@@ -572,6 +573,7 @@ class MainWindow(QMainWindow):
 
         toggle_spacer = QWidget(self.dock_toggle_bar)
         toggle_spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toggle_spacer.setStyleSheet("background: transparent;")
         self.dock_toggle_bar.addWidget(toggle_spacer)
 
         def build_toggle(open_icon: QIcon, closed_icon: QIcon, tooltip: str) -> QAction:
