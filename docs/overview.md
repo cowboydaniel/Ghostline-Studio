@@ -23,6 +23,27 @@ for code editing, analysis, and collaboration.
 - **Code Navigation** - Go to definition, hover information, and symbol search
 - **Code Formatting** - Formatter manager with LSP integration
 
+#### Multi-language highlighting flow
+
+Ghostline resolves syntax highlighting in three stages:
+
+1. File extensions are mapped to languages from `lsp.language_defaults` (e.g., `.py`, `.ts`, `.js`, `.jsx`, `.tsx`, `.c/.cpp/.cc/.h/.hpp`, `.rs`, `.java`) plus any overrides in `lsp.extension_map`.
+2. The matching language server defined in `ghostline/settings/defaults.yaml` or `ghostline/lang/lsp_config.yaml` is launched (basedpyright, typescript-language-server, clangd, rust-analyzer, jdtls by default).
+3. If the server advertises semantic tokens **and** the language is enabled in `lsp.language_defaults.<language>.semantic_tokens`, the editor applies LSP-driven coloring; otherwise it falls back to the bundled theme highlighter.
+
+Customize the mapping or toggle semantic tokens per language in `~/.config/ghostline/settings.yaml`:
+
+```yaml
+lsp:
+  extension_map:
+    md: typescript      # Reuse TS server for Markdown experiments
+  language_defaults:
+    typescript:
+      extensions: [ts, tsx, astro]
+    python:
+      semantic_tokens: false
+```
+
 ### Terminal & Build System
 - **Windsurf-style Terminal Dock** - Modern terminal with tabbed sessions
 - **PTY Terminal Support** - True pseudo-terminal emulation for better shell interaction

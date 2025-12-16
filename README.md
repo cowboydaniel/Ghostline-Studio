@@ -226,7 +226,7 @@ python -m ghostline.main [path]
 
 `path` may be a file or directory to open on startup.
 
-> Default LSP settings expect `pyright-langserver` on your `PATH`. Configure alternate language servers in `ghostline/settings/defaults.yaml` or your user settings file.
+> Default LSP settings expect `basedpyright-langserver` (for Python semantic tokens) on your `PATH`. Configure alternate language servers in `ghostline/settings/defaults.yaml` or your user settings file.
 
 ---
 
@@ -248,6 +248,39 @@ Configurable areas include:
 - LSP options
 - Terminal preferences
 - Plugin settings
+
+### Language servers, highlighting, and semantic tokens
+
+Ghostline ships with multi-language syntax highlighting powered by LSP semantic tokens when available. By default the bundled configuration maps common extensions to these language servers:
+
+- Python (`.py`) → `basedpyright-langserver`
+- TypeScript/JavaScript/JSX/TSX (`.ts`, `.js`, `.jsx`, `.tsx`) → `typescript-language-server`
+- C/C++ (`.c`, `.cc`, `.cpp`, `.h`, `.hpp`) → `clangd`
+- Rust (`.rs`) → `rust-analyzer`
+- Java (`.java`) → `jdtls`
+
+Extension lookups come from `lsp.language_defaults.<language>.extensions` plus any overrides in `lsp.extension_map`. To point a different extension at a server, add or override entries in your user settings:
+
+```yaml
+lsp:
+  extension_map:
+    vue: typescript   # Treat .vue files as TypeScript for highlighting and LSP
+    proto: c_cpp      # Reuse clangd for protocol buffers
+```
+
+Semantic tokens can be disabled per language without turning off the server entirely. Use the `lsp.language_defaults` block to toggle them or to redefine the extension list the LSP manager should consider:
+
+```yaml
+lsp:
+  language_defaults:
+    python:
+      semantic_tokens: false   # Keep diagnostics/completions but skip semantic token highlighting
+    rust:
+      extensions: [rs, ron]
+      semantic_tokens: true
+```
+
+At startup Ghostline merges `ghostline/lang/lsp_config.yaml` with your settings file so the documented defaults above always match the bundled configuration.
 
 AI features default to a dummy backend that echoes prompts so the AI chat dock is immediately usable. To point Ghostline at your own service, update `~/.config/ghostline/settings.yaml` (or the Settings dialog) with your endpoint, model, and `ai.timeout_seconds` for slower local models such as Ollama. Start local Ollama instances with `ollama serve` before launching Ghostline if you select the Ollama backend.
 

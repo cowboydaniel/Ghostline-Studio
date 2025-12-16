@@ -36,6 +36,7 @@ class LSPManager(QObject):
         self._diag_callbacks: list[Callable[[list[Diagnostic]], None]] = []
         self._pending: dict[int, Callable[[dict], None]] = {}
         self._semantic_request_meta: dict[int, dict[str, str]] = {}
+        self._language_settings = self._build_language_settings()
         self._language_map = self._build_language_map()
         self._ensure_default_servers()
         self._reported_failures: set[str] = set()
@@ -106,20 +107,51 @@ class LSPManager(QObject):
         except Exception:
             return None
 
+    def _build_language_settings(self) -> dict[str, dict[str, Any]]:
+        """Merge default language metadata with user overrides."""
+
+        defaults: dict[str, dict[str, Any]] = {
+            "python": {"extensions": [".py"], "semantic_tokens": True},
+            "typescript": {
+                "extensions": [".ts", ".js", ".jsx", ".tsx"],
+                "semantic_tokens": True,
+            },
+            "c_cpp": {
+                "extensions": [".c", ".h", ".cpp", ".cc", ".hpp"],
+                "semantic_tokens": True,
+            },
+            "rust": {"extensions": [".rs"], "semantic_tokens": True},
+            "java": {"extensions": [".java"], "semantic_tokens": True},
+        }
+
+        configured = self.config.get("lsp", {}).get("language_defaults", {})
+        for language, meta in configured.items():
+            if not isinstance(meta, dict):
+                continue
+
+            entry = defaults.setdefault(language, {"extensions": [], "semantic_tokens": True})
+
+            if "extensions" in meta:
+                extensions = meta.get("extensions")
+                if isinstance(extensions, list):
+                    normalized = [f".{ext.lstrip('.')}" for ext in extensions if str(ext)]
+                    if normalized:
+                        entry["extensions"] = normalized
+
+            if "semantic_tokens" in meta:
+                entry["semantic_tokens"] = bool(meta.get("semantic_tokens", True))
+
+        return defaults
+
     def _build_language_map(self) -> dict[str, str]:
         """Map file extensions to configured languages."""
-        mapping: dict[str, str] = {
-            ".py": "python",
-            ".ts": "typescript",
-            ".js": "typescript",
-            ".c": "c_cpp",
-            ".h": "c_cpp",
-            ".cpp": "c_cpp",
-            ".cc": "c_cpp",
-            ".hpp": "c_cpp",
-            ".java": "java",
-            ".rs": "rust",
-        }
+        mapping: dict[str, str] = {}
+
+        for language, meta in self._language_settings.items():
+            extensions = meta.get("extensions", []) if isinstance(meta, dict) else []
+            for ext in extensions:
+                suffix = f".{str(ext).lstrip('.')}"
+                mapping[suffix] = language
         overrides = self.config.get("lsp", {}).get("extension_map", {})
         mapping.update({f".{k.lstrip('.')}": v for k, v in overrides.items()})
         return mapping
@@ -137,6 +169,16 @@ class LSPManager(QObject):
         cfg.setdefault("extension_map", {})
         cfg["extension_map"] = {**extension_map, **cfg["extension_map"]}
         self.config.settings["lsp"] = cfg
+
+    def _semantic_tokens_enabled(self, language: str) -> bool:
+        """Return False when semantic tokens are disabled for a language."""
+
+        meta = self._language_settings.get(language)
+        if not isinstance(meta, dict):
+            return True
+        if "semantic_tokens" not in meta:
+            return True
+        return bool(meta.get("semantic_tokens", True))
 
     def _role_definitions(self, language: str) -> dict[str, list[dict[str, Any]]]:
         servers_cfg = self.config.get("lsp", {}).get("servers", {})
@@ -504,6 +546,9 @@ class LSPManager(QObject):
         if not normalized:
             return False
         language = language or self._language_for_file(normalized)
+        if language and not self._semantic_tokens_enabled(language):
+            logger.info("[%s] Semantic tokens disabled via configuration", language)
+            return False
         client = self._get_client(language) if language else None
         return bool(client and getattr(client, "semantic_tokens_capable", False))
 
@@ -522,6 +567,10 @@ class LSPManager(QObject):
         language = language or self._language_for_file(normalized)
         if not language:
             logger.debug("Semantic tokens bypassed for %s: no language detected", normalized)
+            return False
+
+        if not self._semantic_tokens_enabled(language):
+            logger.info("[%s] Semantic tokens disabled via configuration", language)
             return False
 
         client = self._get_client(language)
@@ -668,6 +717,10 @@ class LSPManager(QObject):
         client.semantic_tokens_supports_full = supports_full and bool(legend)
         client.semantic_tokens_supports_range = supports_range and bool(legend)
         client.semantic_tokens_capable = client.semantic_tokens_supports_full or client.semantic_tokens_supports_range
+
+        if not self._semantic_tokens_enabled(language):
+            client.semantic_tokens_capable = False
+
         if client.semantic_tokens_capable:
             logger.info(
                 "Semantic tokens supported for %s (full=%s, range=%s, legend=%d)",
@@ -677,12 +730,15 @@ class LSPManager(QObject):
                 len(legend),
             )
         else:
-            logger.debug(
-                "Semantic tokens not supported for %s; provider=%s legend=%d",
-                language,
-                bool(semantic_provider),
-                len(legend),
-            )
+            if not self._semantic_tokens_enabled(language):
+                logger.info("[%s] Semantic tokens disabled by configuration", language)
+            else:
+                logger.debug(
+                    "Semantic tokens not supported for %s; provider=%s legend=%d",
+                    language,
+                    bool(semantic_provider),
+                    len(legend),
+                )
 
         if client.semantic_tokens_capable:
             logger.info("[%s] ✓ Semantic tokens ENABLED", language)
