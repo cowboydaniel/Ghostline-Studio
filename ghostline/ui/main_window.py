@@ -521,7 +521,6 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_menus()
         self._install_title_bar()
-        self._create_activity_dock()
         self._create_terminal_dock()
         self._create_project_dock()
         self._create_ai_dock()
@@ -983,9 +982,6 @@ class MainWindow(QMainWindow):
                 continue
             if other.isVisible() and not other.isFloating() and self.dockWidgetArea(other) == Qt.LeftDockWidgetArea:
                 other.hide()
-
-    def _create_activity_dock(self) -> None:
-        self.activity_dock = QWidget(self)
 
     def _create_actions(self) -> None:
         self.action_open_file = QAction("Open File", self)
