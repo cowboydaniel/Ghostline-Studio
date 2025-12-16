@@ -49,12 +49,41 @@ class AnthropicProvider:
     ) -> Generator[object, None, None]:
         """Yield text deltas, tool calls, and completion markers."""
 
+        formatted_messages = self._format_messages(messages)
+
+        # Log the request details for debugging
+        logging.debug("Anthropic API request - model: %s, num_messages: %d, num_tools: %d",
+                     self.model, len(formatted_messages), len(tools) if tools else 0)
+
+        # Log the messages (truncated for readability)
+        for i, msg in enumerate(formatted_messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                content_preview = content[:200] + "..." if len(content) > 200 else content
+                logging.debug("Anthropic message[%d] role=%s content=%r", i, role, content_preview)
+            elif isinstance(content, list):
+                logging.debug("Anthropic message[%d] role=%s content=<list with %d blocks>", i, role, len(content))
+
+        if tools:
+            # Log tool summary
+            logging.debug("Anthropic tools being sent: %s",
+                         [{"name": t.get("name"),
+                           "has_params": bool(t.get("input_schema", {}).get("properties"))}
+                          for t in tools])
+
+            # Log detailed tool schemas for critical tools
+            for tool in tools:
+                name = tool.get("name", "")
+                if name in {"read_file", "list_directory", "write_file"}:
+                    logging.debug("Anthropic tool '%s' full schema: %s", name, json.dumps(tool, indent=2))
+
         tool_uses: Dict[str, Dict[str, Any]] = {}
         accumulated_text: List[str] = []
 
         with self.client.messages.stream(  # type: ignore[attr-defined]
             model=self.model,
-            messages=self._format_messages(messages),
+            messages=formatted_messages,
             tools=tools,
             temperature=self.temperature,
         ) as stream:
