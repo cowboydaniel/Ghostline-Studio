@@ -1,32 +1,32 @@
 /* Ghostline Studio - VS Code Dark+ theme */
 
 QWidget {
-    background-color: #1E1E1E;
+    background-color: #101113;
     color: #D4D4D4;
     selection-background-color: #264F78;
     selection-color: #ffffff;
 }
 
 QMainWindow {
-    background-color: #1E1E1E;
+    background-color: #101113;
 }
 
 QDockWidget {
-    background-color: #1e1f24;
+    background-color: #101113;
     border: 1px solid #2b2d34;
     titlebar-close-icon: url(:/icons/close_small.svg);
     titlebar-normal-icon: none;
 }
 
 QDockWidget::title {
-    background-color: #1e1f24;
+    background-color: #101113;
     padding: 6px 10px;  /* Increased from 4px 8px for better spacing */
     border-bottom: 1px solid #2b2d34;
     font-weight: 500;
 }
 
 QMenuBar {
-    background-color: #1b1c22;
+    background-color: #101113;
     color: #d0d0d0;
 }
 
@@ -37,12 +37,12 @@ QMenuBar::item {
 }
 
 QMenuBar::item:selected {
-    background: #2a2c36;
+    background: #181a1f;
     color: #ffffff;
 }
 
 QMenu {
-    background-color: #1e1f24;
+    background-color: #101113;
     border: 1px solid #2b2d34;
 }
 
@@ -55,13 +55,13 @@ QMenu::item:selected {
 }
 
 QToolBar {
-    background-color: #1b1c22;
+    background-color: #101113;
     border-bottom: 1px solid #2b2d34;
     spacing: 4px;
 }
 
 QStatusBar {
-    background-color: #1b1c22;
+    background-color: #101113;
     border-top: 1px solid #2b2d34;
 }
 
@@ -73,28 +73,28 @@ QStatusBar QLabel {
 
 QPushButton,
 QToolButton {
-    background-color: #252734;
+    background-color: #101113;
     border-radius: 4px;
     padding: 6px 12px;  /* Increased from 4px 10px for better touch targets */
-    border: 1px solid #303342;
+    border: 1px solid #2b2d34;
 }
 
 QPushButton:hover,
 QToolButton:hover {
-    background-color: #2d3040;
+    background-color: #15171a;
 }
 
 QPushButton:pressed,
 QToolButton:pressed {
-    background-color: #202232;
-    border-color: #3a3e52;
+    background-color: #0d0e10;
+    border-color: #303342;
 }
 
 QPushButton:disabled,
 QToolButton:disabled {
-    background-color: #1d1f29;
+    background-color: #0f1012;
     color: #777a88;
-    border-color: #252836;
+    border-color: #1c1d22;
 }
 
 /* Line edits and combo boxes */
@@ -105,7 +105,7 @@ QTextEdit,
 QSpinBox,
 QDoubleSpinBox,
 QComboBox {
-    background-color: #1E1E1E;
+    background-color: #101113;
     border-radius: 4px;
     border: 1px solid #2D2D30;
     padding: 2px 4px;
@@ -130,9 +130,9 @@ QComboBox::down-arrow {
 QTreeView,
 QListView,
 QTableView {
-    background-color: #1E1E1E;
+    background-color: #101113;
     border: 1px solid #2D2D30;
-    alternate-background-color: #252526;
+    alternate-background-color: #15171a;
     selection-background-color: #264F78;
 }
 
@@ -152,7 +152,7 @@ QTableView::item:hover {
 /* Splitters */
 
 QSplitter::handle {
-    background: #1b1c22;
+    background: #14161a;
     margin: 0px;
 }
 
@@ -165,11 +165,11 @@ QTabWidget::pane {
 
 QTabBar {
     qproperty-drawBase: 0;
-    background-color: #1E1E1E;
+    background-color: #101113;
 }
 
 QTabBar::tab {
-    background-color: #1E1E1E;
+    background-color: #101113;
     color: #b3b3b3;
     padding: 6px 12px;  /* Increased from 4px 10px */
     margin-right: 1px;
@@ -180,14 +180,14 @@ QTabBar::tab {
 }
 
 QTabBar::tab:selected {
-    background-color: #1f212a;
+    background-color: #171920;
     color: #ffffff;
     border: 1px solid #2b2d34;
-    border-bottom-color: #1f212a;
+    border-bottom-color: #171920;
 }
 
 QTabBar::tab:hover {
-    background-color: #22242e;
+    background-color: #1b1d22;
     color: #ffffff;
 }
 
@@ -209,7 +209,7 @@ QTabBar::tab:!selected {
 /* Scrollbars */
 
 QScrollBar:vertical {
-    background: #1E1E1E;
+    background: #101113;
     width: 10px;
     margin: 0px;
 }
@@ -232,7 +232,7 @@ QScrollBar::sub-line:vertical {
 }
 
 QScrollBar:horizontal {
-    background: #1E1E1E;
+    background: #101113;
     height: 10px;
     margin: 0px;
 }
@@ -276,7 +276,7 @@ CodeEditor QPlainTextEdit {
 /* Search panel in editor */
 
 #FindReplacePanel {
-    background-color: #1b1c22;
+    background-color: #101113;
     border-radius: 4px;
     border: 1px solid #2b2d34;
 }
@@ -292,13 +292,13 @@ CodeEditor QPlainTextEdit {
 /* Command palette */
 
 #CommandPalette {
-    background-color: #252526;
+    background-color: #101113;
     border-radius: 6px;
     border: 1px solid #2D2D30;
 }
 
 #CommandPalette QLineEdit {
-    background-color: #1E1E1E;
+    background-color: #101113;
 }
 
 #CommandPalette QListView {
@@ -308,11 +308,11 @@ CodeEditor QPlainTextEdit {
 /* AI dock */
 
 #AIDock {
-    background-color: #1E1E1E;
+    background-color: #101113;
 }
 
 #AIDock QPlainTextEdit {
-    background-color: #1E1E1E;
+    background-color: #101113;
     border-radius: 4px;
     border: 1px solid #2D2D30;
 }
@@ -331,7 +331,7 @@ CodeEditor QPlainTextEdit {
 /* Inline completion popup */
 
 #InlineCompletionPopup {
-    background-color: #1E1E1E;
+    background-color: #101113;
     border-radius: 4px;
     border: 1px solid #2D2D30;
 }
@@ -339,7 +339,7 @@ CodeEditor QPlainTextEdit {
 /* Tooltips */
 
 QToolTip {
-    background-color: #1e1f24;
+    background-color: #101113;
     color: #e0e0e0;
     border: 1px solid #2b2d34;
     padding: 4px;
@@ -348,7 +348,7 @@ QToolTip {
 /* Dialogs */
 
 QDialog {
-    background-color: #1E1E1E;
+    background-color: #101113;
 }
 
 /* Labels inside status bar or small panels */
@@ -361,7 +361,7 @@ QLabel#SmallLabel {
 /* Tree headers */
 
 QHeaderView::section {
-    background-color: #1e1f24;
+    background-color: #101113;
     border: 1px solid #2b2d34;
     padding: 4px;
 }
@@ -371,13 +371,13 @@ QHeaderView::section {
 #SidePanelTabs QTabBar::tab {
     min-width: 0px;
     padding: 4px 8px;
-    background-color: #1b1c22;
+    background-color: #101113;
     color: #b3b3b3;
     border-radius: 0px;
 }
 
 #SidePanelTabs QTabBar::tab:selected {
-    background-color: #252734;
+    background-color: #16181d;
     color: #ffffff;
     border-bottom: 2px solid #3ea6ff;
 }
@@ -385,7 +385,7 @@ QHeaderView::section {
 /* Toolbar-like frames */
 
 #ToolbarFrame {
-    background-color: #1b1c22;
+    background-color: #101113;
     border-bottom: 1px solid #2b2d34;
 }
 
@@ -399,7 +399,7 @@ QHeaderView::section {
 /* Splitter handle between editor and side panels */
 
 QSplitter#MainSplitter::handle {
-    background: #1b1c22;
+    background: #14161a;
     margin: 0px;
     width: 6px;
     height: 6px;
@@ -491,12 +491,12 @@ QSplitter::handle:hover {
 /* ==================== Windsurf-style Bottom Panel ==================== */
 
 #bottomPanel {
-    background-color: #1E1E1E;
+    background-color: #101113;
     border-top: 1px solid #2D2D30;
 }
 
 #bottomPanelTabBar {
-    background-color: #1F1F22;
+    background-color: #14161a;
     border-bottom: 1px solid #2D2D30;
 }
 
@@ -559,16 +559,16 @@ QSplitter::handle:hover {
 }
 
 #windsurfTerminal {
-    background-color: #1E1E1E;
+    background-color: #101113;
 }
 
 #terminalToolbar {
-    background-color: #1F1F22;
+    background-color: #14161a;
     border-bottom: 1px solid #2D2D30;
 }
 
 #ptyTerminal {
-    background-color: #1E1E1E;
+    background-color: #101113;
     color: #D4D4D4;
     border: none;
     selection-background-color: #264F78;
@@ -576,7 +576,7 @@ QSplitter::handle:hover {
 }
 
 #terminalSessionList {
-    background-color: #1E1E1E;
+    background-color: #101113;
     border-left: 1px solid #2D2D30;
     color: #CCCCCC;
     outline: none;
@@ -603,12 +603,12 @@ QSplitter::handle:hover {
 #outputPanel,
 #debugConsolePanel,
 #portsPanel {
-    background-color: #1E1E1E;
+    background-color: #101113;
 }
 
 #problemsTable,
 #portsTable {
-    background-color: #1E1E1E;
+    background-color: #101113;
     color: #CCCCCC;
     gridline-color: #2D2D30;
     border: none;
@@ -628,7 +628,7 @@ QSplitter::handle:hover {
 
 #problemsTable QHeaderView::section,
 #portsTable QHeaderView::section {
-    background-color: #252526;
+    background-color: #15171a;
     color: #CCCCCC;
     border: none;
     border-bottom: 1px solid #2D2D30;
@@ -639,7 +639,7 @@ QSplitter::handle:hover {
 
 #outputText,
 #debugConsoleOutput {
-    background-color: #1E1E1E;
+    background-color: #101113;
     color: #CCCCCC;
     border: none;
     selection-background-color: #264F78;
@@ -648,7 +648,7 @@ QSplitter::handle:hover {
 
 /* Welcome Screen (Windsurf-style) */
 #WelcomePortal {
-    background-color: #1E1E1E;
+    background-color: #101113;
 }
 
 #WelcomeTitle {
@@ -663,7 +663,7 @@ QSplitter::handle:hover {
 }
 
 #WelcomeAction {
-    background-color: #252526;
+    background-color: #15171a;
     border: 1px solid #2D2D30;
     border-radius: 6px;
 }

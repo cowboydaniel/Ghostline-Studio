@@ -49,16 +49,16 @@ class ThemeManager:
     def _build_dark_palette(self) -> QPalette:
         palette = QPalette()
         # VS Code Dark+ theme colors
-        palette.setColor(QPalette.Window, QColor("#1E1E1E"))
+        palette.setColor(QPalette.Window, QColor("#101113"))
         palette.setColor(QPalette.WindowText, QColor("#D4D4D4"))
         # Editor base and current line background
-        palette.setColor(QPalette.Base, QColor("#1E1E1E"))
+        palette.setColor(QPalette.Base, QColor("#101113"))
         # Current line highlight - using solid color, alpha applied in code_editor.py
-        palette.setColor(QPalette.AlternateBase, QColor("#282828"))  # Will have alpha applied
-        palette.setColor(QPalette.ToolTipBase, QColor("#1E1E1E"))
+        palette.setColor(QPalette.AlternateBase, QColor("#15171a"))  # Will have alpha applied
+        palette.setColor(QPalette.ToolTipBase, QColor("#101113"))
         palette.setColor(QPalette.ToolTipText, QColor("#D4D4D4"))
         palette.setColor(QPalette.Text, QColor("#D4D4D4"))
-        palette.setColor(QPalette.Button, QColor("#1E1E1E"))
+        palette.setColor(QPalette.Button, QColor("#101113"))
         palette.setColor(QPalette.ButtonText, QColor("#D4D4D4"))
         palette.setColor(QPalette.BrightText, QColor("#ffffff"))
         palette.setColor(QPalette.Highlight, QColor("#264F78"))  # Selection background
@@ -66,7 +66,7 @@ class ThemeManager:
         palette.setColor(QPalette.Link, QColor("#569CD6"))
         palette.setColor(QPalette.LinkVisited, QColor("#C586C0"))
         # Used for gutter divider etc
-        palette.setColor(QPalette.Dark, QColor("#1E1E1E"))
+        palette.setColor(QPalette.Dark, QColor("#0d0e10"))
         return palette
 
     def _preferred_font(self) -> QFont:
