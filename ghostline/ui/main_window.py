@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from ghostline.core.config import ConfigManager
 from ghostline.core.events import CommandDescriptor, CommandRegistry
-from ghostline.core.resources import load_icon
+from ghostline.core.resources import icon_path, load_icon
 from ghostline.core.theme import ThemeManager
 from ghostline.lang.diagnostics import DiagnosticsModel
 from ghostline.lang.lsp_manager import LSPManager
@@ -1864,27 +1864,48 @@ class MainWindow(QMainWindow):
                 # Status bar might already be disposed during shutdown
                 pass
 
-        label = QLabel(message, self)
-        label.setObjectName("konamiEasterEggLabel")
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet(
+        toast = QWidget(self)
+        toast.setObjectName("konamiEasterEggToast")
+        toast.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+        layout = QHBoxLayout(toast)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+
+        ghost_icon_path = icon_path("creator_ghost.svg")
+        if ghost_icon_path:
+            ghost_icon = QIcon(str(ghost_icon_path))
+            pixmap = ghost_icon.pixmap(QSize(24, 24))
+            if not pixmap.isNull():
+                icon_label = QLabel(toast)
+                icon_label.setPixmap(pixmap)
+                icon_label.setFixedSize(pixmap.size())
+                layout.addWidget(icon_label)
+
+        text_label = QLabel(message, toast)
+        text_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(text_label)
+
+        toast.setStyleSheet(
             """
-            background-color: rgba(30, 30, 30, 200);
-            color: white;
-            padding: 10px 16px;
-            border-radius: 8px;
-            font-weight: bold;
+            #konamiEasterEggToast {
+                background-color: rgba(30, 30, 30, 200);
+                color: white;
+                padding: 6px 10px;
+                border-radius: 8px;
+                font-weight: bold;
+            }
+            #konamiEasterEggToast QLabel { color: white; }
             """
         )
-        label.adjustSize()
+        toast.adjustSize()
 
         available_rect = self.rect()
-        x_pos = available_rect.center().x() - label.width() // 2
+        x_pos = available_rect.center().x() - toast.width() // 2
         y_pos = available_rect.top() + available_rect.height() // 5
-        label.move(x_pos, y_pos)
-        label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        label.show()
-        QTimer.singleShot(2500, label.deleteLater)
+        toast.move(x_pos, y_pos)
+        toast.show()
+        QTimer.singleShot(2500, toast.deleteLater)
         self._on_konami_code()
 
     def _on_konami_code(self) -> None:
