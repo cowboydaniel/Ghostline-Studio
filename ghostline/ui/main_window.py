@@ -692,7 +692,7 @@ class MainWindow(QMainWindow):
         self.central_stack.addWidget(self.workspace_dashboard)
         self.central_stack.addWidget(self.editor_container)
 
-        self.left_region_container = QWidget(self)
+        self.left_region_container = QWidget()
         self.left_region_layout = QHBoxLayout(self.left_region_container)
         self.left_region_layout.setContentsMargins(0, 0, 0, 0)
         self.left_region_layout.setSpacing(0)
@@ -710,7 +710,7 @@ class MainWindow(QMainWindow):
 
         self.central_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self.right_region_container = QWidget(self)
+        self.right_region_container = QWidget()
         self.right_region_layout = QVBoxLayout(self.right_region_container)
         self.right_region_layout.setContentsMargins(0, 0, 0, 0)
         self.right_region_layout.setSpacing(0)
@@ -728,7 +728,7 @@ class MainWindow(QMainWindow):
         self.right_region_container.setMinimumWidth(200)  # Reduced from 260
 
         # Create bottom panel (Windsurf-style with tabs)
-        self.bottom_panel = BottomPanel(self)
+        self.bottom_panel = BottomPanel()
         self.bottom_panel.setVisible(False)
         self._bottom_panel_previous_sizes: list[int] | None = None
         self._bottom_panel_maximized = False
@@ -745,7 +745,7 @@ class MainWindow(QMainWindow):
         self.bottom_panel.tab_bar.panel_collapse_requested.connect(self._toggle_bottom_panel_collapse)
 
         # Create vertical splitter for center region (editor + bottom panel)
-        self.center_vertical_splitter = QSplitter(Qt.Vertical, self)
+        self.center_vertical_splitter = QSplitter(Qt.Vertical)
         self.center_vertical_splitter.setChildrenCollapsible(False)
         self.center_vertical_splitter.addWidget(self.central_stack)
         self.center_vertical_splitter.addWidget(self.bottom_panel)
@@ -776,6 +776,8 @@ class MainWindow(QMainWindow):
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
         self.status.setContentsMargins(4, 0, 12, 0)
+        # Ensure the menu widget area is not covered by widgets created before the titlebar
+        self.main_splitter.hide()
         self.analysis_service.suggestions_changed.connect(lambda items: self.status.set_ai_suggestions_available(bool(items)))
 
         self.setStyleSheet(
@@ -821,6 +823,8 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_menus()
         self._install_title_bar()
+        # Now that the titlebar is installed, show the main content area
+        self.main_splitter.show()
         self.title_bar.back_button.clicked.connect(self._navigate_back)
         self.title_bar.forward_button.clicked.connect(self._navigate_forward)
         self.title_bar.back_button.setToolTip("Back")
