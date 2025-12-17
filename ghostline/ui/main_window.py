@@ -111,8 +111,44 @@ from ghostline.collab.transport import WebSocketTransport
 logger = logging.getLogger(__name__)
 
 
+class TitleContextLineEdit(QLineEdit):
+    """Line edit that shows project/file context while remaining searchable."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._context_text: str = ""
+        self._user_active = False
+
+    def set_context_text(self, text: str) -> None:
+        self._context_text = text
+        if not self._user_active and (not self.text() or self.text() == self._context_text or not self.hasFocus()):
+            self.setText(text)
+
+    def show_context_if_idle(self) -> None:
+        self._user_active = False
+        self.setText(self._context_text)
+
+    def focusInEvent(self, event) -> None:  # type: ignore[override]
+        self._user_active = True
+        super().focusInEvent(event)
+        QTimer.singleShot(0, self.selectAll)
+
+    def focusOutEvent(self, event) -> None:  # type: ignore[override]
+        super().focusOutEvent(event)
+        self._user_active = False
+        if not self.text().strip():
+            self.setText(self._context_text)
+
+
 class GhostlineTitleBar(QWidget):
-    """Custom frameless title bar with navigation and command search."""
+    """Custom frameless title bar with navigation and context display."""
+
+    HEIGHT = 35
+    H_MARGIN = 8
+    V_MARGIN = 3
+    SECTION_SPACING = 6
+    ICON_SIZE = QSize(14, 14)
+    CONTROL_SIZE = QSize(24, 24)
 
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
@@ -120,10 +156,11 @@ class GhostlineTitleBar(QWidget):
         self._drag_position: QPoint | None = None
 
         self.setObjectName("GhostlineTitleBar")
+        self.setFixedHeight(self.HEIGHT)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(self.H_MARGIN, self.V_MARGIN, self.H_MARGIN, self.V_MARGIN)
+        layout.setSpacing(self.SECTION_SPACING)
 
         left_container = QWidget(self)
         left_layout = QHBoxLayout(left_container)
@@ -133,38 +170,48 @@ class GhostlineTitleBar(QWidget):
         icon_button = QToolButton(left_container)
         icon_button.setObjectName("TitleIconButton")
         icon_button.setIcon(load_icon("ghostline_logo.svg"))
+        icon_button.setIconSize(self.ICON_SIZE)
         icon_button.setAutoRaise(True)
         icon_button.setToolTip("Ghostline Studio")
         left_layout.addWidget(icon_button)
 
         menubar: QMenuBar = self.window.menuBar()
         menubar.setNativeMenuBar(False)
-        menubar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        menubar.setFixedHeight(22)
+        menubar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         left_layout.addWidget(menubar)
 
         center_container = QWidget(self)
         center_layout = QHBoxLayout(center_container)
         center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(6)
+        center_layout.setSpacing(4)
 
         # TODO: Wire navigation buttons to history actions when available.
         self.back_button = QToolButton(center_container)
         self.back_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
+        self.back_button.setIconSize(self.ICON_SIZE)
+        self.back_button.setAutoRaise(True)
         self.back_button.setEnabled(False)
         self.back_button.setToolTip("Back (not yet implemented)")
         center_layout.addWidget(self.back_button)
 
         self.forward_button = QToolButton(center_container)
         self.forward_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowForward))
+        self.forward_button.setIconSize(self.ICON_SIZE)
+        self.forward_button.setAutoRaise(True)
         self.forward_button.setEnabled(False)
         self.forward_button.setToolTip("Forward (not yet implemented)")
         center_layout.addWidget(self.forward_button)
 
-        self.command_input = QLineEdit(center_container)
+        self.command_input = TitleContextLineEdit(center_container)
         self.command_input.setObjectName("CommandSearch")
-        self.command_input.setPlaceholderText("Search files and commands…")
+        self.command_input.setAlignment(Qt.AlignCenter)
+        self.command_input.setMinimumWidth(240)
+        self.command_input.setMaximumWidth(420)
+        self.command_input.setFixedHeight(24)
         self.command_input.returnPressed.connect(self._emit_command_search)
         center_layout.addWidget(self.command_input)
+        center_layout.addStretch(1)
 
         dock_toggle_bar = getattr(self.window, "dock_toggle_bar", None)
 
@@ -181,20 +228,41 @@ class GhostlineTitleBar(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
 
+        self.settings_button = QToolButton(right_container)
+        self.settings_button.setObjectName("TitleBarIcon")
+        self.settings_button.setIcon(load_icon("configure.svg"))
+        self.settings_button.setIconSize(self.ICON_SIZE)
+        self.settings_button.setAutoRaise(True)
+        self.settings_button.clicked.connect(self.window._open_settings)
+        right_layout.addWidget(self.settings_button)
+
+        self.profile_button = QToolButton(right_container)
+        self.profile_button.setObjectName("TitleBarIcon")
+        self.profile_button.setIcon(load_icon("creator_ghost.svg"))
+        self.profile_button.setIconSize(self.ICON_SIZE)
+        self.profile_button.setAutoRaise(True)
+        right_layout.addWidget(self.profile_button)
+
         self.minimize_button = QToolButton(right_container)
         self.minimize_button.setObjectName("WindowControl")
         self.minimize_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMinButton))
+        self.minimize_button.setIconSize(self.ICON_SIZE)
+        self.minimize_button.setFixedSize(self.CONTROL_SIZE)
         self.minimize_button.clicked.connect(self.window.showMinimized)
         right_layout.addWidget(self.minimize_button)
 
         self.maximize_button = QToolButton(right_container)
         self.maximize_button.setObjectName("WindowControl")
+        self.maximize_button.setIconSize(self.ICON_SIZE)
+        self.maximize_button.setFixedSize(self.CONTROL_SIZE)
         self.maximize_button.clicked.connect(self.window.toggle_maximize_restore)
         right_layout.addWidget(self.maximize_button)
 
         self.close_button = QToolButton(right_container)
         self.close_button.setObjectName("CloseControl")
         self.close_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarCloseButton))
+        self.close_button.setIconSize(self.ICON_SIZE)
+        self.close_button.setFixedSize(self.CONTROL_SIZE)
         self.close_button.clicked.connect(self.window.close)
         right_layout.addWidget(self.close_button)
 
@@ -209,14 +277,16 @@ class GhostlineTitleBar(QWidget):
         self.update_maximize_icon()
 
     def _emit_command_search(self) -> None:
-        self.window.show_command_palette(self.command_input.text())
+        query = self.command_input.text().strip()
+        self.window.show_command_palette(query or None)
+        self.command_input.show_context_if_idle()
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             """
             #GhostlineTitleBar {
                 background: palette(window);
-                border-bottom: 1px solid palette(mid);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             }
             #GhostlineTitleBar QWidget {
                 background: transparent;
@@ -224,37 +294,76 @@ class GhostlineTitleBar(QWidget):
             #GhostlineTitleBar QMenuBar {
                 background: transparent;
                 border: none;
+                padding: 0;
+                font-size: 11px;
             }
             #GhostlineTitleBar QToolBar {
                 background: transparent;
                 border: none;
                 spacing: 0;
             }
-            #GhostlineTitleBar QToolButton {
+            #GhostlineTitleBar QMenuBar::item {
+                padding: 3px 8px;
+                margin: 0 2px;
+                border-radius: 5px;
+            }
+            #GhostlineTitleBar QMenuBar::item:selected {
+                background: rgba(255, 255, 255, 0.06);
+            }
+            #GhostlineTitleBar QToolButton,
+            #GhostlineTitleBar #TitleBarIcon {
                 background: transparent;
                 border: none;
-                padding: 6px 8px;
-                border-radius: 6px;
+                padding: 4px 6px;
+                border-radius: 5px;
+                color: #c8c8c8;
             }
-            #GhostlineTitleBar QToolButton:hover {
-                background: rgba(255, 255, 255, 0.08);
+            #GhostlineTitleBar QToolButton:hover,
+            #GhostlineTitleBar #TitleBarIcon:hover {
+                background: rgba(255, 255, 255, 0.05);
+                color: #e0e0e0;
+            }
+            #WindowControl {
+                background: transparent;
+                border: none;
+                padding: 4px 6px;
+                margin-left: 2px;
+                border-radius: 5px;
+                color: #c8c8c8;
+            }
+            #WindowControl:hover {
+                background: rgba(255, 255, 255, 0.05);
+                color: #f0f0f0;
+            }
+            #CloseControl {
+                background: transparent;
+                border: none;
+                padding: 4px 6px;
+                margin-left: 2px;
+                border-radius: 5px;
+                color: #d8d8d8;
             }
             #CloseControl:hover {
-                background: #d9534f;
-                color: white;
+                background: rgba(232, 89, 89, 0.12);
+                color: #ff9a9a;
             }
             #CommandSearch {
-                border-radius: 14px;
-                padding: 6px 10px;
-                background: palette(base);
-                border: 1px solid palette(mid);
-                min-height: 28px;
+                border-radius: 8px;
+                padding: 4px 10px;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                min-height: 24px;
+                font-size: 11px;
+                color: #d0d0d0;
             }
             #CommandSearch:focus {
                 border: 1px solid palette(highlight);
             }
         """
         )
+
+    def set_context_text(self, text: str) -> None:
+        self.command_input.set_context_text(text)
 
     def update_maximize_icon(self) -> None:
         icon = (
@@ -331,6 +440,7 @@ class MainWindow(QMainWindow):
         self.git = GitIntegration()
         self.lsp_manager = LSPManager(config, workspace_manager)
         self.workspace_manager.workspaceChanged.connect(lambda _=None: self._refresh_recent_views())
+        self.workspace_manager.workspaceChanged.connect(lambda _=None: self._update_title_context())
         self.command_registry = CommandRegistry()
         # Register core commands before creating UI components
         self._register_core_commands()
@@ -396,6 +506,8 @@ class MainWindow(QMainWindow):
             command_registry=self.command_registry,
         )
         self.editor_tabs.countChanged.connect(self._show_welcome_if_empty)
+        self.editor_tabs.countChanged.connect(lambda _=None: self._update_title_context())
+        self.editor_tabs.currentChanged.connect(lambda _=None: self._update_title_context())
 
         self.activity_bar = ActivityBar(self)
 
@@ -581,6 +693,7 @@ class MainWindow(QMainWindow):
         self._connect_dock_toggles()
         self._update_workspace_state()
         self._show_welcome_if_empty()
+        self._update_title_context()
 
     def _setup_global_search_toolbar(self) -> None:
         icon_dir = Path(__file__).resolve().parent.parent / "resources" / "icons" / "dock_controls"
@@ -616,9 +729,9 @@ class MainWindow(QMainWindow):
             button.setAutoRaise(True)
             button.setToolButtonStyle(Qt.ToolButtonIconOnly)
             # Use size hint instead of fixed size for DPI scaling
-            button.setMinimumSize(QSize(24, 24))
-            button.setMaximumSize(QSize(28, 28))
-            button.setIconSize(QSize(16, 16))
+            button.setMinimumSize(QSize(22, 22))
+            button.setMaximumSize(QSize(24, 24))
+            button.setIconSize(QSize(14, 14))
             button.setStyleSheet("padding: 0; margin: 0;")
             widget_action = QWidgetAction(self.dock_toggle_bar)
             widget_action.setDefaultWidget(button)
@@ -843,6 +956,8 @@ class MainWindow(QMainWindow):
             config_exists = bool(workspace and (Path(workspace) / ".vscode" / "launch.json").exists())
             self.debugger_panel.set_configured(config_exists)
 
+        self._update_title_context()
+
     def _collect_dock_regions(self) -> None:
         self.left_docks = [self.left_dock_stack.widget(i) for i in range(self.left_dock_stack.count())]
         self.bottom_docks = []  # No longer using dock stack for bottom panels
@@ -1023,6 +1138,26 @@ class MainWindow(QMainWindow):
                 ai_open = self.ai_dock.isVisible()
             self.action_toggle_ai_dock.setChecked(ai_open)
 
+    def _update_title_context(self) -> None:
+        if not hasattr(self, "title_bar"):
+            return
+
+        workspace = self.workspace_manager.current_workspace
+        project_label = workspace.name if workspace else "No workspace"
+        editor = self.get_current_editor()
+        file_label = None
+        if editor:
+            if editor.path:
+                file_label = Path(editor.path).name
+            else:
+                file_label = "Untitled"
+
+        context = project_label if project_label else ""
+        if file_label:
+            context = f"{project_label} - {file_label}" if project_label else file_label
+
+        self.title_bar.set_context_text(context)
+
     def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
         if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
             return
@@ -1145,6 +1280,10 @@ class MainWindow(QMainWindow):
         self.action_replace.setShortcut("Ctrl+H")
         self.action_replace.triggered.connect(self._open_global_search)
 
+        self.action_select_all = QAction("Select All", self)
+        self.action_select_all.setShortcut("Ctrl+A")
+        self.action_select_all.triggered.connect(lambda: self._with_editor(lambda e: e.selectAll()))
+
         # Project/Run/Debug
         self.action_project_settings = QAction("Project Settings", self)
         self.action_project_settings.triggered.connect(lambda: self.status.show_message("Project settings coming soon"))
@@ -1193,7 +1332,10 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.action_open_file)
         file_menu.addAction(self.action_open_folder)
         file_menu.addAction(self.action_close_folder)
+        file_menu.addAction(self.action_project_settings)
         file_menu.addSeparator()
+        tools_menu = file_menu.addMenu("Tools")
+        tools_menu.addAction(self.action_open_plugins)
         file_menu.addAction(self.action_settings)
 
         edit_menu = menubar.addMenu("Edit")
@@ -1204,51 +1346,49 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.action_copy)
         edit_menu.addAction(self.action_paste)
         edit_menu.addSeparator()
+        edit_menu.addAction(self.action_format_document)
+        edit_menu.addSeparator()
         edit_menu.addAction(self.action_find)
         edit_menu.addAction(self.action_replace)
+
+        selection_menu = menubar.addMenu("Selection")
+        selection_menu.addAction(self.action_select_all)
+        selection_menu.addSeparator()
+        selection_menu.addAction(self.action_ai_explain)
+        selection_menu.addAction(self.action_ai_refactor)
 
         self.view_menu = menubar.addMenu("View")
         self.view_menu.addAction(self.action_command_palette)
         self.view_menu.addAction(self.action_toggle_project)
         self.view_menu.addAction(self.action_toggle_split_editor)
-        self.view_menu.addAction(self.action_toggle_terminal)
-        self.view_menu.addAction(self.action_global_search)
-        self.view_menu.addAction(self.action_goto_symbol)
-        self.view_menu.addAction(self.action_goto_file)
         self.view_menu.addAction(self.action_toggle_architecture_map)
         self.view_menu.addAction(self.action_toggle_ai_dock)
-        self.view_menu.addAction(self.action_restart_language)
+        ai_menu = self.view_menu.addMenu("AI")
+        ai_menu.addAction(self.action_ask_ai)
+        ai_menu.addAction(self.action_ai_code_actions)
+        ai_menu.addSeparator()
+        ai_menu.addAction(self.action_ai_settings)
+        ai_menu.addAction(self.action_setup_wizard)
 
-        project_menu = menubar.addMenu("Project")
-        project_menu.addAction(self.action_open_folder)
-        project_menu.addAction(self.action_close_folder)
-        project_menu.addAction(self.action_project_settings)
+        go_menu = menubar.addMenu("Go")
+        go_menu.addAction(self.action_goto_file)
+        go_menu.addAction(self.action_goto_symbol)
+        go_menu.addAction(self.action_global_search)
 
         run_menu = menubar.addMenu("Run")
         run_menu.addAction(self.action_run)
         run_menu.addAction(self.action_run_tests)
-        run_menu.addAction(self.action_run_tasks)
-
-        debug_menu = menubar.addMenu("Debug")
+        run_menu.addAction(self.action_run_task)
+        debug_menu = run_menu.addMenu("Debug")
         debug_menu.addAction(self.action_start_debugging)
         debug_menu.addAction(self.action_stop_debugging)
         debug_menu.addAction(self.action_step_over)
         debug_menu.addAction(self.action_step_into)
         debug_menu.addAction(self.action_step_out)
 
-        ai_menu = menubar.addMenu("AI")
-        ai_menu.addAction(self.action_ask_ai)
-        ai_menu.addAction(self.action_ai_explain)
-        ai_menu.addAction(self.action_ai_refactor)
-        ai_menu.addAction(self.action_ai_code_actions)
-        ai_menu.addSeparator()
-        ai_menu.addAction(self.action_ai_settings)
-        ai_menu.addAction(self.action_setup_wizard)
-
-        tools_menu = menubar.addMenu("Tools")
-        tools_menu.addAction(self.action_open_plugins)
-        tools_menu.addAction(self.action_run_task)
-        tools_menu.addAction(self.action_format_document)
+        terminal_menu = menubar.addMenu("Terminal")
+        terminal_menu.addAction(self.action_toggle_terminal)
+        terminal_menu.addAction(self.action_restart_language)
 
         help_menu = menubar.addMenu("Help")
         help_menu.addAction(self.action_docs)
@@ -1529,6 +1669,7 @@ class MainWindow(QMainWindow):
                 logger.exception("Failed to capture file contents for AI backend on open: %s", path)
                 file_text = ""
             ai_client.on_file_opened(Path(path), file_text)
+        self._update_title_context()
 
     def _open_graph_location(self, path: str, line: int | None) -> None:
         if line is None:
@@ -1543,6 +1684,7 @@ class MainWindow(QMainWindow):
             self.context_engine.on_workspace_changed(workspace_path)
         workspace_str = str(workspace_path) if workspace_path else None
         self.status.update_git(workspace_str)
+        self._update_title_context()
         self.status.show_message(f"Opened workspace: {folder}")
         self._refresh_recent_views()
 
@@ -1753,6 +1895,7 @@ class MainWindow(QMainWindow):
             self.context_engine.on_workspace_changed(None)
         self._show_welcome_if_empty()
         self._refresh_recent_views()
+        self._update_title_context()
 
     def open_file_at(self, path: str, line: int) -> None:
         self.open_file(path)

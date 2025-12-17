@@ -28,12 +28,15 @@ QDockWidget::title {
 QMenuBar {
     background-color: #101113;
     color: #d0d0d0;
+    font-size: 11px;
 }
 
 QMenuBar::item {
-    spacing: 4px;
-    padding: 6px 10px;  /* Increased from 4px 8px for better click targets */
+    spacing: 2px;
+    padding: 3px 8px;
+    margin: 0 2px;
     background: transparent;
+    border-radius: 5px;
 }
 
 QMenuBar::item:selected {
@@ -47,7 +50,7 @@ QMenu {
 }
 
 QMenu::item {
-    padding: 6px 24px 6px 24px;  /* Increased vertical padding from 4px to 6px */
+    padding: 5px 20px 5px 20px;
 }
 
 QMenu::item:selected {
@@ -57,7 +60,7 @@ QMenu::item:selected {
 QToolBar {
     background-color: #101113;
     border-bottom: 1px solid #2b2d34;
-    spacing: 4px;
+    spacing: 3px;
 }
 
 QStatusBar {
