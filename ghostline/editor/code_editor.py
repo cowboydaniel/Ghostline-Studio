@@ -720,6 +720,8 @@ class PythonHighlighter(QSyntaxHighlighter):
 
 
 class CodeEditor(QPlainTextEdit):
+    navigationStateChanged = Signal(bool, bool)
+    editNavigationChanged = Signal(bool, bool)
     def __init__(
         self,
         path: Path | None = None,
@@ -798,6 +800,13 @@ class CodeEditor(QPlainTextEdit):
         }
         self._word_wrap_enabled = bool(editor_config.get("word_wrap", False))
 
+        self._nav_back_stack: list[tuple[int, int]] = []
+        self._nav_forward_stack: list[tuple[int, int]] = []
+        self._navigating = False
+        self._edit_locations: list[tuple[int, int]] = []
+        self._edit_index: int | None = None
+        self._last_edit_location: tuple[int, int] | None = None
+
         wrap_mode = QPlainTextEdit.WidgetWidth if self._word_wrap_enabled else QPlainTextEdit.NoWrap
         self.setLineWrapMode(wrap_mode)
 
@@ -811,11 +820,13 @@ class CodeEditor(QPlainTextEdit):
 
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_bracket_match)
+        self.cursorPositionChanged.connect(self._record_cursor_history)
         self.selectionChanged.connect(self._reset_selection_stack)
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.textChanged.connect(self._notify_lsp_change)
         self.textChanged.connect(self._refresh_semantic_tokens)
+        self.textChanged.connect(self._record_edit_location)
 
         self._update_language_for_context()
         self.folding = FoldingManager(self)
@@ -843,6 +854,7 @@ class CodeEditor(QPlainTextEdit):
             # For new/empty files, use the delayed request
             self._refresh_semantic_tokens()
 
+        self._record_position_for_history(initial=True)
     # Editing utilities
     def _install_shortcuts(self) -> None:
         """Ensure core edit commands work even with custom key handling."""
@@ -2390,6 +2402,152 @@ class CodeEditor(QPlainTextEdit):
         next_cursor = QTextCursor(cursor)
         next_cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
         return next_cursor.selectedText()
+
+    # Navigation helpers -------------------------------------------------
+    def _record_position_for_history(self, initial: bool = False) -> None:
+        if self._navigating:
+            return
+        cursor = self.textCursor()
+        location = (cursor.blockNumber(), cursor.positionInBlock())
+        if self._nav_back_stack and self._nav_back_stack[-1] == location and not initial:
+            return
+        self._nav_back_stack.append(location)
+        self._nav_back_stack = self._nav_back_stack[-200:]
+        if not initial:
+            self._nav_forward_stack.clear()
+        self.navigationStateChanged.emit(self.can_go_back(), self.can_go_forward())
+
+    def _record_cursor_history(self) -> None:
+        self._record_position_for_history(initial=False)
+
+    def _record_edit_location(self) -> None:
+        cursor = self.textCursor()
+        location = (cursor.blockNumber(), cursor.positionInBlock())
+        if self._edit_locations and self._edit_locations[-1] == location:
+            return
+        self._edit_locations.append(location)
+        self._edit_locations = self._edit_locations[-200:]
+        self._edit_index = len(self._edit_locations) - 1
+        self._last_edit_location = location
+        self.editNavigationChanged.emit(self.has_previous_change(), self.has_next_change())
+
+    def can_go_back(self) -> bool:
+        return len(self._nav_back_stack) > 1
+
+    def can_go_forward(self) -> bool:
+        return bool(self._nav_forward_stack)
+
+    def go_back(self) -> None:
+        if not self.can_go_back():
+            return
+        current = self._nav_back_stack.pop()
+        target = self._nav_back_stack[-1]
+        self._nav_forward_stack.append(current)
+        self._move_to_location(target)
+        self.navigationStateChanged.emit(self.can_go_back(), self.can_go_forward())
+
+    def go_forward(self) -> None:
+        if not self.can_go_forward():
+            return
+        target = self._nav_forward_stack.pop()
+        self._nav_back_stack.append(target)
+        self._move_to_location(target)
+        self.navigationStateChanged.emit(self.can_go_back(), self.can_go_forward())
+
+    def go_to_last_edit(self) -> None:
+        if not self._last_edit_location:
+            return
+        self._move_to_location(self._last_edit_location)
+
+    def has_previous_change(self) -> bool:
+        return self._edit_index is not None and self._edit_index > 0
+
+    def has_next_change(self) -> bool:
+        return self._edit_index is not None and self._edit_index < len(self._edit_locations) - 1
+
+    def previous_change(self) -> None:
+        if not self.has_previous_change():
+            return
+        assert self._edit_index is not None
+        self._edit_index -= 1
+        self._move_to_location(self._edit_locations[self._edit_index])
+        self.editNavigationChanged.emit(self.has_previous_change(), self.has_next_change())
+
+    def next_change(self) -> None:
+        if not self.has_next_change():
+            return
+        assert self._edit_index is not None
+        self._edit_index += 1
+        self._move_to_location(self._edit_locations[self._edit_index])
+        self.editNavigationChanged.emit(self.has_previous_change(), self.has_next_change())
+
+    def go_to_line_column(self, line: int, column: int = 0) -> None:
+        line = max(1, line)
+        column = max(0, column)
+        block = self.document().findBlockByNumber(line - 1)
+        if not block.isValid():
+            return
+        position = block.position() + min(column, len(block.text()))
+        self._set_cursor_position(position)
+
+    def jump_to_matching_bracket(self) -> None:
+        match_position = self._find_matching_bracket_position()
+        if match_position is None:
+            return
+        self._set_cursor_position(match_position)
+
+    def _move_to_location(self, location: tuple[int, int]) -> None:
+        block_number, column = location
+        block = self.document().findBlockByNumber(max(block_number, 0))
+        if not block.isValid():
+            return
+        position = block.position() + min(column, len(block.text()))
+        self._set_cursor_position(position)
+
+    def _set_cursor_position(self, position: int) -> None:
+        self._navigating = True
+        cursor = self.textCursor()
+        cursor.setPosition(max(0, min(position, len(self.toPlainText()))))
+        self.setTextCursor(cursor)
+        self.centerCursor()
+        self._navigating = False
+
+    def _find_matching_bracket_position(self) -> int | None:
+        text = self.toPlainText()
+        if not text:
+            return None
+        brackets = {'(': ')', '[': ']', '{': '}', ')': '(', ']': '[', '}': '{'}
+        cursor = self.textCursor()
+        pos = cursor.position()
+        char = text[pos - 1] if pos > 0 and text[pos - 1] in brackets else (text[pos] if pos < len(text) and text[pos] in brackets else "")
+        if not char:
+            return None
+        target = brackets[char]
+        if char in "([{":
+            depth = 1
+            i = pos
+            while i < len(text):
+                c = text[i]
+                if c == char:
+                    depth += 1
+                elif c == target:
+                    depth -= 1
+                    if depth == 0:
+                        return i
+                i += 1
+        else:
+            depth = 1
+            i = pos - 2
+            while i >= 0:
+                c = text[i]
+                if c == char:
+                    depth += 1
+                elif c == target:
+                    depth -= 1
+                    if depth == 0:
+                        return i
+                i -= 1
+        return None
 
     def apply_unified_patch(self, patch: str) -> None:
         """Apply a unified diff to the current buffer as a single undo step."""

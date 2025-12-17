@@ -7,6 +7,8 @@ from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
 from ghostline.ui.dialogs.developer_tools import DeveloperToolsDialog, ProcessExplorerDialog
 from ghostline.ui.dialogs.playground_dialog import EditorPlaygroundDialog, WalkthroughDialog
 
+from .quick_open_dialog import QuickOpenDialog
+
 __all__ = [
     "AISettingsDialog",
     "CreditsDialog",

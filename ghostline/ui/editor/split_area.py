@@ -91,6 +91,51 @@ class SplitEditorArea(QWidget):
             return self.secondary.current_editor() or self.primary.current_editor()
         return self.primary.current_editor()
 
+    def _active_tabs(self) -> EditorTabs:
+        if self._active_pane == "secondary" and self.secondary.isVisible():
+            return self.secondary
+        return self.primary
+
+    def focus_next_tab(self) -> None:
+        tabs = self._active_tabs()
+        count = tabs.count()
+        if count == 0:
+            return
+        new_index = (tabs.currentIndex() + 1) % count
+        tabs.setCurrentIndex(new_index)
+
+    def focus_previous_tab(self) -> None:
+        tabs = self._active_tabs()
+        count = tabs.count()
+        if count == 0:
+            return
+        new_index = (tabs.currentIndex() - 1) % count
+        tabs.setCurrentIndex(new_index)
+
+    def focus_pane(self, pane: str) -> None:
+        if pane == "secondary" and not self.secondary.isVisible():
+            self.secondary.show()
+        self._set_active_pane(pane)
+        target = self.secondary if pane == "secondary" else self.primary
+        if target.count():
+            target.setCurrentIndex(max(0, target.currentIndex()))
+            target.setFocus()
+        self._emit_count()
+
+    def move_current_to_other(self) -> None:
+        editor = self.current_editor()
+        if not editor or not editor.path:
+            return
+        target = "secondary" if self._active_pane != "secondary" else "primary"
+        moved = self.add_editor_for_file(editor.path, preview=False, target=target)
+        if moved and moved is not editor:
+            current_tabs = self._active_tabs()
+            if isinstance(current_tabs, EditorTabs):
+                index = current_tabs._find_tab_for_file(editor.path)
+                if index is not None:
+                    current_tabs._close_tab(index)
+        self._set_active_pane(target)
+
     def count(self) -> int:
         total = self.primary.count()
         if self.secondary.isVisible():
