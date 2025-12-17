@@ -165,13 +165,21 @@ class TitleContextLineEdit(QLineEdit):
         self._user_active = False
 
     def set_context_text(self, text: str) -> None:
-        self._context_text = text
-        if not self._user_active and (not self.text() or self.text() == self._context_text or not self.hasFocus()):
-            self.setText(text)
+        try:
+            self._context_text = text
+            if not self._user_active and (not self.text() or self.text() == self._context_text or not self.hasFocus()):
+                self.setText(text)
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def show_context_if_idle(self) -> None:
-        self._user_active = False
-        self.setText(self._context_text)
+        try:
+            self._user_active = False
+            self.setText(self._context_text)
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def focusInEvent(self, event) -> None:  # type: ignore[override]
         self._user_active = True
@@ -484,16 +492,25 @@ class GhostlineTitleBar(QWidget):
         )
 
     def set_context_text(self, text: str) -> None:
-        self.command_input.set_context_text(text)
+        try:
+            if hasattr(self, 'command_input') and self.command_input:
+                self.command_input.set_context_text(text)
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def update_maximize_icon(self) -> None:
-        icon = (
-            self.style().standardIcon(QStyle.SP_TitleBarNormalButton)
-            if self.window.isMaximized()
-            else self.style().standardIcon(QStyle.SP_TitleBarMaxButton)
-        )
-        self.maximize_button.setIcon(icon)
-        self.maximize_button.setToolTip("Restore" if self.window.isMaximized() else "Maximize")
+        try:
+            icon = (
+                self.style().standardIcon(QStyle.SP_TitleBarNormalButton)
+                if self.window.isMaximized()
+                else self.style().standardIcon(QStyle.SP_TitleBarMaxButton)
+            )
+            self.maximize_button.setIcon(icon)
+            self.maximize_button.setToolTip("Restore" if self.window.isMaximized() else "Maximize")
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.LeftButton and not self._is_interactive_child(event.pos()):
@@ -913,11 +930,16 @@ class MainWindow(QMainWindow):
             self.central_stack.setCurrentWidget(self.welcome_portal)
 
     def _refresh_recent_views(self) -> None:
-        workspace = self.workspace_manager.current_workspace
-        if workspace:
-            files = self.workspace_manager.get_recent_files(workspace)
-            self.workspace_dashboard.set_workspace(workspace, files)
-        self.welcome_portal.set_recent_files(self.workspace_manager.get_recent_files())
+        try:
+            workspace = self.workspace_manager.current_workspace
+            if workspace and hasattr(self, 'workspace_dashboard'):
+                files = self.workspace_manager.get_recent_files(workspace)
+                self.workspace_dashboard.set_workspace(workspace, files)
+            if hasattr(self, 'welcome_portal'):
+                self.welcome_portal.set_recent_files(self.workspace_manager.get_recent_files())
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def _restore_workspace_tabs(self, workspace_str: str | None) -> None:
         if not workspace_str:
@@ -1362,21 +1384,25 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "title_bar"):
             return
 
-        workspace = self.workspace_manager.current_workspace
-        project_label = workspace.name if workspace else "No workspace"
-        editor = self.get_current_editor()
-        file_label = None
-        if editor:
-            if editor.path:
-                file_label = Path(editor.path).name
-            else:
-                file_label = "Untitled"
+        try:
+            workspace = self.workspace_manager.current_workspace
+            project_label = workspace.name if workspace else "No workspace"
+            editor = self.get_current_editor()
+            file_label = None
+            if editor:
+                if editor.path:
+                    file_label = Path(editor.path).name
+                else:
+                    file_label = "Untitled"
 
-        context = project_label if project_label else ""
-        if file_label:
-            context = f"{project_label} - {file_label}" if project_label else file_label
+            context = project_label if project_label else ""
+            if file_label:
+                context = f"{project_label} - {file_label}" if project_label else file_label
 
-        self.title_bar.set_context_text(context)
+            self.title_bar.set_context_text(context)
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def _bind_navigation_signals(self) -> None:
         editor = self.get_current_editor()
