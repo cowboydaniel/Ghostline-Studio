@@ -704,6 +704,10 @@ class CodeEditor(QPlainTextEdit):
             '"': '"',
             "'": "'",
         }
+        self._word_wrap_enabled = bool(editor_config.get("word_wrap", False))
+
+        wrap_mode = QPlainTextEdit.WidgetWidth if self._word_wrap_enabled else QPlainTextEdit.NoWrap
+        self.setLineWrapMode(wrap_mode)
 
         font_family = self.config.get("font", {}).get("editor_family", "JetBrains Mono") if self.config else "JetBrains Mono"
         font_size = self.config.get("font", {}).get("editor_size", 11) if self.config else 11
@@ -785,6 +789,15 @@ class CodeEditor(QPlainTextEdit):
         self._last_semantic_revision = -1
         self._semantic_request_pending = False
         self._refresh_semantic_tokens()
+
+    def set_word_wrap_enabled(self, enabled: bool) -> None:
+        """Toggle soft-wrapping of editor lines."""
+
+        self._word_wrap_enabled = bool(enabled)
+        self.setLineWrapMode(QPlainTextEdit.WidgetWidth if self._word_wrap_enabled else QPlainTextEdit.NoWrap)
+
+    def word_wrap_enabled(self) -> bool:
+        return self._word_wrap_enabled
 
     def _update_document_path(self, path: Path | None) -> None:
         if path == self.path:
