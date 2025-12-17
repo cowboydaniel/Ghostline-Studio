@@ -911,7 +911,7 @@ class MainWindow(QMainWindow):
         self.title_bar = GhostlineTitleBar(self)
         self.setMenuWidget(self.title_bar)
 
-        container = QWidget(self)
+        container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
