@@ -4,8 +4,10 @@ from __future__ import annotations
 import importlib.metadata as importlib_metadata
 import json
 import logging
+import os
 import platform
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -615,6 +617,10 @@ class MainWindow(QMainWindow):
         editor_view_cfg = self.config.settings.setdefault("editor", {}) if self.config else {}
         self._word_wrap_enabled = bool(self.view_settings.get("word_wrap", editor_view_cfg.get("word_wrap", False)))
         self._autosave_enabled = bool(self.config.get("autosave", {}).get("enabled", False))
+        autosave_cfg = self.config.get("autosave", {}) if self.config else {}
+        self._autosave_interval = int(autosave_cfg.get("interval_seconds", 60))
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._perform_autosave)
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -1343,6 +1349,9 @@ class MainWindow(QMainWindow):
         bar_settings = self.view_settings.setdefault("bars", {})
 
         command_definitions = [
+            CommandActionDefinition("file.new", "New File", "File", handler=self._create_new_file, shortcut="Ctrl+N"),
+            CommandActionDefinition("file.save", "Save", "File", handler=self._save_current_file, shortcut="Ctrl+S"),
+            CommandActionDefinition("file.save_as", "Save As...", "File", handler=self._save_current_file_as),
             CommandActionDefinition("file.open", "Open File", "File", handler=self._prompt_open_file),
             CommandActionDefinition("file.open_folder", "Open Folder", "File", handler=self._prompt_open_folder),
             CommandActionDefinition("file.close_folder", "Close Folder", "File", handler=self._close_folder),
@@ -1639,6 +1648,9 @@ class MainWindow(QMainWindow):
         self.ui_action_registry.bulk_register(command_definitions)
         actions = self.ui_action_registry.build()
 
+        self.action_new_file = actions["file.new"]
+        self.action_save_file = actions["file.save"]
+        self.action_save_file_as = actions["file.save_as"]
         self.action_open_file = actions["file.open"]
         self.action_open_folder = actions["file.open_folder"]
         self.action_close_folder = actions["file.close_folder"]
@@ -1707,14 +1719,30 @@ class MainWindow(QMainWindow):
     def _create_menus(self) -> None:
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
+        file_menu.addAction(self.action_new_file)
+        file_menu.addAction(self.action_save_file)
+        file_menu.addAction(self.action_save_file_as)
         file_menu.addAction(self.action_open_file)
         file_menu.addAction(self.action_open_folder)
         file_menu.addAction(self.action_close_folder)
         file_menu.addAction(self.action_project_settings)
         file_menu.addSeparator()
+        new_window_action = QAction("New Window", self)
+        new_window_action.triggered.connect(lambda: self._launch_new_window())
+        file_menu.addAction(new_window_action)
+        profile_window_action = QAction("New Window with Profile...", self)
+        profile_window_action.triggered.connect(self._prompt_new_profile_window)
+        file_menu.addAction(profile_window_action)
+        file_menu.addSeparator()
+        share_menu = file_menu.addMenu("Share")
+        share_menu.addAction(self._create_share_file_action())
+        share_menu.addAction(self._create_share_workspace_action())
+        file_menu.addSeparator()
         tools_menu = file_menu.addMenu("Tools")
         tools_menu.addAction(self.action_open_plugins)
-        file_menu.addAction(self.action_ghostline_settings)
+        prefs_menu = file_menu.addMenu("Preferences")
+        prefs_menu.addAction(self.action_ghostline_settings)
+        prefs_menu.addAction(self.action_keyboard_shortcuts)
 
         edit_menu = menubar.addMenu("Edit")
         edit_menu.addAction(self.action_undo)
@@ -2239,6 +2267,40 @@ class MainWindow(QMainWindow):
         if command_id in commands:
             commands[command_id](**kwargs)
 
+    def _create_new_file(self) -> None:
+        editor = self.editor_tabs.add_untitled_editor()
+        editor.document().setModified(True)
+        self._update_title_context()
+
+    def _save_current_file(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        if not editor.path:
+            self._save_current_file_as()
+            return
+        editor.save()
+        self.editor_tabs.update_tab_for_editor(editor)
+        self.status.show_message("File saved")
+        if editor.path:
+            self.workspace_manager.record_recent_file(str(editor.path))
+            self.plugin_loader.emit_event("file.saved", path=str(editor.path))
+
+    def _save_current_file_as(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save File")
+        if not path:
+            return
+        editor.set_path(Path(path))
+        editor.save()
+        self.editor_tabs.update_tab_for_editor(editor)
+        self.workspace_manager.register_recent(path)
+        self.workspace_manager.record_recent_file(path)
+        self.status.show_message(f"Saved {Path(path).name}")
+        self.plugin_loader.emit_event("file.saved", path=path)
+
     def _prompt_open_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open File")
         if path:
@@ -2270,7 +2332,78 @@ class MainWindow(QMainWindow):
         workspace_path = self.workspace_manager.templates.create(template, destination)
         self.open_folder(str(workspace_path))
 
+    def _create_share_file_action(self) -> QAction:
+        action = QAction("Copy Active File Path", self)
+        action.triggered.connect(self._copy_active_file_path)
+        return action
+
+    def _create_share_workspace_action(self) -> QAction:
+        action = QAction("Copy Workspace Path", self)
+        action.triggered.connect(self._copy_workspace_path)
+        return action
+
+    def _copy_active_file_path(self) -> None:
+        editor = self.get_current_editor()
+        if editor and editor.path:
+            QApplication.clipboard().setText(str(editor.path))
+            self.status.show_message("Copied file path to clipboard")
+        else:
+            self.status.show_message("No active file to share")
+
+    def _copy_workspace_path(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        if workspace:
+            QApplication.clipboard().setText(str(workspace))
+            self.status.show_message("Copied workspace path to clipboard")
+        else:
+            self.status.show_message("No workspace open")
+
+    def _launch_new_window(self, profile: str | None = None) -> None:
+        executable = sys.executable
+        entry = Path(sys.argv[0]).resolve()
+        if not entry.exists():
+            entry = Path(__file__).resolve().parents[2] / "start.py"
+
+        env = dict(os.environ)
+        if profile:
+            profile_dir = CONFIG_DIR / "profiles" / profile
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            env["GHOSTLINE_CONFIG_DIR"] = str(profile_dir)
+        else:
+            env.setdefault("GHOSTLINE_CONFIG_DIR", str(CONFIG_DIR))
+
+        subprocess.Popen([executable, str(entry)], env=env)
+
+    def _prompt_new_profile_window(self) -> None:
+        profile, ok = QInputDialog.getText(self, "Profile", "Profile name", QLineEdit.Normal, "default")
+        if not ok or not profile.strip():
+            return
+        self._launch_new_window(profile.strip())
+
+    def _dirty_editors(self) -> list[CodeEditor]:
+        return [editor for editor in self.editor_tabs.iter_editors() if editor.is_dirty()]
+
+    def _confirm_unsaved_changes(self) -> bool:
+        dirty = self._dirty_editors()
+        if not dirty:
+            return True
+
+        answer = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "You have unsaved changes. Save them before continuing?",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            QMessageBox.Yes,
+        )
+        if answer == QMessageBox.Cancel:
+            return False
+        if answer == QMessageBox.Yes:
+            self.save_all()
+        return True
+
     def _close_folder(self) -> None:
+        if not self._confirm_unsaved_changes():
+            return
         self.workspace_manager.clear_workspace()
         self._restored_workspace = None
         if hasattr(self, "project_model"):
@@ -2294,6 +2427,9 @@ class MainWindow(QMainWindow):
             editor.setTextCursor(cursor)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        if not self._confirm_unsaved_changes():
+            event.ignore()
+            return
         try:
             if hasattr(self, "analysis_service") and self.analysis_service:
                 try:
@@ -2621,6 +2757,22 @@ class MainWindow(QMainWindow):
         self._autosave_enabled = bool(checked)
         autosave_cfg = self.config.settings.setdefault("autosave", {}) if self.config else {}
         autosave_cfg["enabled"] = self._autosave_enabled
+        autosave_cfg.setdefault("interval_seconds", self._autosave_interval)
+        self._autosave_interval = int(autosave_cfg.get("interval_seconds", self._autosave_interval))
+        if self._autosave_enabled:
+            self._autosave_timer.start(self._autosave_interval * 1000)
+        else:
+            self._autosave_timer.stop()
+
+    def _perform_autosave(self) -> None:
+        if not self._autosave_enabled:
+            return
+        for editor in self.editor_tabs.iter_editors():
+            if editor.is_dirty():
+                editor.save()
+                if editor.path:
+                    self.plugin_loader.emit_event("file.saved", path=str(editor.path))
+        self.status.show_message("Autosaved dirty files")
 
     def _toggle_activity_bar_visible(self, checked: bool) -> None:
         self.view_settings.setdefault("bars", {})["activity"] = bool(checked)
