@@ -9,6 +9,8 @@ tabs:
 editor:
   auto_close_brackets: true
   word_wrap: false
+  column_selection_mode: false
+  multi_cursor_modifier: "alt"
 autosave:
   enabled: false
   interval_seconds: 60

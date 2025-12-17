@@ -39,6 +39,7 @@ class EditorTabs(QTabWidget):
         self.ai_client = ai_client
         self.command_registry = command_registry
         self._preview_tabs: set[int] = set()
+        self._untitled_counter = 1
         self.setObjectName("EditorTabs")
         self.setTabBar(EditorTabBar())
         self.setTabsClosable(True)
@@ -85,6 +86,25 @@ class EditorTabs(QTabWidget):
         self.countChanged.emit(self.count())
         return editor.editor
 
+    def add_untitled_editor(self) -> CodeEditor:
+        """Create a new untitled editor that lives in memory until saved."""
+
+        title = f"Untitled {self._untitled_counter}"
+        self._untitled_counter += 1
+
+        editor = EditorWidget(
+            None,
+            config=self.config,
+            theme=self.theme,
+            lsp_manager=self.lsp_manager,
+            ai_client=self.ai_client,
+            command_registry=self.command_registry,
+        )
+        tab_index = self.addTab(editor, title)
+        self.setCurrentIndex(tab_index)
+        self.countChanged.emit(self.count())
+        return editor.editor
+
     def _find_tab_for_file(self, path: Path) -> int | None:
         for index in range(self.count()):
             widget = self.widget(index)
@@ -100,6 +120,20 @@ class EditorTabs(QTabWidget):
 
     def _close_tab(self, index: int) -> None:
         widget = self.widget(index)
+        if isinstance(widget, EditorWidget) and widget.editor.is_dirty():
+            from PySide6.QtWidgets import QMessageBox
+
+            answer = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                f"Save changes to {widget.editor.path.name if widget.editor.path else 'Untitled'} before closing?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Yes,
+            )
+            if answer == QMessageBox.Cancel:
+                return
+            if answer == QMessageBox.Yes:
+                widget.editor.save()
         if widget:
             widget.deleteLater()
         self.removeTab(index)
@@ -127,6 +161,18 @@ class EditorTabs(QTabWidget):
             widget = self.widget(index)
             if isinstance(widget, EditorWidget):
                 self._update_tab_text(index, widget.editor.path.name if widget.editor.path else "Untitled", preview=False)
+
+    def update_tab_for_editor(self, editor: CodeEditor) -> None:
+        """Update tab title and icon when an editor path changes."""
+
+        for index in range(self.count()):
+            widget = self.widget(index)
+            if isinstance(widget, EditorWidget) and widget.editor is editor:
+                name = editor.path.name if editor.path else f"Untitled {index + 1}"
+                self.setTabText(index, name)
+                if editor.path:
+                    self.setTabIcon(index, self._icon_for_file(editor.path))
+                return
 
     def _update_tab_text(self, index: int, text: str, preview: bool) -> None:
         self.setTabText(index, text)
