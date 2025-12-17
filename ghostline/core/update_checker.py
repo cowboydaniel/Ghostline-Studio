@@ -49,14 +49,16 @@ class UpdateChecker:
                         "release_body": data.get("body", ""),
                     }
             except urllib.error.URLError as e:
-                logger.warning(f"Network error checking for updates: {e}")
+                logger.debug(f"Network error checking for updates: {e}")
                 return None
             except urllib.error.HTTPError as e:
-                logger.warning(f"HTTP error checking for updates: {e}")
+                # Log actual HTTP status code for debugging
+                logger.debug(f"HTTP error {e.code} checking for updates: {e}")
+                # Return None - will be handled gracefully in UI
                 return None
 
         except Exception as e:
-            logger.error(f"Error checking for updates: {e}")
+            logger.debug(f"Error checking for updates: {e}")
             return None
 
     def _parse_version(self, version: str) -> tuple[int, ...]:

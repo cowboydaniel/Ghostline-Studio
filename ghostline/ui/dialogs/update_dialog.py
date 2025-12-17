@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.core.update_checker import UpdateChecker
+from ghostline.core.urls import RELEASES_URL
 
 
 class UpdateDialog(QDialog):
@@ -71,15 +72,24 @@ class UpdateDialog(QDialog):
         """Check for updates from GitHub."""
         result = self.update_checker.check_for_updates()
 
+        current_version = self.update_checker.current_version
+        self.version_label.setText(f"Current version: {current_version}")
+
         if result is None:
             self.status_label.setText(
-                "Unable to check for updates. Please check your internet connection."
+                "Unable to check for updates automatically.\n\n"
+                "Network or firewall may be blocking GitHub API.\n"
+                "Click 'View Releases' to check manually."
             )
+            # Still show button to check manually
+            self.open_btn.setText("View Releases")
+            self.open_btn.setVisible(True)
+            self.release_url = RELEASES_URL
             return
 
         current = result["current_version"]
         latest = result["latest_version"]
-        self.release_url = result.get("release_url", "")
+        self.release_url = result.get("release_url", RELEASES_URL)
         release_name = result.get("release_name", f"Version {latest}")
         release_body = result.get("release_body", "")
 
@@ -89,6 +99,7 @@ class UpdateDialog(QDialog):
             self.status_label.setText(
                 f"A new version is available! ({release_name})"
             )
+            self.open_btn.setText("Open Release Page")
             self.open_btn.setVisible(True)
 
             if release_body:
