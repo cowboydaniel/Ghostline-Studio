@@ -145,11 +145,21 @@ class GhostlineTitleBar(QWidget):
     """Custom frameless title bar with navigation and context display."""
 
     HEIGHT = 35
-    H_MARGIN = 8
-    V_MARGIN = 3
-    SECTION_SPACING = 6
+    CONTENT_HEIGHT = 26
+    H_MARGIN = 6
+    V_MARGIN = 2
+    SECTION_SPACING = 4
     ICON_SIZE = QSize(14, 14)
     CONTROL_SIZE = QSize(24, 24)
+    BUTTON_SPACING = 4
+    MENU_ITEM_H_PADDING = 6
+    MENU_ITEM_V_PADDING = 2
+    MENU_ITEM_MARGIN = 1
+    TOOLBUTTON_H_PADDING = 5
+    TOOLBUTTON_V_PADDING = 3
+    CONTROL_MARGIN = 1
+    PILL_H_PADDING = 9
+    PILL_V_PADDING = 3
 
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
@@ -166,31 +176,35 @@ class GhostlineTitleBar(QWidget):
         left_container = QWidget(self)
         left_layout = QHBoxLayout(left_container)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
+        left_layout.setSpacing(self.BUTTON_SPACING)
+        left_layout.setAlignment(Qt.AlignVCenter)
 
         icon_button = QToolButton(left_container)
         icon_button.setObjectName("TitleIconButton")
         icon_button.setIcon(load_icon("ghostline_logo.svg"))
         icon_button.setIconSize(self.ICON_SIZE)
+        icon_button.setFixedHeight(self.CONTENT_HEIGHT)
         icon_button.setAutoRaise(True)
         icon_button.setToolTip("Ghostline Studio")
         left_layout.addWidget(icon_button)
 
         menubar: QMenuBar = self.window.menuBar()
         menubar.setNativeMenuBar(False)
-        menubar.setFixedHeight(22)
+        menubar.setFixedHeight(self.CONTENT_HEIGHT)
         menubar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         left_layout.addWidget(menubar)
 
         center_container = QWidget(self)
         center_layout = QHBoxLayout(center_container)
         center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(4)
+        center_layout.setSpacing(self.BUTTON_SPACING - 1)
+        center_layout.setAlignment(Qt.AlignVCenter)
 
         # TODO: Wire navigation buttons to history actions when available.
         self.back_button = QToolButton(center_container)
         self.back_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowBack))
         self.back_button.setIconSize(self.ICON_SIZE)
+        self.back_button.setFixedHeight(self.CONTENT_HEIGHT)
         self.back_button.setAutoRaise(True)
         self.back_button.setEnabled(False)
         self.back_button.setToolTip("Back (not yet implemented)")
@@ -199,6 +213,7 @@ class GhostlineTitleBar(QWidget):
         self.forward_button = QToolButton(center_container)
         self.forward_button.setIcon(self.style().standardIcon(QStyle.SP_ArrowForward))
         self.forward_button.setIconSize(self.ICON_SIZE)
+        self.forward_button.setFixedHeight(self.CONTENT_HEIGHT)
         self.forward_button.setAutoRaise(True)
         self.forward_button.setEnabled(False)
         self.forward_button.setToolTip("Forward (not yet implemented)")
@@ -209,7 +224,9 @@ class GhostlineTitleBar(QWidget):
         self.command_input.setAlignment(Qt.AlignCenter)
         self.command_input.setMinimumWidth(240)
         self.command_input.setMaximumWidth(420)
-        self.command_input.setFixedHeight(24)
+        self.command_input.setFixedHeight(self.CONTENT_HEIGHT)
+        self.command_input.setReadOnly(True)
+        self.command_input.setCursor(Qt.ArrowCursor)
         self.command_input.returnPressed.connect(self._emit_command_search)
         center_layout.addWidget(self.command_input)
         center_layout.addStretch(1)
@@ -227,12 +244,14 @@ class GhostlineTitleBar(QWidget):
         right_container = QWidget(self)
         right_layout = QHBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(4)
+        right_layout.setSpacing(self.BUTTON_SPACING - 1)
+        right_layout.setAlignment(Qt.AlignVCenter)
 
         self.settings_button = QToolButton(right_container)
         self.settings_button.setObjectName("TitleBarIcon")
         self.settings_button.setIcon(load_icon("configure.svg"))
         self.settings_button.setIconSize(self.ICON_SIZE)
+        self.settings_button.setFixedHeight(self.CONTENT_HEIGHT)
         self.settings_button.setAutoRaise(True)
         self.settings_button.clicked.connect(self._show_settings_menu)
         right_layout.addWidget(self.settings_button)
@@ -241,6 +260,7 @@ class GhostlineTitleBar(QWidget):
         self.profile_button.setObjectName("TitleBarIcon")
         self.profile_button.setIcon(load_icon("creator_ghost.svg"))
         self.profile_button.setIconSize(self.ICON_SIZE)
+        self.profile_button.setFixedHeight(self.CONTENT_HEIGHT)
         self.profile_button.setAutoRaise(True)
         right_layout.addWidget(self.profile_button)
 
@@ -323,82 +343,83 @@ class GhostlineTitleBar(QWidget):
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
-            """
-            #GhostlineTitleBar {
+            f"""
+            #GhostlineTitleBar {{
                 background: palette(window);
                 border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            }
-            #GhostlineTitleBar QWidget {
+            }}
+            #GhostlineTitleBar QWidget {{
                 background: transparent;
-            }
-            #GhostlineTitleBar QMenuBar {
+            }}
+            #GhostlineTitleBar QMenuBar {{
                 background: transparent;
                 border: none;
                 padding: 0;
                 font-size: 11px;
-            }
-            #GhostlineTitleBar QToolBar {
+            }}
+            #GhostlineTitleBar QToolBar {{
                 background: transparent;
                 border: none;
                 spacing: 0;
-            }
-            #GhostlineTitleBar QMenuBar::item {
-                padding: 3px 8px;
-                margin: 0 2px;
+            }}
+            #GhostlineTitleBar QMenuBar::item {{
+                padding: {self.MENU_ITEM_V_PADDING}px {self.MENU_ITEM_H_PADDING}px;
+                margin: 0 {self.MENU_ITEM_MARGIN}px;
                 border-radius: 5px;
-            }
-            #GhostlineTitleBar QMenuBar::item:selected {
+            }}
+            #GhostlineTitleBar QMenuBar::item:selected {{
                 background: rgba(255, 255, 255, 0.06);
-            }
+            }}
             #GhostlineTitleBar QToolButton,
-            #GhostlineTitleBar #TitleBarIcon {
+            #GhostlineTitleBar #TitleBarIcon {{
                 background: transparent;
                 border: none;
-                padding: 4px 6px;
+                padding: {self.TOOLBUTTON_V_PADDING}px {self.TOOLBUTTON_H_PADDING}px;
                 border-radius: 5px;
                 color: #c8c8c8;
-            }
+            }}
             #GhostlineTitleBar QToolButton:hover,
-            #GhostlineTitleBar #TitleBarIcon:hover {
+            #GhostlineTitleBar #TitleBarIcon:hover {{
                 background: rgba(255, 255, 255, 0.05);
                 color: #e0e0e0;
-            }
-            #WindowControl {
+            }}
+            #WindowControl {{
                 background: transparent;
                 border: none;
-                padding: 4px 6px;
-                margin-left: 2px;
+                padding: {self.TOOLBUTTON_V_PADDING}px {self.TOOLBUTTON_H_PADDING}px;
+                margin-left: {self.CONTROL_MARGIN}px;
                 border-radius: 5px;
                 color: #c8c8c8;
-            }
-            #WindowControl:hover {
+            }}
+            #WindowControl:hover {{
                 background: rgba(255, 255, 255, 0.05);
                 color: #f0f0f0;
-            }
-            #CloseControl {
+            }}
+            #CloseControl {{
                 background: transparent;
                 border: none;
-                padding: 4px 6px;
-                margin-left: 2px;
+                padding: {self.TOOLBUTTON_V_PADDING}px {self.TOOLBUTTON_H_PADDING}px;
+                margin-left: {self.CONTROL_MARGIN}px;
                 border-radius: 5px;
                 color: #d8d8d8;
-            }
-            #CloseControl:hover {
+            }}
+            #CloseControl:hover {{
                 background: rgba(232, 89, 89, 0.12);
                 color: #ff9a9a;
-            }
-            #CommandSearch {
+            }}
+            #CommandSearch {{
                 border-radius: 8px;
-                padding: 4px 10px;
-                background: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                min-height: 24px;
+                padding: {self.PILL_V_PADDING}px {self.PILL_H_PADDING}px;
+                background: rgba(255, 255, 255, 0.025);
+                border: 1px solid rgba(255, 255, 255, 0.04);
+                min-height: {self.CONTENT_HEIGHT}px;
                 font-size: 11px;
                 color: #d0d0d0;
-            }
-            #CommandSearch:focus {
-                border: 1px solid palette(highlight);
-            }
+            }}
+            #CommandSearch:focus {{
+                border: 1px solid rgba(255, 255, 255, 0.04);
+                outline: none;
+            }}
         """
         )
 
