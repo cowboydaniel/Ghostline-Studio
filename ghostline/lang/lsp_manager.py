@@ -242,7 +242,10 @@ class LSPManager(QObject):
                 logger.info("%s LSP server for %s disabled via configuration", role, language)
                 return None
             logger.warning("No %s LSP server configured for %s", role, language)
-            self.lsp_error.emit(f"No {role} LSP configured for {language}")
+            try:
+                self.lsp_error.emit(f"No {role} LSP configured for {language}")
+            except RuntimeError:
+                pass  # Object may be destroyed during shutdown
             return None
         cfg = definitions[0]
         command = [cfg.get("command")] + list(cfg.get("args", []))
@@ -251,7 +254,10 @@ class LSPManager(QObject):
         except FileNotFoundError:
             message = f"LSP server for {language} not found. Install: {cfg.get('command')}"
             logger.error(message)
-            self.lsp_error.emit(message)
+            try:
+                self.lsp_error.emit(message)
+            except RuntimeError:
+                pass  # Object may be destroyed during shutdown
             self._emit_failure_diagnostic(language)
             return None
         # Tag client with language for logging
@@ -274,19 +280,31 @@ class LSPManager(QObject):
         def _handle_exit(_code, _status=None):
             if getattr(self, "_shutting_down", False):
                 return
-            logger.error("LSP server for %s (%s) exited unexpectedly in %s", language, role, workspace)
-            self._notify_failure(language)
-            self._drop_client(language, workspace, role)
+            try:
+                logger.error("LSP server for %s (%s) exited unexpectedly in %s", language, role, workspace)
+                self._notify_failure(language)
+                self._drop_client(language, workspace, role)
+            except RuntimeError:
+                # Object may be destroyed during shutdown
+                logger.debug("Ignoring error handler for %s during shutdown", language)
 
         def _on_proc_error(err, lang=language):
             if getattr(self, "_shutting_down", False):
                 return
-            self._notify_failure(lang, str(err))
+            try:
+                self._notify_failure(lang, str(err))
+            except RuntimeError:
+                # Object may be destroyed during shutdown
+                logger.debug("Ignoring error notification for %s during shutdown", lang)
 
         def _on_proc_finished(code, status):
             if getattr(self, "_shutting_down", False):
                 return
-            _handle_exit(code, status)
+            try:
+                _handle_exit(code, status)
+            except RuntimeError:
+                # Object may be destroyed during shutdown
+                logger.debug("Ignoring finish handler for %s during shutdown", language)
 
         client.process.finished.connect(_on_proc_finished)
         client.process.errorOccurred.connect(_on_proc_error)
@@ -422,13 +440,21 @@ class LSPManager(QObject):
         message = f"LSP server for {language} stopped.{detail_hint}"
         if error_detail:
             logger.error("LSP failure for %s: %s", language, error_detail)
-        self.lsp_error.emit(message)
+        try:
+            self.lsp_error.emit(message)
+        except RuntimeError:
+            # Signal source may have been deleted during application shutdown
+            logger.debug("Could not emit LSP error signal (object being destroyed)")
         self._emit_failure_diagnostic(language)
         if self.config.self_healing_enabled():
             self.self_healing.scan()
 
     def _notify_restart(self, language: str) -> None:
-        self.lsp_notice.emit(f"Restarting {language} language server...")
+        try:
+            self.lsp_notice.emit(f"Restarting {language} language server...")
+        except RuntimeError:
+            # Signal source may have been deleted during application shutdown
+            logger.debug("Could not emit LSP restart notice (object being destroyed)")
 
     def _clients_for_language(self, language: str) -> list[LSPClient]:
         clients: list[LSPClient] = []
@@ -750,10 +776,13 @@ class LSPManager(QObject):
                     language
                 )
                 # Notify user about the limitation
-                self.lsp_notice.emit(
-                    "Python semantic tokens unavailable. Standard pyright does not support semantic tokens. "
-                    "Install basedpyright for enhanced syntax highlighting: pip install basedpyright"
-                )
+                try:
+                    self.lsp_notice.emit(
+                        "Python semantic tokens unavailable. Standard pyright does not support semantic tokens. "
+                        "Install basedpyright for enhanced syntax highlighting: pip install basedpyright"
+                    )
+                except RuntimeError:
+                    pass  # Object may be destroyed during shutdown
             else:
                 logger.warning("[%s] ✗ Semantic tokens DISABLED (no legend or unsupported)", language)
 
