@@ -1,12 +1,18 @@
 """Main window for Ghostline Studio."""
 from __future__ import annotations
 
+import importlib.metadata as importlib_metadata
+import json
 import logging
+import platform
+import shutil
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex, QSize
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeyEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -36,8 +42,9 @@ from PySide6.QtWidgets import (
     QStyle,
 )
 
-from ghostline.core.config import ConfigManager
+from ghostline.core.config import CONFIG_DIR, USER_SETTINGS_PATH, ConfigManager
 from ghostline.core.events import CommandDescriptor, CommandRegistry
+from ghostline.core.logging import LOG_DIR, LOG_FILE
 from ghostline.core.resources import icon_path, load_icon
 from ghostline.core.theme import ThemeManager
 from ghostline.lang.diagnostics import DiagnosticsModel
@@ -110,6 +117,34 @@ from ghostline.collab.crdt_engine import CRDTEngine
 from ghostline.collab.transport import WebSocketTransport
 
 logger = logging.getLogger(__name__)
+
+
+TITLE_MENU_STYLE = """
+QMenu#TitleSettingsMenu {
+    background: palette(window);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 6px;
+}
+QMenu#TitleSettingsMenu::item {
+    padding: 6px 14px;
+    border-radius: 6px;
+    color: palette(text);
+}
+QMenu#TitleSettingsMenu::item:selected {
+    background: rgba(255, 255, 255, 0.08);
+}
+QMenu#TitleSettingsMenu::separator {
+    height: 1px;
+    margin: 6px 4px;
+    background: rgba(255, 255, 255, 0.08);
+}
+"""
+
+DOCS_URL = QUrl("https://github.com/ghostline-studio/Ghostline-Studio#readme")
+FEATURE_REQUEST_URL = QUrl("https://github.com/ghostline-studio/Ghostline-Studio/issues/new/choose")
+COMMUNITY_URL = QUrl("https://github.com/ghostline-studio/Ghostline-Studio/discussions")
+CHANGELOG_URL = QUrl("https://github.com/ghostline-studio/Ghostline-Studio/releases")
 
 
 class TitleContextLineEdit(QLineEdit):
@@ -262,6 +297,7 @@ class GhostlineTitleBar(QWidget):
         self.profile_button.setIconSize(self.ICON_SIZE)
         self.profile_button.setFixedHeight(self.CONTENT_HEIGHT)
         self.profile_button.setAutoRaise(True)
+        self.profile_button.clicked.connect(self._show_profile_menu)
         right_layout.addWidget(self.profile_button)
 
         self.minimize_button = QToolButton(right_container)
@@ -297,32 +333,14 @@ class GhostlineTitleBar(QWidget):
         self._apply_styles()
         self.update_maximize_icon()
 
-    def _show_settings_menu(self) -> None:
+    def _create_title_menu(self) -> QMenu:
         menu = QMenu(self)
         menu.setObjectName("TitleSettingsMenu")
-        menu.setStyleSheet(
-            """
-            QMenu#TitleSettingsMenu {
-                background: palette(window);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-                padding: 6px;
-            }
-            QMenu#TitleSettingsMenu::item {
-                padding: 6px 14px;
-                border-radius: 6px;
-                color: palette(text);
-            }
-            QMenu#TitleSettingsMenu::item:selected {
-                background: rgba(255, 255, 255, 0.08);
-            }
-            QMenu#TitleSettingsMenu::separator {
-                height: 1px;
-                margin: 6px 4px;
-                background: rgba(255, 255, 255, 0.08);
-            }
-            """
-        )
+        menu.setStyleSheet(TITLE_MENU_STYLE)
+        return menu
+
+    def _show_settings_menu(self) -> None:
+        menu = self._create_title_menu()
 
         menu.addAction(self.window.action_editor_settings)
         menu.addAction(self.window.action_ghostline_settings)
@@ -334,6 +352,39 @@ class GhostlineTitleBar(QWidget):
         menu.addAction(self.window.action_tasks_view)
 
         pos = self.settings_button.mapToGlobal(QPoint(0, self.settings_button.height()))
+        menu.exec(pos)
+
+    def _show_profile_menu(self) -> None:
+        user_name, user_email = self.window._current_user_identity()
+        menu = self._create_title_menu()
+
+        account_menu = menu.addMenu(f"{user_name} (Ghostline Auth)")
+        account_menu.addAction("Sign in...", self.window._trigger_sign_in_placeholder)
+        sign_out_action = account_menu.addAction("Sign out", self.window._trigger_sign_out_placeholder)
+        sign_out_action.setEnabled(bool(user_email))
+        account_menu.addAction("Manage Account...", self.window._trigger_manage_account_placeholder)
+
+        menu.addAction(
+            f"Ghostline Account ({user_email if user_email else 'not signed in'})",
+            self.window._show_account_details,
+        )
+        menu.addAction(self.window.action_ghostline_settings)
+        menu.addAction("Ghostline Usage", self.window._show_usage_placeholder)
+        menu.addAction("Quick Settings Panel", self.window._open_quick_settings_placeholder)
+        menu.addSeparator()
+        menu.addAction("Check for Updates...", self.window._check_for_updates_placeholder)
+        menu.addSeparator()
+        menu.addAction("Docs", self.window._open_docs)
+        menu.addAction("Feature Request", self.window._open_feature_request)
+        menu.addAction("Join the Community", self.window._open_community)
+        menu.addAction("Changelog", self.window._open_changelog)
+        menu.addSeparator()
+        themes_menu = menu.addMenu("Themes")
+        self.window._populate_theme_menu(themes_menu)
+        menu.addSeparator()
+        menu.addAction("Download Diagnostics", self.window._download_diagnostics)
+
+        pos = self.profile_button.mapToGlobal(QPoint(0, self.profile_button.height()))
         menu.exec(pos)
 
     def _emit_command_search(self) -> None:
@@ -497,6 +548,8 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 600)
         self.config = config
         self.theme = theme
+        self._theme_actions: dict[str, QAction] = {}
+        self._apply_theme_from_config()
         self.workspace_manager = workspace_manager
         self.git = GitIntegration()
         self.lsp_manager = LSPManager(config, workspace_manager)
@@ -2359,6 +2412,174 @@ class MainWindow(QMainWindow):
                 self._global_search_dialog.input.setText(initial_query)
         self._global_search_dialog.show()
         self._global_search_dialog.raise_()
+
+    def _apply_theme_from_config(self) -> None:
+        configured_theme = self._theme_id_from_value(self.config.get("theme"))
+        if configured_theme in self.theme.THEMES and configured_theme != self.theme.theme_name:
+            self.theme.set_theme(configured_theme)
+            app = QApplication.instance()
+            if app:
+                self.theme.apply(app)
+        if configured_theme:
+            self.config.set("theme", self._theme_display_name(configured_theme))
+
+    def _theme_id_from_value(self, value: str | None) -> str:
+        if not value:
+            return ThemeManager.DEFAULT_THEME
+        normalized = value.strip().lower()
+        mapping = {tid: self._theme_display_name(tid).lower() for tid in self.theme.THEMES}
+        for theme_id, label in mapping.items():
+            if normalized in {theme_id.lower(), label}:
+                return theme_id
+        return ThemeManager.DEFAULT_THEME
+
+    def _theme_display_name(self, theme_id: str) -> str:
+        labels = {
+            "ghost_dark": "Ghostline Dark",
+            "ghost_night": "Ghost Night",
+        }
+        return labels.get(theme_id, theme_id.replace("_", " ").title())
+
+    def _populate_theme_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        current_theme = self.theme.theme_name
+        self._theme_actions.clear()
+
+        for theme_id in self.theme.THEMES:
+            action = menu.addAction(self._theme_display_name(theme_id))
+            action.setCheckable(True)
+            action.setChecked(theme_id == current_theme)
+            action.triggered.connect(lambda _checked, tid=theme_id: self._apply_theme_choice(tid))
+            group.addAction(action)
+            self._theme_actions[theme_id] = action
+
+    def _refresh_theme_checks(self, active_theme: str) -> None:
+        for theme_id, action in self._theme_actions.items():
+            action.setChecked(theme_id == active_theme)
+
+    def _apply_theme_choice(self, theme_id: str) -> None:
+        if theme_id not in self.theme.THEMES:
+            return
+        self.theme.set_theme(theme_id)
+        app = QApplication.instance()
+        if app:
+            self.theme.apply(app)
+        self.config.set("theme", self._theme_display_name(theme_id))
+        try:
+            self.config.save()
+        except Exception:
+            logger.exception("Failed to persist theme selection")
+        self._refresh_theme_checks(theme_id)
+
+    def _current_user_identity(self) -> tuple[str, str | None]:
+        user_cfg = self.config.get("user", {}) if self.config else {}
+        name = "Guest"
+        email: str | None = None
+        if isinstance(user_cfg, dict):
+            name = user_cfg.get("display_name") or user_cfg.get("name") or name
+            email = user_cfg.get("email")
+        return name, email
+
+    def _trigger_sign_in_placeholder(self) -> None:
+        QMessageBox.information(self, "Sign in", "Authentication is not implemented yet.")
+
+    def _trigger_sign_out_placeholder(self) -> None:
+        QMessageBox.information(self, "Sign out", "No signed-in account to sign out from." if not self._current_user_identity()[1] else "Signed out.")
+
+    def _trigger_manage_account_placeholder(self) -> None:
+        QMessageBox.information(self, "Manage Account", "Account management is not implemented yet.")
+
+    def _show_account_details(self) -> None:
+        name, email = self._current_user_identity()
+        QMessageBox.information(
+            self,
+            "Ghostline Account",
+            f"User: {name}\nEmail: {email or 'not signed in'}",
+        )
+
+    def _show_usage_placeholder(self) -> None:
+        QMessageBox.information(self, "Ghostline Usage", "Usage not implemented yet")
+
+    def _open_quick_settings_placeholder(self) -> None:
+        QMessageBox.information(self, "Quick Settings", "Quick Settings Panel not implemented yet")
+
+    def _check_for_updates_placeholder(self) -> None:
+        QMessageBox.information(self, "Check for Updates", "Update checker not implemented yet")
+
+    def _open_docs(self) -> None:
+        QDesktopServices.openUrl(DOCS_URL)
+
+    def _open_feature_request(self) -> None:
+        QDesktopServices.openUrl(FEATURE_REQUEST_URL)
+
+    def _open_community(self) -> None:
+        QDesktopServices.openUrl(COMMUNITY_URL)
+
+    def _open_changelog(self) -> None:
+        QDesktopServices.openUrl(CHANGELOG_URL)
+
+    def _detect_app_version(self) -> str:
+        try:
+            return importlib_metadata.version("ghostline")
+        except Exception:
+            return "unknown"
+
+    def _download_diagnostics(self) -> None:
+        default_name = "ghostline-diagnostics.zip"
+        default_path = str(CONFIG_DIR / default_name)
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Save Diagnostics", default_path, "Zip Files (*.zip)"
+        )
+        if not filename:
+            return
+        if not filename.lower().endswith(".zip"):
+            filename = f"{filename}.zip"
+
+        temp_dir = Path(tempfile.mkdtemp(prefix="ghostline_diagnostics_"))
+        try:
+            info = {
+                "app_version": self._detect_app_version(),
+                "os": platform.platform(),
+                "python_version": sys.version.replace("\n", " "),
+                "config_dir": str(CONFIG_DIR),
+            }
+            (temp_dir / "diagnostics.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
+
+            config_files = [USER_SETTINGS_PATH]
+            for extra_cfg in CONFIG_DIR.glob("*.yaml"):
+                if extra_cfg not in config_files:
+                    config_files.append(extra_cfg)
+            for extra_cfg in CONFIG_DIR.glob("*.json"):
+                if extra_cfg not in config_files:
+                    config_files.append(extra_cfg)
+            for cfg in config_files:
+                if cfg.exists():
+                    shutil.copy(cfg, temp_dir / cfg.name)
+
+            log_dir = LOG_DIR if LOG_DIR.exists() else LOG_FILE.parent
+            if log_dir.exists():
+                copied = False
+                for log_path in log_dir.glob("ghostline.log*"):
+                    if log_path.is_file():
+                        shutil.copy(log_path, temp_dir / log_path.name)
+                        copied = True
+                if not copied:
+                    (temp_dir / "logs.txt").write_text("No log files found.", encoding="utf-8")
+            else:
+                (temp_dir / "logs.txt").write_text("Log directory missing.", encoding="utf-8")
+
+            with zipfile.ZipFile(filename, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for item in temp_dir.iterdir():
+                    archive.write(item, item.name)
+
+            QMessageBox.information(self, "Diagnostics", f"Diagnostics saved to {filename}")
+        except Exception:
+            logger.exception("Failed to export diagnostics")
+            QMessageBox.warning(self, "Diagnostics", "Unable to export diagnostics bundle.")
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _open_symbol_picker(self) -> None:
         query, ok = QInputDialog.getText(self, "Go to Symbol", "Name contains:")
