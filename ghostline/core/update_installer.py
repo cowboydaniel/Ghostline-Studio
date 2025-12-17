@@ -41,21 +41,19 @@ class UpdateInstaller:
             # Extract repo owner and name from URL
             # e.g., https://github.com/cowboydaniel/Ghostline-Studio/releases/tag/v0.0.1
             parts = release_url.rstrip("/").split("/")
-            if "github.com" not in release_url or len(parts) < 5:
+            if "github.com" not in release_url or len(parts) < 8:
                 logger.error(f"Invalid release URL: {release_url}")
                 return False
 
-            owner = parts[-4]
-            repo = parts[-3]
-
-            # Get the tag name from the URL
+            # For URL like https://github.com/cowboydaniel/Ghostline-Studio/releases/tag/v0.0.1
+            # parts = ['https:', '', 'github.com', 'cowboydaniel', 'Ghostline-Studio', 'releases', 'tag', 'v0.0.1']
+            owner = parts[3]
+            repo = parts[4]
             tag = parts[-1]
-            if tag == "tag":
-                # If URL ends with /tag/, get the actual tag
-                tag = parts[-1] if len(parts) > 1 else None
-                if not tag:
-                    logger.error("Could not extract tag from URL")
-                    return False
+
+            if not tag or tag in ("releases", "tag"):
+                logger.error(f"Could not extract tag from URL: {release_url}")
+                return False
 
             # Build download URL for source code ZIP
             download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag}.zip"
