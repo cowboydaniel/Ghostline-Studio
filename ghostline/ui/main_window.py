@@ -4,12 +4,17 @@ from __future__ import annotations
 import importlib.metadata as importlib_metadata
 import json
 import logging
+import os
 import platform
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
+from datetime import datetime
+from urllib import request
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex, QSize
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QKeyEvent, QKeySequence
@@ -68,14 +73,18 @@ from ghostline.formatter.formatter_manager import FormatterManager
 from ghostline.runtime.inspector import RuntimeInspector
 from ghostline.indexer.index_manager import IndexManager
 from ghostline.indexer.workspace_indexer import WorkspaceIndexer
-from ghostline.search.global_search import GlobalSearchDialog
 from ghostline.search.symbol_search import SymbolSearcher
 from ghostline.plugins.loader import PluginLoader
+from ghostline.ui.docks.search_panel import SearchPanel
 from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
 from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
 from ghostline.ui.dialogs.ai_settings_dialog import AISettingsDialog
+from ghostline.ui.dialogs.quick_open_dialog import QuickOpenDialog
+from ghostline.ui.dialogs.developer_tools import DeveloperToolsDialog, ProcessExplorerDialog, optional_psutil
+from ghostline.ui.dialogs.playground_dialog import EditorPlaygroundDialog, WalkthroughDialog
 from ghostline.ui.command_palette import CommandPalette
+from ghostline.ui.commands.registry import CommandActionDefinition, CommandActionRegistry
 from ghostline.ui.activity_bar import ActivityBar
 from ghostline.ui.status_bar import StudioStatusBar
 from ghostline.ui.layout_manager import LayoutManager
@@ -156,13 +165,21 @@ class TitleContextLineEdit(QLineEdit):
         self._user_active = False
 
     def set_context_text(self, text: str) -> None:
-        self._context_text = text
-        if not self._user_active and (not self.text() or self.text() == self._context_text or not self.hasFocus()):
-            self.setText(text)
+        try:
+            self._context_text = text
+            if not self._user_active and (not self.text() or self.text() == self._context_text or not self.hasFocus()):
+                self.setText(text)
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def show_context_if_idle(self) -> None:
-        self._user_active = False
-        self.setText(self._context_text)
+        try:
+            self._user_active = False
+            self.setText(self._context_text)
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def focusInEvent(self, event) -> None:  # type: ignore[override]
         self._user_active = True
@@ -372,7 +389,7 @@ class GhostlineTitleBar(QWidget):
         menu.addAction("Ghostline Usage", self.window._show_usage_placeholder)
         menu.addAction("Quick Settings Panel", self.window._open_quick_settings_placeholder)
         menu.addSeparator()
-        menu.addAction("Check for Updates...", self.window._check_for_updates_placeholder)
+        menu.addAction("Check for Updates...", self.window._check_for_updates)
         menu.addSeparator()
         menu.addAction("Docs", self.window._open_docs)
         menu.addAction("Feature Request", self.window._open_feature_request)
@@ -475,16 +492,25 @@ class GhostlineTitleBar(QWidget):
         )
 
     def set_context_text(self, text: str) -> None:
-        self.command_input.set_context_text(text)
+        try:
+            if hasattr(self, 'command_input') and self.command_input:
+                self.command_input.set_context_text(text)
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def update_maximize_icon(self) -> None:
-        icon = (
-            self.style().standardIcon(QStyle.SP_TitleBarNormalButton)
-            if self.window.isMaximized()
-            else self.style().standardIcon(QStyle.SP_TitleBarMaxButton)
-        )
-        self.maximize_button.setIcon(icon)
-        self.maximize_button.setToolTip("Restore" if self.window.isMaximized() else "Maximize")
+        try:
+            icon = (
+                self.style().standardIcon(QStyle.SP_TitleBarNormalButton)
+                if self.window.isMaximized()
+                else self.style().standardIcon(QStyle.SP_TitleBarMaxButton)
+            )
+            self.maximize_button.setIcon(icon)
+            self.maximize_button.setToolTip("Restore" if self.window.isMaximized() else "Maximize")
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def mousePressEvent(self, event) -> None:  # type: ignore[override]
         if event.button() == Qt.LeftButton and not self._is_interactive_child(event.pos()):
@@ -586,7 +612,9 @@ class MainWindow(QMainWindow):
         self.formatter = FormatterManager(self.lsp_manager)
         self.debugger = DebuggerManager()
         self.debugger.set_runtime_inspector(self.runtime_inspector)
-        self.task_manager = TaskManager(lambda: self.workspace_manager.current_workspace)
+        self.task_manager = TaskManager(
+            lambda: self.workspace_manager.current_workspace, self.config.settings.setdefault("tasks", {})
+        )
         self.test_manager = TestManager(
             self.task_manager, lambda: self.workspace_manager.current_workspace, semantic_query=self.semantic_query
         )
@@ -594,6 +622,11 @@ class MainWindow(QMainWindow):
         self.crdt_engine = CRDTEngine()
         self.collab_transport = WebSocketTransport()
         self.plugin_loader = PluginLoader(self, self.command_registry, self.menuBar(), self)
+        self._psutil = optional_psutil()
+        self._developer_tools_dialog: DeveloperToolsDialog | None = None
+        self._process_explorer_dialog: ProcessExplorerDialog | None = None
+        self._playground_dialog: EditorPlaygroundDialog | None = None
+        self._walkthrough_dialog: WalkthroughDialog | None = None
         self.layout_manager = LayoutManager(self)
         self.git_service = GitService(self.workspace_manager.current_workspace)
         self.first_run = not bool(self.config.get("first_run_completed", False))
@@ -607,6 +640,16 @@ class MainWindow(QMainWindow):
         self._konami_reset_timer.timeout.connect(self._reset_konami_index)
         ui_settings = self.config.get("ui", {}) if self.config else {}
         self.konami_enabled = bool(ui_settings.get("konami_enabled", True))
+        self.view_settings = self.config.settings.setdefault("view", {}) if self.config else {}
+        self.view_settings.setdefault("bars", {})
+        self.view_settings.setdefault("panels", {})
+        editor_view_cfg = self.config.settings.setdefault("editor", {}) if self.config else {}
+        self._word_wrap_enabled = bool(self.view_settings.get("word_wrap", editor_view_cfg.get("word_wrap", False)))
+        self._autosave_enabled = bool(self.config.get("autosave", {}).get("enabled", False))
+        autosave_cfg = self.config.get("autosave", {}) if self.config else {}
+        self._autosave_interval = int(autosave_cfg.get("interval_seconds", 60))
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._perform_autosave)
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -622,6 +665,7 @@ class MainWindow(QMainWindow):
         self.editor_tabs.countChanged.connect(self._show_welcome_if_empty)
         self.editor_tabs.countChanged.connect(lambda _=None: self._update_title_context())
         self.editor_tabs.currentChanged.connect(lambda _=None: self._update_title_context())
+        self.editor_tabs.currentChanged.connect(lambda _=None: self._bind_navigation_signals())
 
         self.activity_bar = ActivityBar(self)
 
@@ -777,8 +821,13 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_menus()
         self._install_title_bar()
+        self.title_bar.back_button.clicked.connect(self._navigate_back)
+        self.title_bar.forward_button.clicked.connect(self._navigate_forward)
+        self.title_bar.back_button.setToolTip("Back")
+        self.title_bar.forward_button.setToolTip("Forward")
         self._create_terminal_dock()
         self._create_project_dock()
+        self._create_search_dock()
         self._create_ai_dock()
         self._create_diagnostics_dock()
         self._create_debugger_dock()
@@ -804,10 +853,12 @@ class MainWindow(QMainWindow):
         self._apply_initial_layout()
         self._collect_dock_regions()
         self._restore_dock_state()  # Restore saved dock/panel states after collection
+        self._apply_view_preferences()
         self._connect_dock_toggles()
         self._update_workspace_state()
         self._show_welcome_if_empty()
         self._update_title_context()
+        self._bind_navigation_signals()
 
     def _setup_global_search_toolbar(self) -> None:
         icon_dir = Path(__file__).resolve().parent.parent / "resources" / "icons" / "dock_controls"
@@ -879,11 +930,16 @@ class MainWindow(QMainWindow):
             self.central_stack.setCurrentWidget(self.welcome_portal)
 
     def _refresh_recent_views(self) -> None:
-        workspace = self.workspace_manager.current_workspace
-        if workspace:
-            files = self.workspace_manager.get_recent_files(workspace)
-            self.workspace_dashboard.set_workspace(workspace, files)
-        self.welcome_portal.set_recent_files(self.workspace_manager.get_recent_files())
+        try:
+            workspace = self.workspace_manager.current_workspace
+            if workspace and hasattr(self, 'workspace_dashboard'):
+                files = self.workspace_manager.get_recent_files(workspace)
+                self.workspace_dashboard.set_workspace(workspace, files)
+            if hasattr(self, 'welcome_portal'):
+                self.welcome_portal.set_recent_files(self.workspace_manager.get_recent_files())
+        except RuntimeError:
+            # Object has been deleted
+            pass
 
     def _restore_workspace_tabs(self, workspace_str: str | None) -> None:
         if not workspace_str:
@@ -1034,6 +1090,53 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _apply_checked_preference(
+        self, action: QAction | None, desired: bool | None, apply: Callable[[bool], None]
+    ) -> None:
+        if action is None or desired is None:
+            return
+        action.blockSignals(True)
+        action.setChecked(bool(desired))
+        action.blockSignals(False)
+        apply(bool(desired))
+
+    def _apply_view_preferences(self) -> None:
+        panel_settings = self.view_settings.get("panels", {}) if self.config else {}
+        bar_settings = self.view_settings.get("bars", {}) if self.config else {}
+
+        self._apply_checked_preference(self.action_toggle_project, panel_settings.get("project"), self._toggle_project)
+        self._apply_checked_preference(
+            self.action_toggle_terminal, panel_settings.get("terminal"), self._toggle_terminal
+        )
+        self._apply_checked_preference(
+            self.action_toggle_architecture_map,
+            panel_settings.get("architecture"),
+            self._toggle_architecture_map,
+        )
+        self._apply_checked_preference(self.action_toggle_ai_dock, panel_settings.get("ai"), self._toggle_ai_dock)
+        self._apply_checked_preference(
+            self.action_toggle_split_editor,
+            panel_settings.get("split_editor"),
+            self._toggle_split_editor,
+        )
+
+        self._apply_checked_preference(
+            self.action_toggle_activity_bar, bar_settings.get("activity", True), self._toggle_activity_bar_visible
+        )
+        self._apply_checked_preference(
+            self.action_toggle_status_bar, bar_settings.get("status", True), self._toggle_status_bar_visible
+        )
+        self._apply_checked_preference(
+            self.action_toggle_menu_bar, bar_settings.get("menu", True), self._toggle_menu_bar_visible
+        )
+
+        desired_wrap = self.view_settings.get("word_wrap", self._word_wrap_enabled) if self.config else False
+        self._apply_checked_preference(self.action_toggle_word_wrap, desired_wrap, self._toggle_word_wrap)
+
+        autosave_cfg = self.config.get("autosave", {}) if self.config else {}
+        desired_autosave = autosave_cfg.get("enabled", self._autosave_enabled)
+        self._apply_checked_preference(self.action_toggle_autosave, desired_autosave, self._toggle_autosave)
+
     def _update_workspace_state(self) -> None:
         workspace = self.workspace_manager.current_workspace
         has_workspace = workspace is not None
@@ -1067,8 +1170,7 @@ class MainWindow(QMainWindow):
                 self.git_panel.set_empty_state(True)
 
         if hasattr(self, "debugger_panel"):
-            config_exists = bool(workspace and (Path(workspace) / ".vscode" / "launch.json").exists())
-            self.debugger_panel.set_configured(config_exists)
+            self._refresh_debugger_config_ui()
 
         self._update_title_context()
 
@@ -1142,6 +1244,7 @@ class MainWindow(QMainWindow):
     def _toggle_split_editor(self, enabled: bool) -> None:
         if enabled != self.editor_tabs.split_active():
             self.editor_tabs.set_split_active(enabled)
+        self.view_settings.setdefault("panels", {})["split_editor"] = bool(enabled)
         self._show_welcome_if_empty()
         self._update_view_action_states()
 
@@ -1252,25 +1355,96 @@ class MainWindow(QMainWindow):
                 ai_open = self.ai_dock.isVisible()
             self.action_toggle_ai_dock.setChecked(ai_open)
 
+    def _collect_view_actions(self) -> list[QAction]:
+        actions: list[QAction] = []
+
+        def walk(menu: QMenu) -> None:
+            for action in menu.actions():
+                if action.menu():
+                    walk(action.menu())
+                else:
+                    actions.append(action)
+
+        if hasattr(self, "view_menu") and self.view_menu:
+            walk(self.view_menu)
+
+        for dock in getattr(self, "left_docks", []) + getattr(self, "right_docks", []):
+            toggle = dock.toggleViewAction()
+            if toggle not in actions:
+                actions.append(toggle)
+
+        return [action for action in actions if action.isCheckable()]
+
+    def _open_view_picker(self) -> None:
+        dialog = ViewPickerDialog(self._collect_view_actions(), self)
+        dialog.resize(360, 420)
+        dialog.show()
+
     def _update_title_context(self) -> None:
         if not hasattr(self, "title_bar"):
             return
 
-        workspace = self.workspace_manager.current_workspace
-        project_label = workspace.name if workspace else "No workspace"
+        try:
+            workspace = self.workspace_manager.current_workspace
+            project_label = workspace.name if workspace else "No workspace"
+            editor = self.get_current_editor()
+            file_label = None
+            if editor:
+                if editor.path:
+                    file_label = Path(editor.path).name
+                else:
+                    file_label = "Untitled"
+
+            context = project_label if project_label else ""
+            if file_label:
+                context = f"{project_label} - {file_label}" if project_label else file_label
+
+            self.title_bar.set_context_text(context)
+        except RuntimeError:
+            # Object has been deleted
+            pass
+
+    def _bind_navigation_signals(self) -> None:
         editor = self.get_current_editor()
-        file_label = None
+        if getattr(self, "_nav_editor", None) is editor:
+            return
+        previous = getattr(self, "_nav_editor", None)
+        if previous:
+            try:
+                previous.navigationStateChanged.disconnect(self._update_nav_buttons)
+            except Exception:
+                pass
+            try:
+                previous.editNavigationChanged.disconnect(self._update_edit_nav_actions)
+            except Exception:
+                pass
+        self._nav_editor = editor
         if editor:
-            if editor.path:
-                file_label = Path(editor.path).name
-            else:
-                file_label = "Untitled"
+            editor.navigationStateChanged.connect(self._update_nav_buttons)
+            editor.editNavigationChanged.connect(self._update_edit_nav_actions)
+            self._update_nav_buttons(editor.can_go_back(), editor.can_go_forward())
+            self._update_edit_nav_actions(editor.has_previous_change(), editor.has_next_change())
+        else:
+            self._update_nav_buttons(False, False)
+            self._update_edit_nav_actions(False, False)
 
-        context = project_label if project_label else ""
-        if file_label:
-            context = f"{project_label} - {file_label}" if project_label else file_label
+    def _update_nav_buttons(self, can_back: bool, can_forward: bool) -> None:
+        self.title_bar.back_button.setEnabled(can_back)
+        self.title_bar.forward_button.setEnabled(can_forward)
+        back_action = self.ui_action_registry.action("navigate.back")
+        if back_action:
+            back_action.setEnabled(can_back)
+        forward_action = self.ui_action_registry.action("navigate.forward")
+        if forward_action:
+            forward_action.setEnabled(can_forward)
 
-        self.title_bar.set_context_text(context)
+    def _update_edit_nav_actions(self, has_prev: bool, has_next: bool) -> None:
+        prev_action = self.ui_action_registry.action("navigate.prev_change")
+        next_action = self.ui_action_registry.action("navigate.next_change")
+        if prev_action:
+            prev_action.setEnabled(has_prev)
+        if next_action:
+            next_action.setEnabled(has_next)
 
     def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
         if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
@@ -1282,181 +1456,659 @@ class MainWindow(QMainWindow):
                 other.hide()
 
     def _create_actions(self) -> None:
-        self.action_open_file = QAction("Open File", self)
-        self.action_open_file.triggered.connect(self._prompt_open_file)
+        panel_settings = self.view_settings.setdefault("panels", {})
+        bar_settings = self.view_settings.setdefault("bars", {})
 
-        self.action_open_folder = QAction("Open Folder", self)
-        self.action_open_folder.triggered.connect(self._prompt_open_folder)
+        command_definitions = [
+            CommandActionDefinition("file.new", "New File", "File", handler=self._create_new_file, shortcut="Ctrl+N"),
+            CommandActionDefinition("file.save", "Save", "File", handler=self._save_current_file, shortcut="Ctrl+S"),
+            CommandActionDefinition("file.save_as", "Save As...", "File", handler=self._save_current_file_as),
+            CommandActionDefinition("file.open", "Open File", "File", handler=self._prompt_open_file),
+            CommandActionDefinition("file.open_folder", "Open Folder", "File", handler=self._prompt_open_folder),
+            CommandActionDefinition("file.close_folder", "Close Folder", "File", handler=self._close_folder),
+            CommandActionDefinition(
+                "search.global",
+                "Find in Files",
+                "Navigate",
+                handler=self._trigger_global_search_action,
+                shortcut="Ctrl+Shift+F",
+            ),
+            CommandActionDefinition(
+                "navigate.quick_open",
+                "Quick Open",
+                "Navigate",
+                handler=self._open_quick_open,
+                shortcut="Ctrl+P",
+            ),
+            CommandActionDefinition("navigate.symbol", "Go to Symbol", "Navigate", handler=self._open_symbol_picker),
+            CommandActionDefinition("navigate.file", "Go to File", "Navigate", handler=self._open_file_picker),
+            CommandActionDefinition(
+                "navigate.goto_line",
+                "Go to Line/Column",
+                "Navigate",
+                handler=self._prompt_goto_line,
+                shortcut="Ctrl+G",
+            ),
+            CommandActionDefinition(
+                "navigate.goto_bracket",
+                "Go to Matching Bracket",
+                "Navigate",
+                handler=self._jump_to_matching_bracket,
+                shortcut="Ctrl+Shift+\\",
+            ),
+            CommandActionDefinition(
+                "navigate.back",
+                "Back",
+                "Navigate",
+                handler=self._navigate_back,
+                shortcut="Alt+Left",
+            ),
+            CommandActionDefinition(
+                "navigate.forward",
+                "Forward",
+                "Navigate",
+                handler=self._navigate_forward,
+                shortcut="Alt+Right",
+            ),
+            CommandActionDefinition(
+                "navigate.last_edit",
+                "Go to Last Edit",
+                "Navigate",
+                handler=self._navigate_last_edit,
+                shortcut="Ctrl+Alt+Z",
+            ),
+            CommandActionDefinition(
+                "navigate.next_change",
+                "Next Change",
+                "Navigate",
+                handler=self._navigate_next_change,
+            ),
+            CommandActionDefinition(
+                "navigate.prev_change",
+                "Previous Change",
+                "Navigate",
+                handler=self._navigate_prev_change,
+            ),
+            CommandActionDefinition(
+                "problems.next",
+                "Next Problem",
+                "Navigate",
+                handler=self._jump_next_problem,
+                shortcut="F8",
+            ),
+            CommandActionDefinition(
+                "problems.previous",
+                "Previous Problem",
+                "Navigate",
+                handler=self._jump_previous_problem,
+                shortcut="Shift+F8",
+            ),
+            CommandActionDefinition(
+                "palette.command",
+                "Command Palette",
+                "View",
+                handler=self.show_command_palette,
+                shortcut="Ctrl+Shift+P",
+            ),
+            CommandActionDefinition(
+                "view.picker",
+                "View Picker",
+                "View",
+                handler=self._open_view_picker,
+                shortcut="Ctrl+Alt+V",
+            ),
+            CommandActionDefinition(
+                "ai.toggle_autoflow",
+                "Toggle Autoflow Mode",
+                "AI",
+                handler=self._toggle_autoflow_mode,
+                checkable=True,
+                checked=self.command_palette.autoflow_mode == "active",
+            ),
+            CommandActionDefinition(
+                "view.toggle_project",
+                "Explorer",
+                "View",
+                handler=self._toggle_project,
+                checkable=True,
+                checked=bool(panel_settings.get("project", True)),
+            ),
+            CommandActionDefinition(
+                "view.toggle_split",
+                "Split Editor",
+                "View",
+                handler=self._toggle_split_editor,
+                checkable=True,
+                checked=self.editor_tabs.split_active(),
+            ),
+            CommandActionDefinition(
+                "view.next_editor",
+                "Next Editor Tab",
+                "View",
+                handler=self._focus_next_editor,
+                shortcut="Ctrl+PageDown",
+            ),
+            CommandActionDefinition(
+                "view.prev_editor",
+                "Previous Editor Tab",
+                "View",
+                handler=self._focus_previous_editor,
+                shortcut="Ctrl+PageUp",
+            ),
+            CommandActionDefinition(
+                "view.focus_primary_group",
+                "Focus Primary Group",
+                "View",
+                handler=lambda: self._focus_editor_group("primary"),
+            ),
+            CommandActionDefinition(
+                "view.focus_secondary_group",
+                "Focus Secondary Group",
+                "View",
+                handler=lambda: self._focus_editor_group("secondary"),
+            ),
+            CommandActionDefinition(
+                "view.move_to_other_group",
+                "Move Editor To Other Group",
+                "View",
+                handler=self._move_editor_to_other_group,
+            ),
+            CommandActionDefinition(
+                "view.toggle_terminal",
+                "Terminal",
+                "View",
+                handler=self._toggle_terminal,
+                checkable=True,
+                checked=bool(panel_settings.get("terminal", False)),
+                shortcut=QKeySequence("Ctrl+Shift+`"),
+            ),
+            CommandActionDefinition(
+                "terminal.new_tab",
+                "New Terminal",
+                "Terminal",
+                handler=self._new_terminal_tab,
+                shortcut="Ctrl+Shift+T",
+            ),
+            CommandActionDefinition(
+                "terminal.split",
+                "Split Terminal",
+                "Terminal",
+                handler=self._split_terminal_view,
+                shortcut="Ctrl+\\",
+            ),
+            CommandActionDefinition(
+                "terminal.new_window",
+                "Open Terminal Window",
+                "Terminal",
+                handler=self._open_terminal_window,
+            ),
+            CommandActionDefinition(
+                "view.toggle_architecture",
+                "3D Architecture Map",
+                "View",
+                handler=self._toggle_architecture_map,
+                checkable=True,
+                checked=bool(panel_settings.get("architecture", False)),
+            ),
+            CommandActionDefinition(
+                "view.toggle_ai_dock",
+                "Ghostline AI",
+                "View",
+                handler=self._toggle_ai_dock,
+                checkable=True,
+                checked=bool(panel_settings.get("ai", True)),
+            ),
+            CommandActionDefinition(
+                "view.word_wrap",
+                "Word Wrap",
+                "View",
+                handler=self._toggle_word_wrap,
+                checkable=True,
+                checked=self._word_wrap_enabled,
+            ),
+            CommandActionDefinition(
+                "view.autosave",
+                "Autosave",
+                "View",
+                handler=self._toggle_autosave,
+                checkable=True,
+                checked=self._autosave_enabled,
+            ),
+            CommandActionDefinition(
+                "view.activity_bar",
+                "Activity Bar",
+                "View",
+                handler=self._toggle_activity_bar_visible,
+                checkable=True,
+                checked=bool(bar_settings.get("activity", True)),
+            ),
+            CommandActionDefinition(
+                "view.status_bar",
+                "Status Bar",
+                "View",
+                handler=self._toggle_status_bar_visible,
+                checkable=True,
+                checked=bool(bar_settings.get("status", True)),
+            ),
+            CommandActionDefinition(
+                "view.menu_bar",
+                "Menu Bar",
+                "View",
+                handler=self._toggle_menu_bar_visible,
+                checkable=True,
+                checked=bool(bar_settings.get("menu", True)),
+            ),
+            CommandActionDefinition("settings.editor", "Editor Settings", "Settings", handler=self._open_settings),
+            CommandActionDefinition(
+                "settings.ghostline",
+                "Ghostline Settings",
+                "Settings",
+                handler=self._open_settings,
+                shortcut=QKeySequence("Ctrl+,"),
+            ),
+            CommandActionDefinition(
+                "settings.extensions",
+                "Extensions",
+                "Settings",
+                handler=self._open_extensions,
+                shortcut=QKeySequence("Ctrl+Shift+X"),
+            ),
+            CommandActionDefinition(
+                "settings.keyboard",
+                "Open Keyboard Shortcuts",
+                "Settings",
+                handler=self._open_keyboard_shortcuts,
+                shortcut=QKeySequence("Ctrl+K, Ctrl+S"),
+            ),
+            CommandActionDefinition(
+                "settings.snippets", "Configure Snippets", "Settings", handler=self._open_snippets
+            ),
+            CommandActionDefinition("settings.tasks", "Tasks", "Settings", handler=self._open_tasks_panel),
+            CommandActionDefinition("ai.settings", "AI Settings…", "AI", handler=self._open_ai_settings),
+            CommandActionDefinition("ai.setup", "Re-run Setup Wizard…", "AI", handler=self.show_setup_wizard),
+            CommandActionDefinition(
+                "ai.explain_selection",
+                "Explain Selection",
+                "AI",
+                handler=lambda: self._run_ai_command(explain_selection),
+            ),
+            CommandActionDefinition(
+                "ai.refactor_selection",
+                "Refactor Selection",
+                "AI",
+                handler=lambda: self._run_ai_command(refactor_selection),
+            ),
+            CommandActionDefinition(
+                "ai.code_actions",
+                "AI Code Actions...",
+                "AI",
+                handler=lambda: self._run_ai_command(ai_code_actions),
+            ),
+            CommandActionDefinition("ai.panel", "Toggle AI Panel", "AI", handler=self.toggle_ai_dock),
+            CommandActionDefinition("plugins.manage", "Plugins", "Plugins", handler=self._open_plugin_manager),
+            CommandActionDefinition(
+                "tasks.run",
+                "Run Task...",
+                "Tasks",
+                handler=self._run_task_command,
+                shortcut="Ctrl+Shift+R",
+            ),
+            CommandActionDefinition(
+                "tasks.run_build",
+                "Run Build Task",
+                "Tasks",
+                handler=self._run_build_task,
+            ),
+            CommandActionDefinition(
+                "tasks.configure_default_build",
+                "Configure Default Build Task",
+                "Tasks",
+                handler=self._configure_default_build_task,
+            ),
+            CommandActionDefinition(
+                "tasks.configure_file",
+                "Configure Tasks",
+                "Tasks",
+                handler=self._open_tasks_configuration,
+            ),
+            CommandActionDefinition(
+                "lsp.restart",
+                "Restart Language Server",
+                "LSP",
+                handler=self._restart_language_server,
+            ),
+            CommandActionDefinition(
+                "edit.format_document",
+                "Format Document",
+                "Edit",
+                handler=self._format_current_document,
+            ),
+            CommandActionDefinition(
+                "edit.undo",
+                "Undo",
+                "Edit",
+                handler=lambda: self._with_editor(lambda e: e.undo()),
+                shortcut="Ctrl+Z",
+            ),
+            CommandActionDefinition(
+                "edit.redo",
+                "Redo",
+                "Edit",
+                handler=lambda: self._with_editor(lambda e: e.redo()),
+                shortcut="Ctrl+Shift+Z",
+            ),
+            CommandActionDefinition(
+                "edit.cut",
+                "Cut",
+                "Edit",
+                handler=lambda: self._with_editor(lambda e: e.cut()),
+                shortcut="Ctrl+X",
+            ),
+            CommandActionDefinition(
+                "edit.copy",
+                "Copy",
+                "Edit",
+                handler=lambda: self._with_editor(lambda e: e.copy()),
+                shortcut="Ctrl+C",
+            ),
+            CommandActionDefinition(
+                "edit.paste",
+                "Paste",
+                "Edit",
+                handler=lambda: self._with_editor(lambda e: e.paste()),
+                shortcut="Ctrl+V",
+            ),
+            CommandActionDefinition(
+                "edit.find",
+                "Find",
+                "Edit",
+                handler=lambda: self._focus_editor_find(),
+                shortcut="Ctrl+F",
+            ),
+            CommandActionDefinition(
+                "edit.replace",
+                "Replace",
+                "Edit",
+                handler=lambda: self._focus_editor_find(replace=True),
+                shortcut="Ctrl+H",
+            ),
+            CommandActionDefinition(
+                "edit.select_all",
+                "Select All",
+                "Edit",
+                handler=lambda: self._with_editor(lambda e: e.selectAll()),
+                shortcut="Ctrl+A",
+            ),
+            CommandActionDefinition(
+                "project.settings",
+                "Project Settings",
+                "Project",
+                handler=lambda: self.status.show_message("Project settings coming soon"),
+            ),
+            CommandActionDefinition(
+                "run.run",
+                "Run Without Debugging",
+                "Run",
+                handler=self._run_current_file,
+            ),
+            CommandActionDefinition(
+                "run.active_file",
+                "Run Active File",
+                "Run",
+                handler=self._run_current_file,
+                shortcut="F5",
+            ),
+            CommandActionDefinition(
+                "run.selection",
+                "Run Selected Text",
+                "Run",
+                handler=self._run_selected_text,
+                shortcut="Ctrl+Shift+Enter",
+            ),
+            CommandActionDefinition("run.tests", "Run Tests", "Run", handler=self._run_tests),
+            CommandActionDefinition("run.tasks", "Run Tasks", "Run", handler=self._run_task_command),
+            CommandActionDefinition(
+                "run.build_task",
+                "Run Build Task",
+                "Run",
+                handler=self._run_build_task,
+                shortcut="Ctrl+Shift+B",
+            ),
+            CommandActionDefinition(
+                "debug.start",
+                "Start Debugging",
+                "Debug",
+                handler=self._start_debugging,
+            ),
+            CommandActionDefinition(
+                "debug.continue",
+                "Continue",
+                "Debug",
+                handler=self._continue_debugging,
+            ),
+            CommandActionDefinition(
+                "debug.stop",
+                "Stop Debugging",
+                "Debug",
+                handler=self._stop_debugging,
+            ),
+            CommandActionDefinition(
+                "debug.step_over",
+                "Step Over",
+                "Debug",
+                handler=lambda: self._step_debugging("over"),
+            ),
+            CommandActionDefinition(
+                "debug.step_into",
+                "Step Into",
+                "Debug",
+                handler=lambda: self._step_debugging("into"),
+            ),
+            CommandActionDefinition(
+                "debug.step_out",
+                "Step Out",
+                "Debug",
+                handler=lambda: self._step_debugging("out"),
+            ),
+            CommandActionDefinition(
+                "debug.restart",
+                "Restart Debugging",
+                "Debug",
+                handler=self._restart_debugging,
+            ),
+            CommandActionDefinition(
+                "debug.run_without_debug",
+                "Run Without Debugging",
+                "Debug",
+                handler=self._run_current_file,
+            ),
+            CommandActionDefinition(
+                "debug.open_configurations",
+                "Open Configurations",
+                "Debug",
+                handler=self._open_debug_configurations,
+            ),
+            CommandActionDefinition(
+                "debug.add_configuration",
+                "Add Configuration...",
+                "Debug",
+                handler=self._add_debug_configuration,
+            ),
+            CommandActionDefinition(
+                "debug.install_debuggers",
+                "Install Additional Debuggers",
+                "Debug",
+                handler=self._install_debuggers,
+            ),
+            CommandActionDefinition(
+                "debug.toggle_breakpoint",
+                "Toggle Breakpoint",
+                "Debug",
+                handler=self._toggle_breakpoint,
+                shortcut=QKeySequence("F9"),
+            ),
+            CommandActionDefinition(
+                "debug.conditional_breakpoint",
+                "Add Conditional Breakpoint...",
+                "Debug",
+                handler=self._add_conditional_breakpoint,
+            ),
+            CommandActionDefinition(
+                "debug.logpoint",
+                "Add Logpoint...",
+                "Debug",
+                handler=self._add_logpoint,
+            ),
+            CommandActionDefinition(
+                "debug.disable_all_breakpoints",
+                "Disable All Breakpoints",
+                "Debug",
+                handler=self._disable_all_breakpoints,
+            ),
+            CommandActionDefinition(
+                "debug.enable_all_breakpoints",
+                "Enable All Breakpoints",
+                "Debug",
+                handler=self._enable_all_breakpoints,
+            ),
+            CommandActionDefinition(
+                "debug.remove_all_breakpoints",
+                "Remove All Breakpoints",
+                "Debug",
+                handler=self._remove_all_breakpoints,
+            ),
+            CommandActionDefinition("help.docs", "Documentation", "Help", handler=self._open_docs),
+            CommandActionDefinition(
+                "help.report_issue",
+                "Report Issue",
+                "Help",
+                handler=self._open_feature_request,
+            ),
+            CommandActionDefinition("help.walkthrough", "Product Walkthrough", "Help", handler=self._open_walkthrough),
+            CommandActionDefinition("help.playground", "Editor Playground", "Help", handler=self._open_editor_playground),
+            CommandActionDefinition("help.view_license", "View License", "Help", handler=self._open_license),
+            CommandActionDefinition(
+                "help.developer_tools", "Toggle Developer Tools", "Help", handler=self._toggle_developer_tools
+            ),
+            CommandActionDefinition(
+                "help.process_explorer", "Process Explorer", "Help", handler=self._open_process_explorer
+            ),
+            CommandActionDefinition("help.check_updates", "Check for Updates", "Help", handler=self._check_for_updates),
+            CommandActionDefinition("help.about", "About Ghostline Studio", "Help", handler=self._show_about),
+            CommandActionDefinition(
+                "help.ghost_terminal",
+                "Ghost Terminal...",
+                "Help",
+                handler=self._open_ghost_terminal,
+            ),
+        ]
 
-        self.action_close_folder = QAction("Close Folder", self)
-        self.action_close_folder.triggered.connect(self._close_folder)
+        self.ui_action_registry = CommandActionRegistry(self, self.command_registry)
+        self.ui_action_registry.bulk_register(command_definitions)
+        actions = self.ui_action_registry.build()
 
-        self.action_global_search = QAction("Global Search", self)
-        self.action_global_search.setShortcut("Ctrl+Shift+F")
-        self.action_global_search.triggered.connect(self._trigger_global_search_action)
-
-        self.action_goto_symbol = QAction("Go to Symbol", self)
-        self.action_goto_symbol.triggered.connect(self._open_symbol_picker)
-
-        self.action_goto_file = QAction("Go to File", self)
-        self.action_goto_file.triggered.connect(self._open_file_picker)
-
-        self.action_command_palette = QAction("Command Palette", self)
-        self.action_command_palette.setShortcut("Ctrl+P")
-        self.action_command_palette.triggered.connect(self.show_command_palette)
-
-        self.action_toggle_autoflow = QAction("Toggle Autoflow Mode", self)
-        self.action_toggle_autoflow.setCheckable(True)
-        self.action_toggle_autoflow.triggered.connect(self._toggle_autoflow_mode)
-
-        self.action_toggle_project = QAction("Explorer", self)
-        self.action_toggle_project.setCheckable(True)
-        self.action_toggle_project.setChecked(True)  # Explorer is visible by default
-        self.action_toggle_project.triggered.connect(self._toggle_project)
-
-        self.action_toggle_split_editor = QAction("Split Editor", self)
-        self.action_toggle_split_editor.setCheckable(True)
-        self.action_toggle_split_editor.triggered.connect(self._toggle_split_editor)
-
-        self.action_toggle_terminal = QAction("Terminal", self)
-        self.action_toggle_terminal.setCheckable(True)
-        self.action_toggle_terminal.triggered.connect(self._toggle_terminal)
-
-        self.action_toggle_architecture_map = QAction("3D Architecture Map", self)
-        self.action_toggle_architecture_map.setCheckable(True)
-        self.action_toggle_architecture_map.triggered.connect(self._toggle_architecture_map)
-
-        self.action_toggle_ai_dock = QAction("Ghostline AI", self)
-        self.action_toggle_ai_dock.setCheckable(True)
-        self.action_toggle_ai_dock.setChecked(True)  # AI dock is visible by default
-        self.action_toggle_ai_dock.triggered.connect(self._toggle_ai_dock)
-
-        self.action_editor_settings = QAction("Editor Settings", self)
-        self.action_editor_settings.triggered.connect(self._open_settings)
-
-        self.action_ghostline_settings = QAction("Ghostline Settings", self)
-        self.action_ghostline_settings.setShortcut(QKeySequence("Ctrl+,"))
-        self.action_ghostline_settings.triggered.connect(self._open_settings)
-
-        self.action_extensions = QAction("Extensions", self)
-        self.action_extensions.setShortcut(QKeySequence("Ctrl+Shift+X"))
-        self.action_extensions.triggered.connect(self._open_extensions)
-
-        self.action_keyboard_shortcuts = QAction("Open Keyboard Shortcuts", self)
-        self.action_keyboard_shortcuts.setShortcut(QKeySequence("Ctrl+K, Ctrl+S"))
-        self.action_keyboard_shortcuts.triggered.connect(self._open_keyboard_shortcuts)
-
-        self.action_configure_snippets = QAction("Configure Snippets", self)
-        self.action_configure_snippets.triggered.connect(self._open_snippets)
-
-        self.action_tasks_view = QAction("Tasks", self)
-        self.action_tasks_view.triggered.connect(self._open_tasks_panel)
-
-        self.action_ai_settings = QAction("AI Settings…", self)
-        self.action_ai_settings.triggered.connect(self._open_ai_settings)
-
-        self.action_setup_wizard = QAction("Re-run Setup Wizard…", self)
-        self.action_setup_wizard.triggered.connect(self.show_setup_wizard)
-
-        self.action_ai_explain = QAction("Explain Selection", self)
-        self.action_ai_explain.triggered.connect(lambda: self._run_ai_command(explain_selection))
-
-        self.action_ai_refactor = QAction("Refactor Selection", self)
-        self.action_ai_refactor.triggered.connect(lambda: self._run_ai_command(refactor_selection))
-
-        self.action_ai_code_actions = QAction("AI Code Actions...", self)
-        self.action_ai_code_actions.triggered.connect(lambda: self._run_ai_command(ai_code_actions))
-
-        self.action_ask_ai = QAction("Toggle AI Panel", self)
-        self.action_ask_ai.triggered.connect(self.toggle_ai_dock)
-
-        self.action_open_plugins = QAction("Plugins", self)
-        self.action_open_plugins.triggered.connect(self._open_plugin_manager)
-
-        self.action_run_task = QAction("Run Task...", self)
-        self.action_run_task.setShortcut("Ctrl+Shift+R")
-        self.action_run_task.triggered.connect(self._run_task_command)
-
-        self.action_restart_language = QAction("Restart Language Server", self)
-        self.action_restart_language.triggered.connect(self._restart_language_server)
-
-        self.action_format_document = QAction("Format Document", self)
-        self.action_format_document.triggered.connect(self._format_current_document)
-
-        # Edit actions
-        self.action_undo = QAction("Undo", self)
-        self.action_undo.setShortcut("Ctrl+Z")
-        self.action_undo.triggered.connect(lambda: self._with_editor(lambda e: e.undo()))
-
-        self.action_redo = QAction("Redo", self)
-        self.action_redo.setShortcut("Ctrl+Shift+Z")
-        self.action_redo.triggered.connect(lambda: self._with_editor(lambda e: e.redo()))
-
-        self.action_cut = QAction("Cut", self)
-        self.action_cut.setShortcut("Ctrl+X")
-        self.action_cut.triggered.connect(lambda: self._with_editor(lambda e: e.cut()))
-
-        self.action_copy = QAction("Copy", self)
-        self.action_copy.setShortcut("Ctrl+C")
-        self.action_copy.triggered.connect(lambda: self._with_editor(lambda e: e.copy()))
-
-        self.action_paste = QAction("Paste", self)
-        self.action_paste.setShortcut("Ctrl+V")
-        self.action_paste.triggered.connect(lambda: self._with_editor(lambda e: e.paste()))
-
-        self.action_find = QAction("Find", self)
-        self.action_find.setShortcut("Ctrl+F")
-        self.action_find.triggered.connect(self._open_global_search)
-
-        self.action_replace = QAction("Replace", self)
-        self.action_replace.setShortcut("Ctrl+H")
-        self.action_replace.triggered.connect(self._open_global_search)
-
-        self.action_select_all = QAction("Select All", self)
-        self.action_select_all.setShortcut("Ctrl+A")
-        self.action_select_all.triggered.connect(lambda: self._with_editor(lambda e: e.selectAll()))
-
-        # Project/Run/Debug
-        self.action_project_settings = QAction("Project Settings", self)
-        self.action_project_settings.triggered.connect(lambda: self.status.show_message("Project settings coming soon"))
-
-        self.action_run = QAction("Run", self)
-        self.action_run.triggered.connect(lambda: self.status.show_message("Run current project"))
-
-        self.action_run_tests = QAction("Run Tests", self)
-        self.action_run_tests.triggered.connect(self._run_tests)
-
-        self.action_run_tasks = QAction("Run Tasks", self)
-        self.action_run_tasks.triggered.connect(self._run_task_command)
-
-        self.action_start_debugging = QAction("Start Debugging", self)
-        self.action_start_debugging.triggered.connect(lambda: self.status.show_message("Starting debugger"))
-
-        self.action_stop_debugging = QAction("Stop Debugging", self)
-        self.action_stop_debugging.triggered.connect(lambda: self.status.show_message("Debugger stopped"))
-
-        self.action_step_over = QAction("Step Over", self)
-        self.action_step_over.triggered.connect(lambda: self.status.show_message("Step over"))
-
-        self.action_step_into = QAction("Step Into", self)
-        self.action_step_into.triggered.connect(lambda: self.status.show_message("Step into"))
-
-        self.action_step_out = QAction("Step Out", self)
-        self.action_step_out.triggered.connect(lambda: self.status.show_message("Step out"))
-
-        # Help actions
-        self.action_docs = QAction("Documentation", self)
-        self.action_docs.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com")))
-
-        self.action_report_issue = QAction("Report Issue", self)
-        self.action_report_issue.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com")))
-
-        self.action_about = QAction("About Ghostline Studio", self)
-        self.action_about.triggered.connect(self._show_about)
-
-        self.action_ghost_terminal = QAction("Ghost Terminal...", self)
+        self.action_new_file = actions["file.new"]
+        self.action_save_file = actions["file.save"]
+        self.action_save_file_as = actions["file.save_as"]
+        self.action_open_file = actions["file.open"]
+        self.action_open_folder = actions["file.open_folder"]
+        self.action_close_folder = actions["file.close_folder"]
+        self.action_global_search = actions["search.global"]
+        self.action_quick_open = actions["navigate.quick_open"]
+        self.action_goto_symbol = actions["navigate.symbol"]
+        self.action_goto_file = actions["navigate.file"]
+        self.action_goto_line = actions["navigate.goto_line"]
+        self.action_goto_bracket = actions["navigate.goto_bracket"]
+        self.action_back = actions["navigate.back"]
+        self.action_forward = actions["navigate.forward"]
+        self.action_last_edit = actions["navigate.last_edit"]
+        self.action_next_change = actions["navigate.next_change"]
+        self.action_prev_change = actions["navigate.prev_change"]
+        self.action_next_problem = actions["problems.next"]
+        self.action_prev_problem = actions["problems.previous"]
+        self.action_command_palette = actions["palette.command"]
+        self.action_view_picker = actions["view.picker"]
+        self.action_toggle_autoflow = actions["ai.toggle_autoflow"]
+        self.action_toggle_project = actions["view.toggle_project"]
+        self.action_toggle_split_editor = actions["view.toggle_split"]
+        self.action_next_editor = actions["view.next_editor"]
+        self.action_prev_editor = actions["view.prev_editor"]
+        self.action_focus_primary_group = actions["view.focus_primary_group"]
+        self.action_focus_secondary_group = actions["view.focus_secondary_group"]
+        self.action_move_to_other_group = actions["view.move_to_other_group"]
+        self.action_toggle_terminal = actions["view.toggle_terminal"]
+        self.action_new_terminal_tab = actions["terminal.new_tab"]
+        self.action_split_terminal = actions["terminal.split"]
+        self.action_terminal_window = actions["terminal.new_window"]
+        self.action_toggle_architecture_map = actions["view.toggle_architecture"]
+        self.action_toggle_ai_dock = actions["view.toggle_ai_dock"]
+        self.action_toggle_word_wrap = actions["view.word_wrap"]
+        self.action_toggle_autosave = actions["view.autosave"]
+        self.action_toggle_activity_bar = actions["view.activity_bar"]
+        self.action_toggle_status_bar = actions["view.status_bar"]
+        self.action_toggle_menu_bar = actions["view.menu_bar"]
+        self.action_editor_settings = actions["settings.editor"]
+        self.action_ghostline_settings = actions["settings.ghostline"]
+        self.action_extensions = actions["settings.extensions"]
+        self.action_keyboard_shortcuts = actions["settings.keyboard"]
+        self.action_configure_snippets = actions["settings.snippets"]
+        self.action_tasks_view = actions["settings.tasks"]
+        self.action_ai_settings = actions["ai.settings"]
+        self.action_setup_wizard = actions["ai.setup"]
+        self.action_ai_explain = actions["ai.explain_selection"]
+        self.action_ai_refactor = actions["ai.refactor_selection"]
+        self.action_ai_code_actions = actions["ai.code_actions"]
+        self.action_ask_ai = actions["ai.panel"]
+        self.action_open_plugins = actions["plugins.manage"]
+        self.action_run_task = actions["tasks.run"]
+        self.action_run_build = actions["tasks.run_build"]
+        self.action_configure_default_build = actions["tasks.configure_default_build"]
+        self.action_configure_tasks_file = actions["tasks.configure_file"]
+        self.action_restart_language = actions["lsp.restart"]
+        self.action_format_document = actions["edit.format_document"]
+        self.action_undo = actions["edit.undo"]
+        self.action_redo = actions["edit.redo"]
+        self.action_cut = actions["edit.cut"]
+        self.action_copy = actions["edit.copy"]
+        self.action_paste = actions["edit.paste"]
+        self.action_find = actions["edit.find"]
+        self.action_replace = actions["edit.replace"]
+        self.action_select_all = actions["edit.select_all"]
+        self.action_project_settings = actions["project.settings"]
+        self.action_run = actions["run.run"]
+        self.action_run_active_file = actions["run.active_file"]
+        self.action_run_selection = actions["run.selection"]
+        self.action_run_tests = actions["run.tests"]
+        self.action_run_tasks = actions["run.tasks"]
+        self.action_run_build_task = actions["run.build_task"]
+        self.action_start_debugging = actions["debug.start"]
+        self.action_continue_debugging = actions["debug.continue"]
+        self.action_stop_debugging = actions["debug.stop"]
+        self.action_step_over = actions["debug.step_over"]
+        self.action_step_into = actions["debug.step_into"]
+        self.action_step_out = actions["debug.step_out"]
+        self.action_restart_debugging = actions["debug.restart"]
+        self.action_run_without_debug = actions["debug.run_without_debug"]
+        self.action_open_debug_configurations = actions["debug.open_configurations"]
+        self.action_add_debug_configuration = actions["debug.add_configuration"]
+        self.action_install_debuggers = actions["debug.install_debuggers"]
+        self.action_toggle_breakpoint = actions["debug.toggle_breakpoint"]
+        self.action_conditional_breakpoint = actions["debug.conditional_breakpoint"]
+        self.action_logpoint = actions["debug.logpoint"]
+        self.action_disable_breakpoints = actions["debug.disable_all_breakpoints"]
+        self.action_enable_breakpoints = actions["debug.enable_all_breakpoints"]
+        self.action_remove_breakpoints = actions["debug.remove_all_breakpoints"]
+        self.action_docs = actions["help.docs"]
+        self.action_report_issue = actions["help.report_issue"]
+        self.action_walkthrough = actions["help.walkthrough"]
+        self.action_playground = actions["help.playground"]
+        self.action_view_license = actions["help.view_license"]
+        self.action_developer_tools = actions["help.developer_tools"]
+        self.action_process_explorer = actions["help.process_explorer"]
+        self.action_check_updates = actions["help.check_updates"]
+        self.action_about = actions["help.about"]
+        self.action_ghost_terminal = actions["help.ghost_terminal"]
         self.action_ghost_terminal.setVisible(False)
-        self.action_ghost_terminal.triggered.connect(self._open_ghost_terminal)
 
         self.addActions(
             [
@@ -1469,14 +2121,30 @@ class MainWindow(QMainWindow):
     def _create_menus(self) -> None:
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
+        file_menu.addAction(self.action_new_file)
+        file_menu.addAction(self.action_save_file)
+        file_menu.addAction(self.action_save_file_as)
         file_menu.addAction(self.action_open_file)
         file_menu.addAction(self.action_open_folder)
         file_menu.addAction(self.action_close_folder)
         file_menu.addAction(self.action_project_settings)
         file_menu.addSeparator()
+        new_window_action = QAction("New Window", self)
+        new_window_action.triggered.connect(lambda: self._launch_new_window())
+        file_menu.addAction(new_window_action)
+        profile_window_action = QAction("New Window with Profile...", self)
+        profile_window_action.triggered.connect(self._prompt_new_profile_window)
+        file_menu.addAction(profile_window_action)
+        file_menu.addSeparator()
+        share_menu = file_menu.addMenu("Share")
+        share_menu.addAction(self._create_share_file_action())
+        share_menu.addAction(self._create_share_workspace_action())
+        file_menu.addSeparator()
         tools_menu = file_menu.addMenu("Tools")
         tools_menu.addAction(self.action_open_plugins)
-        file_menu.addAction(self.action_ghostline_settings)
+        prefs_menu = file_menu.addMenu("Preferences")
+        prefs_menu.addAction(self.action_ghostline_settings)
+        prefs_menu.addAction(self.action_keyboard_shortcuts)
 
         edit_menu = menubar.addMenu("Edit")
         edit_menu.addAction(self.action_undo)
@@ -1499,40 +2167,104 @@ class MainWindow(QMainWindow):
 
         self.view_menu = menubar.addMenu("View")
         self.view_menu.addAction(self.action_command_palette)
+        self.view_menu.addAction(self.action_view_picker)
         self.view_menu.addAction(self.action_toggle_project)
         self.view_menu.addAction(self.action_toggle_split_editor)
+        switch_menu = self.view_menu.addMenu("Switch Editor/Group")
+        switch_menu.addAction(self.action_next_editor)
+        switch_menu.addAction(self.action_prev_editor)
+        switch_menu.addSeparator()
+        switch_menu.addAction(self.action_focus_primary_group)
+        switch_menu.addAction(self.action_focus_secondary_group)
+        switch_menu.addAction(self.action_move_to_other_group)
+        self.view_menu.addAction(self.action_toggle_terminal)
         self.view_menu.addAction(self.action_toggle_architecture_map)
         self.view_menu.addAction(self.action_toggle_ai_dock)
+        self.view_menu.addSeparator()
+        self.view_menu.addAction(self.action_toggle_word_wrap)
+        self.view_menu.addAction(self.action_toggle_autosave)
+        interface_menu = self.view_menu.addMenu("Interface")
+        interface_menu.addAction(self.action_toggle_activity_bar)
+        interface_menu.addAction(self.action_toggle_status_bar)
+        interface_menu.addAction(self.action_toggle_menu_bar)
         ai_menu = self.view_menu.addMenu("AI")
         ai_menu.addAction(self.action_ask_ai)
         ai_menu.addAction(self.action_ai_code_actions)
+        ai_menu.addAction(self.action_toggle_autoflow)
         ai_menu.addSeparator()
         ai_menu.addAction(self.action_ai_settings)
         ai_menu.addAction(self.action_setup_wizard)
 
         go_menu = menubar.addMenu("Go")
+        go_menu.addAction(self.action_quick_open)
         go_menu.addAction(self.action_goto_file)
         go_menu.addAction(self.action_goto_symbol)
+        go_menu.addAction(self.action_goto_line)
+        go_menu.addAction(self.action_goto_bracket)
+        go_menu.addSeparator()
+        go_menu.addAction(self.action_back)
+        go_menu.addAction(self.action_forward)
+        go_menu.addAction(self.action_last_edit)
+        go_menu.addAction(self.action_prev_change)
+        go_menu.addAction(self.action_next_change)
+        go_menu.addSeparator()
+        go_menu.addAction(self.action_next_problem)
+        go_menu.addAction(self.action_prev_problem)
         go_menu.addAction(self.action_global_search)
 
         run_menu = menubar.addMenu("Run")
         run_menu.addAction(self.action_run)
+        run_menu.addAction(self.action_run_active_file)
+        run_menu.addAction(self.action_run_selection)
+        run_menu.addAction(self.action_run_without_debug)
         run_menu.addAction(self.action_run_tests)
-        run_menu.addAction(self.action_run_task)
+        tasks_menu = run_menu.addMenu("Tasks")
+        tasks_menu.addAction(self.action_run_task)
+        tasks_menu.addAction(self.action_run_build_task)
+        tasks_menu.addSeparator()
+        tasks_menu.addAction(self.action_configure_default_build)
+        tasks_menu.addAction(self.action_configure_tasks_file)
         debug_menu = run_menu.addMenu("Debug")
         debug_menu.addAction(self.action_start_debugging)
+        debug_menu.addAction(self.action_continue_debugging)
+        debug_menu.addAction(self.action_restart_debugging)
         debug_menu.addAction(self.action_stop_debugging)
         debug_menu.addAction(self.action_step_over)
         debug_menu.addAction(self.action_step_into)
         debug_menu.addAction(self.action_step_out)
+        debug_menu.addSeparator()
+        config_menu = debug_menu.addMenu("Configurations")
+        config_menu.addAction(self.action_open_debug_configurations)
+        config_menu.addAction(self.action_add_debug_configuration)
+        debug_menu.addAction(self.action_install_debuggers)
+        breakpoints_menu = debug_menu.addMenu("Breakpoints")
+        breakpoints_menu.addAction(self.action_toggle_breakpoint)
+        breakpoints_menu.addAction(self.action_conditional_breakpoint)
+        breakpoints_menu.addAction(self.action_logpoint)
+        breakpoints_menu.addSeparator()
+        breakpoints_menu.addAction(self.action_enable_breakpoints)
+        breakpoints_menu.addAction(self.action_disable_breakpoints)
+        breakpoints_menu.addAction(self.action_remove_breakpoints)
 
         terminal_menu = menubar.addMenu("Terminal")
         terminal_menu.addAction(self.action_toggle_terminal)
+        terminal_menu.addAction(self.action_new_terminal_tab)
+        terminal_menu.addAction(self.action_split_terminal)
+        terminal_menu.addAction(self.action_terminal_window)
+        terminal_menu.addSeparator()
         terminal_menu.addAction(self.action_restart_language)
 
         help_menu = menubar.addMenu("Help")
         help_menu.addAction(self.action_docs)
         help_menu.addAction(self.action_report_issue)
+        help_menu.addAction(self.action_walkthrough)
+        help_menu.addAction(self.action_playground)
+        help_menu.addAction(self.action_view_license)
+        help_menu.addSeparator()
+        help_menu.addAction(self.action_developer_tools)
+        help_menu.addAction(self.action_process_explorer)
+        help_menu.addAction(self.action_check_updates)
+        help_menu.addSeparator()
         help_menu.addAction(self.action_about)
         # Hidden easter egg: hold Shift while opening the Help menu to reveal Ghost Terminal.
         help_menu.aboutToShow.connect(self._on_help_menu_about_to_show)
@@ -1563,7 +2295,7 @@ class MainWindow(QMainWindow):
         # Add panels to bottom panel in Windsurf order
         self.bottom_panel.add_panel("Problems", self.problems_panel)
         self.output_panel_index = self.bottom_panel.add_panel("Output", self.output_panel)
-        self.bottom_panel.add_panel("Debug Console", self.debug_console_panel)
+        self.debug_console_panel_index = self.bottom_panel.add_panel("Debug Console", self.debug_console_panel)
         self.terminal_panel_index = self.bottom_panel.add_panel(
             "Terminal", self.terminal_widget, controls=self.terminal_widget.toolbar_widget
         )
@@ -1575,6 +2307,7 @@ class MainWindow(QMainWindow):
         # Keep backward compatibility references
         self.terminal = self.terminal_widget
         self.terminal_dock = self.bottom_panel  # For compatibility
+        self.debugger.output.connect(self.debug_console_panel.append_console)
 
     def _create_project_dock(self) -> None:
         dock = QDockWidget("Explorer", self)
@@ -1602,6 +2335,18 @@ class MainWindow(QMainWindow):
         self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.project_dock = dock
+
+    def _create_search_dock(self) -> None:
+        dock = SearchPanel(
+            lambda: str(self.workspace_manager.current_workspace) if self.workspace_manager.current_workspace else None,
+            lambda path, line: self.open_file_at(path, line),
+            self,
+        )
+        dock.setObjectName("searchDock")
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._place_left_dock(dock)
+        self._register_dock_action(dock)
+        self.search_dock = dock
 
     def _create_ai_dock(self) -> None:
         dock = QDockWidget("Ghostline AI", self)
@@ -1647,17 +2392,20 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("Debugger", self)
         dock.setObjectName("debuggerDock")
         panel = DebuggerPanel(self.debugger, self)
+        panel.set_current_file_provider(self._current_file_path)
         dock.setWidget(panel)
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
         self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.debugger_panel = panel
         self.debugger_dock = dock
+        self._refresh_debugger_config_ui()
 
     def _create_task_dock(self) -> None:
         dock = QDockWidget("Tasks", self)
         dock.setObjectName("tasksDock")
         panel = TaskPanel(self.task_manager, self)
+        panel.set_configure_handler(self._open_tasks_configuration)
         dock.setWidget(panel)
         dock.setMinimumWidth(180)  # Changed from height to width for left dock
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
@@ -1777,7 +2525,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "title_bar"):
             self.title_bar.update_maximize_icon()
 
-    def _toggle_autoflow_mode(self) -> None:
+    def _toggle_autoflow_mode(self, _checked: bool | None = None) -> None:
         new_mode = "active" if self.command_palette.autoflow_mode == "passive" else "passive"
         self.command_palette.set_autoflow_mode(new_mode)
         self.navigation_assistant.autoflow_enabled = new_mode == "active"
@@ -1864,14 +2612,152 @@ class MainWindow(QMainWindow):
         else:
             self.status.show_message("Open a workspace to run tests")
 
-    def _run_current_file(self, file_path: str | None = None) -> None:
-        """Run the active Python file in the embedded terminal.
+    def _current_file_path(self) -> Path | None:
+        editor = self.get_current_editor()
+        if editor and editor.path:
+            return editor.path
+        return None
 
-        This is wired to the editor header Run button (python.runFile) and
-        prefers the bottom terminal dock so the user can see the command and
-        its live output. If the terminal is not available, it falls back to
-        the generic task manager runner.
-        """
+    def _show_debug_console(self) -> None:
+        if hasattr(self, "bottom_panel") and hasattr(self, "debug_console_panel_index"):
+            self.bottom_panel.show()
+            self.bottom_panel.set_current_panel(self.debug_console_panel_index)
+            if hasattr(self, "toggle_bottom_region"):
+                self.toggle_bottom_region.setChecked(True)
+
+    def _refresh_debugger_config_ui(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        self.debugger.set_workspace(workspace)
+        configs = self.debugger.configuration_names() if workspace else []
+        launch_path = self.debugger.launch_file_path()
+        launch_exists = bool(launch_path and launch_path.exists())
+        if hasattr(self, "debugger_panel"):
+            self.debugger_panel.set_configured(bool(workspace and (configs or launch_exists)))
+            self.debugger_panel.refresh_configurations(configs)
+        return launch_exists
+
+    def _start_debugging(self) -> None:
+        file_path = self._current_file_path()
+        if not file_path:
+            self.status.show_message("Open a file to debug")
+            return
+        launch_path = self.debugger.ensure_launch_file()
+        if not launch_path:
+            self.status.show_message("Open a workspace to debug")
+            return
+        self._refresh_debugger_config_ui()
+        self._show_debug_console()
+        config_name = None
+        if hasattr(self, "debugger_panel"):
+            config_name = self.debugger_panel.config_combo.currentText()
+        self.debugger.launch_for_file(file_path, config_name or None)
+
+    def _continue_debugging(self) -> None:
+        self._show_debug_console()
+        self.debugger.continue_execution()
+
+    def _step_debugging(self, action: str) -> None:
+        self._show_debug_console()
+        self.debugger.step(action)
+
+    def _restart_debugging(self) -> None:
+        self._show_debug_console()
+        self.debugger.restart()
+
+    def _stop_debugging(self) -> None:
+        self.debugger.stop()
+
+    def _open_debug_configurations(self) -> None:
+        launch_path = self.debugger.ensure_launch_file()
+        if launch_path:
+            self.open_file(str(launch_path))
+            self._refresh_debugger_config_ui()
+
+    def _add_debug_configuration(self) -> None:
+        file_path = self._current_file_path()
+        file_name = file_path.name if file_path else "file.py"
+        config = {
+            "name": f"Python: {file_name}",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+        }
+        self.debugger.add_configuration(config)
+        self._refresh_debugger_config_ui()
+        self.status.show_message("Added debug configuration")
+
+    def _install_debuggers(self) -> None:
+        self._open_plugin_manager(category_hint="Debuggers")
+
+    def _toggle_breakpoint(self) -> None:
+        editor = self.get_current_editor()
+        path = editor.path if editor else None
+        if not editor or not path:
+            self.status.show_message("Open a file to toggle a breakpoint")
+            return
+        line = editor.textCursor().blockNumber()
+        self.debugger.breakpoints.toggle_line(str(path), line)
+        editor.line_number_area.update()
+
+    def _add_conditional_breakpoint(self) -> None:
+        editor = self.get_current_editor()
+        path = editor.path if editor else None
+        if not editor or not path:
+            self.status.show_message("Open a file to add a conditional breakpoint")
+            return
+        line = editor.textCursor().blockNumber()
+        expr, ok = QInputDialog.getText(self, "Conditional Breakpoint", "Condition expression:")
+        if ok and expr:
+            self.debugger.breakpoints.set_conditional(str(path), line, expr)
+            editor.line_number_area.update()
+
+    def _add_logpoint(self) -> None:
+        editor = self.get_current_editor()
+        path = editor.path if editor else None
+        if not editor or not path:
+            self.status.show_message("Open a file to add a logpoint")
+            return
+        line = editor.textCursor().blockNumber()
+        message, ok = QInputDialog.getText(self, "Logpoint", "Log message:")
+        if ok and message:
+            self.debugger.breakpoints.set_logpoint(str(path), line, message)
+            editor.line_number_area.update()
+
+    def _enable_all_breakpoints(self) -> None:
+        path = self._current_file_path()
+        if not path:
+            self.status.show_message("Open a file to enable breakpoints")
+            return
+        self.debugger.breakpoints.enable_all(str(path))
+        editor = self.get_current_editor()
+        if editor:
+            editor.line_number_area.update()
+
+    def _disable_all_breakpoints(self) -> None:
+        path = self._current_file_path()
+        if not path:
+            self.status.show_message("Open a file to disable breakpoints")
+            return
+        self.debugger.breakpoints.disable_all(str(path))
+        editor = self.get_current_editor()
+        if editor:
+            editor.line_number_area.update()
+
+    def _remove_all_breakpoints(self) -> None:
+        path = self._current_file_path()
+        if not path:
+            self.status.show_message("Open a file to remove breakpoints")
+            return
+        self.debugger.breakpoints.clear(str(path))
+        editor = self.get_current_editor()
+        if editor:
+            editor.line_number_area.update()
+
+    def _run_current_file(self, file_path: str | None = None) -> None:
+        """Run the active file using language-aware heuristics."""
+
         path = Path(file_path) if file_path else None
         if not path:
             editor = self.get_current_editor()
@@ -1879,35 +2765,89 @@ class MainWindow(QMainWindow):
         if not path:
             self.status.show_message("No file selected to run")
             return
-        if path.suffix.lower() not in {".py", ".pyw"}:
-            self.status.show_message("This file type cannot be run")
-            return
         if not path.exists():
             self.status.show_message("File does not exist on disk")
             return
 
-        # Build the command we want to run. Quote the path so spaces are safe.
-        command = f'{sys.executable} "{path}"'
+        language = self._language_for_path(path)
+        command = self._build_file_command(path, language)
+        self._run_in_terminal_or_task(command, path.parent)
+
+    def _run_selected_text(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            self.status.show_message("No editor available")
+            return
+        cursor = editor.textCursor()
+        text = cursor.selectedText() or cursor.block().text()
+        text = text.replace("\u2029", "\n")
+        if not text.strip():
+            self.status.show_message("No text selected to run")
+            return
+        path = Path(editor.path) if editor.path else None
+        language = self._language_for_path(path)
+        command = self._build_selection_command(language, text)
+        cwd = path.parent if path else self.workspace_manager.current_workspace
+        self._run_in_terminal_or_task(command, cwd)
+
+    def _run_in_terminal_or_task(self, command: str, cwd: Path | None) -> None:
+        if hasattr(self, "output_panel"):
+            self.output_panel.append_output(f"$ {command}")
+            if hasattr(self, "bottom_panel"):
+                self.bottom_panel.show()
+                self.bottom_panel.set_current_panel(self.output_panel_index)
 
         # Prefer the embedded terminal dock so the user sees a live stream
         # of the command and any errors / logs.
         terminal = getattr(self, "terminal", None)
-        terminal_dock = getattr(self, "terminal_dock", None)
-        
-        if terminal is not None and terminal_dock is not None:
+        bottom_panel = getattr(self, "bottom_panel", None)
+        if terminal is not None and bottom_panel is not None:
             try:
-                self._show_and_raise_dock(terminal_dock, tool_id=None)
-                terminal.run_command(command)
+                self._show_terminal_panel()
+                terminal.run_command(self._prepend_cwd(command, cwd))
                 return
-            except Exception as e:
-                print(f"Error using terminal: {e}")
-                # If anything goes wrong showing the dock, fall back to tasks
-                self.task_manager.run_command("Run", command, cwd=str(path.parent))
-                return
+            except Exception as exc:  # noqa: BLE001
+                print(f"Error using terminal: {exc}")
+        cwd_text = str(cwd) if cwd else None
+        self.task_manager.run_command("Run", command, cwd=cwd_text)
 
-        # Final fallback: run through the generic task manager so the command
-        # still executes even if the terminal is missing.
-        self.task_manager.run_command("Run", command, cwd=str(path.parent))
+    def _show_terminal_panel(self) -> None:
+        bottom_panel = getattr(self, "bottom_panel", None)
+        if bottom_panel and hasattr(self, "terminal_panel_index"):
+            bottom_panel.show()
+            bottom_panel.set_current_panel(self.terminal_panel_index)
+
+    def _language_for_path(self, path: Path | None) -> str:
+        if not path:
+            return "bash"
+        ext = path.suffix.lower()
+        if ext in {".py", ".pyw"}:
+            return "python"
+        if ext in {".js", ".mjs", ".cjs", ".ts"}:
+            return "node"
+        if ext in {".sh"}:
+            return "bash"
+        return "bash"
+
+    def _build_file_command(self, path: Path, language: str) -> str:
+        quoted_path = f'"{path}"'
+        if language == "python":
+            return f"{sys.executable} {quoted_path}"
+        if language == "node":
+            return f"node {quoted_path}"
+        return f"bash {quoted_path}"
+
+    def _build_selection_command(self, language: str, text: str) -> str:
+        if language == "python":
+            return f"{sys.executable} - <<'PY'\n{text}\nPY"
+        if language == "node":
+            return f"node - <<'JS'\n{text}\nJS"
+        return f"bash <<'BASH'\n{text}\nBASH"
+
+    def _prepend_cwd(self, command: str, cwd: Path | None) -> str:
+        if cwd:
+            return f'cd "{cwd}" && {command}'
+        return command
 
     def get_current_editor(self) -> CodeEditor | None:
         return self.editor_tabs.current_editor()
@@ -1992,6 +2932,40 @@ class MainWindow(QMainWindow):
         if command_id in commands:
             commands[command_id](**kwargs)
 
+    def _create_new_file(self) -> None:
+        editor = self.editor_tabs.add_untitled_editor()
+        editor.document().setModified(True)
+        self._update_title_context()
+
+    def _save_current_file(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        if not editor.path:
+            self._save_current_file_as()
+            return
+        editor.save()
+        self.editor_tabs.update_tab_for_editor(editor)
+        self.status.show_message("File saved")
+        if editor.path:
+            self.workspace_manager.record_recent_file(str(editor.path))
+            self.plugin_loader.emit_event("file.saved", path=str(editor.path))
+
+    def _save_current_file_as(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save File")
+        if not path:
+            return
+        editor.set_path(Path(path))
+        editor.save()
+        self.editor_tabs.update_tab_for_editor(editor)
+        self.workspace_manager.register_recent(path)
+        self.workspace_manager.record_recent_file(path)
+        self.status.show_message(f"Saved {Path(path).name}")
+        self.plugin_loader.emit_event("file.saved", path=path)
+
     def _prompt_open_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open File")
         if path:
@@ -2023,7 +2997,78 @@ class MainWindow(QMainWindow):
         workspace_path = self.workspace_manager.templates.create(template, destination)
         self.open_folder(str(workspace_path))
 
+    def _create_share_file_action(self) -> QAction:
+        action = QAction("Copy Active File Path", self)
+        action.triggered.connect(self._copy_active_file_path)
+        return action
+
+    def _create_share_workspace_action(self) -> QAction:
+        action = QAction("Copy Workspace Path", self)
+        action.triggered.connect(self._copy_workspace_path)
+        return action
+
+    def _copy_active_file_path(self) -> None:
+        editor = self.get_current_editor()
+        if editor and editor.path:
+            QApplication.clipboard().setText(str(editor.path))
+            self.status.show_message("Copied file path to clipboard")
+        else:
+            self.status.show_message("No active file to share")
+
+    def _copy_workspace_path(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        if workspace:
+            QApplication.clipboard().setText(str(workspace))
+            self.status.show_message("Copied workspace path to clipboard")
+        else:
+            self.status.show_message("No workspace open")
+
+    def _launch_new_window(self, profile: str | None = None) -> None:
+        executable = sys.executable
+        entry = Path(sys.argv[0]).resolve()
+        if not entry.exists():
+            entry = Path(__file__).resolve().parents[2] / "start.py"
+
+        env = dict(os.environ)
+        if profile:
+            profile_dir = CONFIG_DIR / "profiles" / profile
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            env["GHOSTLINE_CONFIG_DIR"] = str(profile_dir)
+        else:
+            env.setdefault("GHOSTLINE_CONFIG_DIR", str(CONFIG_DIR))
+
+        subprocess.Popen([executable, str(entry)], env=env)
+
+    def _prompt_new_profile_window(self) -> None:
+        profile, ok = QInputDialog.getText(self, "Profile", "Profile name", QLineEdit.Normal, "default")
+        if not ok or not profile.strip():
+            return
+        self._launch_new_window(profile.strip())
+
+    def _dirty_editors(self) -> list[CodeEditor]:
+        return [editor for editor in self.editor_tabs.iter_editors() if editor.is_dirty()]
+
+    def _confirm_unsaved_changes(self) -> bool:
+        dirty = self._dirty_editors()
+        if not dirty:
+            return True
+
+        answer = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "You have unsaved changes. Save them before continuing?",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            QMessageBox.Yes,
+        )
+        if answer == QMessageBox.Cancel:
+            return False
+        if answer == QMessageBox.Yes:
+            self.save_all()
+        return True
+
     def _close_folder(self) -> None:
+        if not self._confirm_unsaved_changes():
+            return
         self.workspace_manager.clear_workspace()
         self._restored_workspace = None
         if hasattr(self, "project_model"):
@@ -2047,6 +3092,9 @@ class MainWindow(QMainWindow):
             editor.setTextCursor(cursor)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        if not self._confirm_unsaved_changes():
+            event.ignore()
+            return
         try:
             if hasattr(self, "analysis_service") and self.analysis_service:
                 try:
@@ -2202,11 +3250,17 @@ class MainWindow(QMainWindow):
 
     # Command registration
     def _register_core_commands(self) -> None:
+        if hasattr(self, "ui_action_registry"):
+            self.ui_action_registry.refresh_enabled()
+            return
         registry = self.command_registry
         registry.register_command(CommandDescriptor("file.open", "Open File", "File", self._prompt_open_file))
         registry.register_command(CommandDescriptor("file.save_all", "Save All", "File", self.save_all))
         registry.register_command(CommandDescriptor("view.toggle_project", "Toggle Project", "View", self._toggle_project))
         registry.register_command(CommandDescriptor("view.toggle_terminal", "Toggle Terminal", "View", self._toggle_terminal))
+        registry.register_command(CommandDescriptor("terminal.new_tab", "New Terminal", "Terminal", self._new_terminal_tab))
+        registry.register_command(CommandDescriptor("terminal.split", "Split Terminal", "Terminal", self._split_terminal_view))
+        registry.register_command(CommandDescriptor("terminal.new_window", "Open Terminal Window", "Terminal", self._open_terminal_window))
         registry.register_command(
             CommandDescriptor(
                 "view.toggle_split", "Toggle Split Editor", "View", lambda: self._toggle_split_editor(not self.editor_tabs.split_active())
@@ -2217,7 +3271,7 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode))
         registry.register_command(CommandDescriptor("ai.settings", "AI Settings", "AI", self._open_ai_settings))
         registry.register_command(CommandDescriptor("ai.setup", "Re-run Setup Wizard", "AI", self.show_setup_wizard))
-        registry.register_command(CommandDescriptor("search.global", "Global Search", "Navigate", self._open_global_search))
+        registry.register_command(CommandDescriptor("search.global", "Find in Files", "Navigate", self._open_global_search))
         registry.register_command(CommandDescriptor("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker))
         registry.register_command(CommandDescriptor("navigate.file", "Go to File", "Navigate", self._open_file_picker))
         registry.register_command(
@@ -2227,9 +3281,27 @@ class MainWindow(QMainWindow):
         )
         registry.register_command(CommandDescriptor("workflow.run", "Run Pipelines", "Automation", self._run_all_pipelines))
         registry.register_command(CommandDescriptor("tasks.run", "Run Task", "Tasks", self._run_task_command))
+        registry.register_command(CommandDescriptor("tasks.run_build", "Run Build Task", "Tasks", self._run_build_task))
+        registry.register_command(
+            CommandDescriptor("tasks.configure_default_build", "Configure Default Build Task", "Tasks", self._configure_default_build_task)
+        )
+        registry.register_command(CommandDescriptor("tasks.configure_file", "Configure Tasks", "Tasks", self._open_tasks_configuration))
         registry.register_command(CommandDescriptor("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
         registry.register_command(CommandDescriptor("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
         registry.register_command(CommandDescriptor("python.runFile", "Run Current File", "Run", self._run_current_file))
+        registry.register_command(CommandDescriptor("run.active_file", "Run Active File", "Run", self._run_current_file))
+        registry.register_command(CommandDescriptor("run.selection", "Run Selected Text", "Run", self._run_selected_text))
+        registry.register_command(CommandDescriptor("run.build_task", "Run Build Task", "Run", self._run_build_task))
+        registry.register_command(CommandDescriptor("debug.start", "Start Debugging", "Debug", self._start_debugging))
+        registry.register_command(CommandDescriptor("debug.continue", "Continue Debugging", "Debug", self._continue_debugging))
+        registry.register_command(CommandDescriptor("debug.restart", "Restart Debugging", "Debug", self._restart_debugging))
+        registry.register_command(CommandDescriptor("debug.stop", "Stop Debugging", "Debug", self._stop_debugging))
+        registry.register_command(CommandDescriptor("debug.open_config", "Open Debug Configurations", "Debug", self._open_debug_configurations))
+        registry.register_command(CommandDescriptor("debug.add_config", "Add Debug Configuration", "Debug", self._add_debug_configuration))
+        registry.register_command(CommandDescriptor("debug.install", "Install Additional Debuggers", "Debug", self._install_debuggers))
+        registry.register_command(CommandDescriptor("debug.toggle_breakpoint", "Toggle Breakpoint", "Debug", self._toggle_breakpoint))
+        registry.register_command(CommandDescriptor("debug.conditional_breakpoint", "Conditional Breakpoint", "Debug", self._add_conditional_breakpoint))
+        registry.register_command(CommandDescriptor("debug.logpoint", "Logpoint", "Debug", self._add_logpoint))
 
     def _show_and_raise_dock(self, dock: QDockWidget | None, tool_id: str | None = None) -> None:
         if not dock:
@@ -2274,12 +3346,19 @@ class MainWindow(QMainWindow):
         )
         self.activity_bar.settingsRequested.connect(self._open_settings)
 
+    def _focus_editor_find(self, replace: bool = False) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.show_find_bar(replace=replace)
+            editor.setFocus()
+
     def _focus_global_search(self) -> None:
         query: str | None = None
-        if hasattr(self, "title_bar") and hasattr(self.title_bar, "command_input"):
-            query = self.title_bar.command_input.text()
-            self.title_bar.command_input.setFocus()
-            self.title_bar.command_input.selectAll()
+        editor = self.get_current_editor()
+        if editor:
+            cursor = editor.textCursor()
+            if cursor.hasSelection():
+                query = cursor.selectedText()
         self._open_global_search(query)
 
     def _trigger_global_search_action(self) -> None:
@@ -2288,6 +3367,8 @@ class MainWindow(QMainWindow):
     def _toggle_project(self, checked: bool) -> None:
         if not hasattr(self, "project_dock"):
             return
+
+        self.view_settings.setdefault("panels", {})["project"] = bool(checked)
 
         if checked:
             # Show the project dock
@@ -2304,6 +3385,8 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "bottom_panel"):
             return
 
+        self.view_settings.setdefault("panels", {})["terminal"] = bool(checked)
+
         self.bottom_panel.setVisible(checked)
 
         if checked and hasattr(self, "terminal_panel_index"):
@@ -2315,10 +3398,29 @@ class MainWindow(QMainWindow):
 
         self._update_view_action_states()
 
+    def _new_terminal_tab(self) -> None:
+        terminal = getattr(self, "terminal_widget", None)
+        if terminal:
+            self._show_terminal_panel()
+            terminal.new_terminal_tab()
+
+    def _split_terminal_view(self) -> None:
+        terminal = getattr(self, "terminal_widget", None)
+        if terminal:
+            self._show_terminal_panel()
+            terminal.split_terminal()
+
+    def _open_terminal_window(self) -> None:
+        terminal = getattr(self, "terminal_widget", None)
+        if terminal:
+            terminal.open_new_window()
+
     def _toggle_architecture_map(self, checked: bool) -> None:
         dock = getattr(self, "architecture_dock", None)
         if not dock:
             return
+
+        self.view_settings.setdefault("panels", {})["architecture"] = bool(checked)
 
         if checked:
             # Show the architecture dock
@@ -2338,6 +3440,8 @@ class MainWindow(QMainWindow):
         if not dock:
             return
 
+        self.view_settings.setdefault("panels", {})["ai"] = bool(checked)
+
         dock.setVisible(checked)
 
         # Make sure the right region is visible when turning the AI panel on
@@ -2347,6 +3451,53 @@ class MainWindow(QMainWindow):
                 self.toggle_right_region.setChecked(True)
 
         self._update_view_action_states()
+
+    def _toggle_word_wrap(self, checked: bool) -> None:
+        self._word_wrap_enabled = bool(checked)
+        self.view_settings["word_wrap"] = self._word_wrap_enabled
+        editor_cfg = self.config.settings.setdefault("editor", {}) if self.config else {}
+        editor_cfg["word_wrap"] = self._word_wrap_enabled
+
+        if hasattr(self, "editor_tabs"):
+            for editor in self.editor_tabs.iter_editors():
+                if hasattr(editor, "set_word_wrap_enabled"):
+                    editor.set_word_wrap_enabled(self._word_wrap_enabled)
+
+    def _toggle_autosave(self, checked: bool) -> None:
+        self._autosave_enabled = bool(checked)
+        autosave_cfg = self.config.settings.setdefault("autosave", {}) if self.config else {}
+        autosave_cfg["enabled"] = self._autosave_enabled
+        autosave_cfg.setdefault("interval_seconds", self._autosave_interval)
+        self._autosave_interval = int(autosave_cfg.get("interval_seconds", self._autosave_interval))
+        if self._autosave_enabled:
+            self._autosave_timer.start(self._autosave_interval * 1000)
+        else:
+            self._autosave_timer.stop()
+
+    def _perform_autosave(self) -> None:
+        if not self._autosave_enabled:
+            return
+        for editor in self.editor_tabs.iter_editors():
+            if editor.is_dirty():
+                editor.save()
+                if editor.path:
+                    self.plugin_loader.emit_event("file.saved", path=str(editor.path))
+        self.status.show_message("Autosaved dirty files")
+
+    def _toggle_activity_bar_visible(self, checked: bool) -> None:
+        self.view_settings.setdefault("bars", {})["activity"] = bool(checked)
+        if hasattr(self, "activity_bar"):
+            self.activity_bar.setVisible(checked)
+
+    def _toggle_status_bar_visible(self, checked: bool) -> None:
+        self.view_settings.setdefault("bars", {})["status"] = bool(checked)
+        if hasattr(self, "status"):
+            self.status.setVisible(checked)
+
+    def _toggle_menu_bar_visible(self, checked: bool) -> None:
+        self.view_settings.setdefault("bars", {})["menu"] = bool(checked)
+        if menubar := self.menuBar():
+            menubar.setVisible(checked)
 
     def _refresh_architecture_graph(self) -> None:
         dock = getattr(self, "architecture_dock", None)
@@ -2398,20 +3549,12 @@ class MainWindow(QMainWindow):
         return result
 
     def _open_global_search(self, initial_query: str | None = None) -> None:
-        if not hasattr(self, "_global_search_dialog"):
-            self._global_search_dialog = GlobalSearchDialog(
-                lambda: str(self.workspace_manager.current_workspace) if self.workspace_manager.current_workspace else None,
-                lambda path, line: self.open_file_at(path, line),
-                self,
-            )
-
+        dock = getattr(self, "search_dock", None)
+        if not dock:
+            return
+        self._show_and_raise_dock(dock, "search")
         if initial_query:
-            if hasattr(self._global_search_dialog, "open_with_query"):
-                self._global_search_dialog.open_with_query(initial_query)
-            else:
-                self._global_search_dialog.input.setText(initial_query)
-        self._global_search_dialog.show()
-        self._global_search_dialog.raise_()
+            dock.open_with_query(initial_query)
 
     def _apply_theme_from_config(self) -> None:
         configured_theme = self._theme_id_from_value(self.config.get("theme"))
@@ -2505,8 +3648,85 @@ class MainWindow(QMainWindow):
     def _open_quick_settings_placeholder(self) -> None:
         QMessageBox.information(self, "Quick Settings", "Quick Settings Panel not implemented yet")
 
-    def _check_for_updates_placeholder(self) -> None:
-        QMessageBox.information(self, "Check for Updates", "Update checker not implemented yet")
+    def _check_for_updates(self) -> None:
+        current_version = self._detect_app_version()
+        latest_version = None
+        release_url = CHANGELOG_URL
+        try:
+            with request.urlopen(
+                "https://api.github.com/repos/ghostline-studio/Ghostline-Studio/releases/latest", timeout=5
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            latest_version = payload.get("tag_name") or payload.get("name")
+            release_url = QUrl(payload.get("html_url") or CHANGELOG_URL)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.information(
+                self,
+                "Check for Updates",
+                f"Current version: {current_version}\nUnable to reach update service:\n{exc}",
+            )
+            return
+
+        latest_label = latest_version or "unknown"
+        if latest_version and current_version != "unknown" and latest_version.strip("v") != current_version.strip("v"):
+            status = f"A new version is available: {latest_label}\nCurrent version: {current_version}"
+        else:
+            status = f"You are up to date. Current version: {current_version}"
+            if current_version == "unknown":
+                status = f"Latest release: {latest_label}\nCurrent version: {current_version}"
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Check for Updates")
+        box.setText(status)
+        if latest_version and current_version != latest_version:
+            box.setInformativeText("Open the latest release notes?")
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        else:
+            box.setStandardButtons(QMessageBox.Ok)
+
+        result = box.exec()
+        if box.standardButton(result) == QMessageBox.Yes and isinstance(release_url, QUrl):
+            QDesktopServices.openUrl(release_url)
+
+    def _open_license(self) -> None:
+        license_path = Path(__file__).resolve().parents[2] / "LICENSE"
+        if license_path.exists():
+            self.open_file(str(license_path))
+            return
+        QMessageBox.warning(self, "License", "LICENSE file not found in this installation.")
+
+    def _open_editor_playground(self) -> None:
+        if not self._playground_dialog:
+            self._playground_dialog = EditorPlaygroundDialog(self.open_file, self)
+        self._playground_dialog.show()
+        self._playground_dialog.raise_()
+        self._playground_dialog.activateWindow()
+
+    def _open_walkthrough(self) -> None:
+        if not self._walkthrough_dialog:
+            self._walkthrough_dialog = WalkthroughDialog(DOCS_URL, self)
+        self._walkthrough_dialog.show()
+        self._walkthrough_dialog.raise_()
+        self._walkthrough_dialog.activateWindow()
+
+    def _toggle_developer_tools(self) -> None:
+        if not self._developer_tools_dialog:
+            self._developer_tools_dialog = DeveloperToolsDialog(str(LOG_FILE), self)
+        if self._developer_tools_dialog.isVisible():
+            self._developer_tools_dialog.close()
+            return
+        self._developer_tools_dialog.refresh()
+        self._developer_tools_dialog.show()
+        self._developer_tools_dialog.raise_()
+        self._developer_tools_dialog.activateWindow()
+
+    def _open_process_explorer(self) -> None:
+        if not self._process_explorer_dialog:
+            self._process_explorer_dialog = ProcessExplorerDialog(self._collect_process_snapshot, self)
+        self._process_explorer_dialog.refresh()
+        self._process_explorer_dialog.show()
+        self._process_explorer_dialog.raise_()
+        self._process_explorer_dialog.activateWindow()
 
     def _open_docs(self) -> None:
         QDesktopServices.openUrl(DOCS_URL)
@@ -2519,6 +3739,45 @@ class MainWindow(QMainWindow):
 
     def _open_changelog(self) -> None:
         QDesktopServices.openUrl(CHANGELOG_URL)
+
+    def _collect_process_snapshot(self) -> list[dict]:
+        records: list[dict] = []
+        records.append(self._process_record("Ghostline Studio", "App", os.getpid(), "Main application"))
+
+        for label, process in self.task_manager.processes.items():
+            pid = int(process.processId()) if process.processId() else None
+            records.append(self._process_record(f"Task: {label}", "Task", pid, "Workspace task"))
+
+        if hasattr(self, "terminal_widget"):
+            for session in self.terminal_widget.sessions:
+                pid = getattr(session.terminal, "pid", None)
+                details = f"{session.working_dir}" if session.working_dir else "Terminal session"
+                records.append(self._process_record(session.name, "Terminal", pid, details))
+
+        if self.debugger.process:
+            records.append(self._process_record("Debugger", "Debug", self.debugger.process.pid, "debugpy session"))
+
+        return records
+
+    def _process_record(self, name: str, kind: str, pid: int | None, details: str) -> dict:
+        cpu = "n/a"
+        memory = "n/a"
+        if pid and self._psutil:
+            try:
+                proc = self._psutil.Process(pid)
+                with proc.oneshot():
+                    cpu = f"{proc.cpu_percent(interval=0.0):.1f}%"
+                    memory = f"{proc.memory_info().rss / (1024 * 1024):.1f} MB"
+            except Exception:
+                pass
+        return {
+            "name": name,
+            "type": kind,
+            "pid": pid or "–",
+            "cpu": cpu,
+            "memory": memory,
+            "details": details,
+        }
 
     def _detect_app_version(self) -> str:
         try:
@@ -2624,19 +3883,179 @@ class MainWindow(QMainWindow):
                 return
         self.status.show_message("No matching file found")
 
+    def _open_plugin_manager(self, category_hint: str | None = None) -> None:
+        dialog = PluginManagerDialog(self.plugin_loader, self, category_hint=category_hint)
+    def _open_quick_open(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        if not workspace:
+            self.status.show_message("Open a workspace to use Quick Open")
+            return
+        files: list[Path] = []
+        for recent in self.workspace_manager.get_recent_files(workspace):
+            path = Path(recent)
+            if path.exists():
+                files.append(path)
+        for path in workspace.rglob("*"):
+            if path.is_file():
+                files.append(path)
+            if len(files) >= 400:
+                break
+        dialog = QuickOpenDialog(files, self)
+        if dialog.exec():
+            if dialog.selected:
+                self.open_file(str(dialog.selected))
+            else:
+                self._prompt_goto_line()
+
+    def _prompt_goto_line(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        text, ok = QInputDialog.getText(self, "Go to Line/Column", "Enter line[:column]:")
+        if not ok or not text:
+            return
+        parts = text.replace(":", ",").split(",")
+        try:
+            line = int(parts[0])
+            column = int(parts[1]) if len(parts) > 1 else 0
+        except ValueError:
+            self.status.show_message("Invalid line or column")
+            return
+        editor.go_to_line_column(line, column)
+
+    def _jump_to_matching_bracket(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.jump_to_matching_bracket()
+
+    def _navigate_back(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.go_back()
+
+    def _navigate_forward(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.go_forward()
+
+    def _navigate_last_edit(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.go_to_last_edit()
+
+    def _navigate_next_change(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.next_change()
+
+    def _navigate_prev_change(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.previous_change()
+
+    def _jump_problem(self, direction: int) -> None:
+        table = self.problems_panel.table
+        row_count = table.rowCount()
+        if row_count == 0:
+            return
+        current = table.currentRow()
+        if current < 0:
+            current = 0
+        target = (current + direction) % row_count
+        table.setCurrentCell(target, 0)
+        file_item = table.item(target, 2)
+        line_item = table.item(target, 3)
+        if file_item:
+            file_path = file_item.text()
+            try:
+                line_number = int(line_item.text()) - 1 if line_item else 0
+            except (TypeError, ValueError):
+                line_number = 0
+            self.open_file_at(file_path, line_number)
+
+    def _jump_next_problem(self) -> None:
+        self._jump_problem(1)
+
+    def _jump_previous_problem(self) -> None:
+        self._jump_problem(-1)
+
+    def _focus_next_editor(self) -> None:
+        self.editor_tabs.focus_next_tab()
+
+    def _focus_previous_editor(self) -> None:
+        self.editor_tabs.focus_previous_tab()
+
+    def _focus_editor_group(self, pane: str) -> None:
+        self.editor_tabs.focus_pane(pane)
+
+    def _move_editor_to_other_group(self) -> None:
+        self.editor_tabs.move_current_to_other()
+
     def _open_plugin_manager(self) -> None:
         dialog = PluginManagerDialog(self.plugin_loader, self)
         dialog.exec()
 
     def _run_task_command(self) -> None:
         self.task_manager.load_workspace_tasks()
-        panel = getattr(self, "task_dock", None)
-        if panel:
-            panel.show()
-        if self.task_manager.tasks:
-            self.task_manager.run_task(self.task_manager.tasks[0].name)
-        else:
-            self.status.show_message("No tasks configured in .ghostline/tasks.yaml")
+        self._open_tasks_panel()
+        if not self.task_manager.tasks:
+            self.status.show_message("No tasks configured in .ghostline/tasks.json")
+            return
+        choices = [task.name for task in self.task_manager.tasks]
+        name, ok = QInputDialog.getItem(self, "Run Task", "Select a task", choices, 0, False)
+        if ok and name:
+            self.task_manager.run_task(name)
+
+    def _run_build_task(self) -> None:
+        self.task_manager.load_workspace_tasks()
+        self._open_tasks_panel()
+        if not self.task_manager.tasks:
+            self.status.show_message("No tasks configured in .ghostline/tasks.json")
+            return
+        self.task_manager.run_build_task()
+
+    def _configure_default_build_task(self) -> None:
+        self.task_manager.load_workspace_tasks()
+        build_tasks = [task for task in self.task_manager.tasks if task.group == "build" or task.is_default]
+        if not build_tasks:
+            self.status.show_message("No build tasks available to configure")
+            return
+        names = [task.name for task in build_tasks]
+        current_index = max(names.index(self.task_manager.default_build_task), 0) if self.task_manager.default_build_task in names else 0
+        name, ok = QInputDialog.getItem(self, "Default Build Task", "Select build task", names, current_index, False)
+        if ok and name:
+            self.task_manager.set_default_build_task(name)
+            self.config.save()
+            self.status.show_message(f"Default build task set to {name}")
+
+    def _open_tasks_configuration(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        if not workspace:
+            self.status.show_message("Open a workspace to configure tasks")
+            return
+        ghost_dir = Path(workspace) / ".ghostline"
+        ghost_dir.mkdir(parents=True, exist_ok=True)
+        tasks_path = ghost_dir / "tasks.json"
+        if not tasks_path.exists():
+            sample = {
+                "version": "2.0.0",
+                "tasks": [
+                    {
+                        "label": "build",
+                        "type": "shell",
+                        "command": "npm run build",
+                        "group": {"kind": "build", "isDefault": True},
+                    },
+                    {
+                        "label": "test",
+                        "type": "shell",
+                        "command": "pytest",
+                        "options": {"cwd": "${workspaceRoot}"},
+                    },
+                ],
+            }
+            tasks_path.write_text(json.dumps(sample, indent=2))
+        self.open_file(str(tasks_path))
 
     def _restart_language_server(self) -> None:
         languages = sorted(set(self.lsp_manager._language_map.values()))
@@ -2730,8 +4149,16 @@ class MainWindow(QMainWindow):
         self._ghost_terminal_widget.reset_game()
 
     def _show_about(self) -> None:
-        QMessageBox.information(
-            self,
-            "About Ghostline Studio",
-            "Ghostline Studio\nA code understanding environment with AI assistance.",
+        version = self._detect_app_version()
+        build_timestamp = datetime.fromtimestamp(Path(__file__).stat().st_mtime)
+        build_date = build_timestamp.strftime("%Y-%m-%d %H:%M")
+        python_version = sys.version.split()[0]
+        os_info = platform.platform()
+        details = (
+            f"Version: {version}\n"
+            f"Build date: {build_date}\n"
+            f"Python: {python_version}\n"
+            f"OS: {os_info}\n"
+            f"Config path: {CONFIG_DIR}"
         )
+        QMessageBox.information(self, "About Ghostline Studio", details)

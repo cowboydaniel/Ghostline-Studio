@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, Signal
 
 from ghostline.core.logging import get_logger
 from ghostline.debugger.breakpoints import BreakpointStore
+from ghostline.debugger.configuration import LaunchConfigurationManager
 
 if TYPE_CHECKING:
     from ghostline.runtime.inspector import RuntimeInspector
@@ -29,6 +30,9 @@ class DebuggerManager(QObject):
         self.process: subprocess.Popen | None = None
         self.logger = get_logger(__name__)
         self.runtime_inspector: RuntimeInspector | None = None
+        self._workspace: Path | None = None
+        self._config_manager = LaunchConfigurationManager()
+        self._last_launch: tuple[str, list[str], str | None] | None = None
 
         # Register cleanup handler for subprocess cleanup
         import atexit
@@ -36,6 +40,10 @@ class DebuggerManager(QObject):
 
     def set_runtime_inspector(self, inspector: RuntimeInspector) -> None:
         self.runtime_inspector = inspector
+
+    def set_workspace(self, workspace: Path | None) -> None:
+        self._workspace = workspace
+        self._config_manager.set_workspace(workspace)
 
     def _cleanup_process(self) -> None:
         """Cleanup debugger subprocess to prevent resource leaks."""
@@ -55,7 +63,7 @@ class DebuggerManager(QObject):
             finally:
                 self.process = None
 
-    def launch(self, script: str, args: Iterable[str] | None = None) -> None:
+    def launch(self, script: str, args: Iterable[str] | None = None, cwd: str | None = None) -> None:
         command = [sys.executable, "-m", "debugpy", "--listen", "5678", script]
         if args:
             command.extend(args)
@@ -65,14 +73,34 @@ class DebuggerManager(QObject):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                cwd=str(Path(script).parent),
+                cwd=cwd or str(Path(script).parent),
             )
+            self._last_launch = (script, list(args) if args else [], cwd)
             self.state_changed.emit("running")
             self.output.emit("Debug session started on port 5678")
             threading.Thread(target=self._watch_process, daemon=True).start()
         except FileNotFoundError:
             self.state_changed.emit("error")
             self.output.emit("debugpy not available. Install with `pip install debugpy`.")
+
+    def launch_for_file(self, file_path: Path, configuration_name: str | None = None) -> None:
+        config = self._config_manager.resolve_configuration(configuration_name, file_path)
+        if not config:
+            self.output.emit("No debug configuration available. Use Add Configuration to create one.")
+            self.state_changed.emit("error")
+            return
+        self.output.emit(f"Launching debug config: {config.name}")
+        self.output.emit(f"Program: {config.program}")
+        self.launch(config.program, config.args, cwd=config.cwd)
+
+    def restart(self) -> None:
+        if not self._last_launch:
+            self.output.emit("No previous debug session to restart.")
+            return
+        script, args, cwd = self._last_launch
+        self.output.emit("Restarting debug session...")
+        self.stop()
+        self.launch(script, args, cwd=cwd)
 
     def stop(self) -> None:
         """Stop the debugger session cleanly."""
@@ -85,7 +113,33 @@ class DebuggerManager(QObject):
         self.state_changed.emit("paused")
 
     def step(self, action: str = "over") -> None:
-        self.output.emit(f"Step {action} requested (DAP stub)")
+        self.output.emit(f"Step {action} requested (debugpy adapter not wired yet)")
+
+    def continue_execution(self) -> None:
+        if not self.process:
+            self.output.emit("No active debug session to continue.")
+            return
+        try:
+            if hasattr(self.process, "send_signal"):
+                import signal
+
+                self.process.send_signal(signal.SIGCONT)
+            self.output.emit("Continue requested")
+        except Exception as exc:  # noqa: BLE001
+            self.logger.exception("Failed to continue process: %s", exc)
+            self.output.emit(f"Unable to continue process: {exc}")
+
+    def configuration_names(self) -> list[str]:
+        return [cfg.name for cfg in self._config_manager.list_configurations()]
+
+    def ensure_launch_file(self) -> Path | None:
+        return self._config_manager.ensure_file()
+
+    def add_configuration(self, config: dict) -> None:
+        self._config_manager.add_configuration(config)
+
+    def launch_file_path(self) -> Path | None:
+        return self._config_manager.config_path()
 
     def propose_watchpoints(self, variables: list[str]) -> list[str]:
         """Suggest watchpoints when breakpoints are hit."""

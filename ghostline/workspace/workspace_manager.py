@@ -24,6 +24,8 @@ class WorkspaceManager(QObject):
     def __init__(self) -> None:
         super().__init__()
         self.current_workspace: Optional[Path] = None
+        self.workspace_file: Optional[Path] = None
+        self.workspace_folders: list[Path] = []
         self.recent_items: list[str] = self._load_recents()
         self._metadata: dict[str, dict] = {}
         self._watcher = QFileSystemWatcher(self)
@@ -50,14 +52,72 @@ class WorkspaceManager(QObject):
             )
 
         self.current_workspace = path
+        self.workspace_file = None
+        self.workspace_folders = [path]
         self.register_recent(str(path))
         self._metadata[path_str] = self._load_workspace_metadata(path)
         self._start_watching(path)
         self.workspaceChanged.emit(path)
 
+    def load_workspace_file(self, workspace_file: str | Path) -> None:
+        """Load a multi-folder workspace from a .ghostline-workspace file."""
+
+        file_path = Path(workspace_file).resolve()
+        if not file_path.exists():
+            raise FileNotFoundError(file_path)
+
+        data = json.loads(file_path.read_text()) if file_path.read_text().strip() else {}
+        folders = [Path(p) for p in data.get("folders", [])]
+        if not folders:
+            raise ValueError("Workspace file contains no folders")
+
+        self.workspace_file = file_path
+        self.workspace_folders = folders
+        self.open_workspace(folders[0])
+
+    def save_workspace_file(self, target: str | Path | None = None) -> Path:
+        """Persist the current workspace folders to a .ghostline-workspace file."""
+
+        if not self.workspace_folders and self.current_workspace:
+            self.workspace_folders = [self.current_workspace]
+
+        destination = Path(target) if target else None
+        if destination is None:
+            if self.workspace_file:
+                destination = self.workspace_file
+            elif self.current_workspace:
+                destination = self.current_workspace / ".ghostline-workspace"
+            else:
+                raise ValueError("No workspace available to save")
+
+        payload = {"folders": [str(folder) for folder in self.workspace_folders]}
+        destination.write_text(json.dumps(payload, indent=2))
+        self.workspace_file = destination
+        self.register_recent(str(destination))
+        return destination
+
+    def duplicate_workspace_file(self, source: str | Path, destination: str | Path) -> Path:
+        """Copy a workspace definition to a new location."""
+
+        data = json.loads(Path(source).read_text())
+        Path(destination).write_text(json.dumps(data, indent=2))
+        self.register_recent(str(destination))
+        return Path(destination)
+
+    def add_folder_to_workspace(self, folder: str | Path) -> None:
+        path = Path(folder).resolve()
+        if path not in self.workspace_folders:
+            self.workspace_folders.append(path)
+        self.register_recent(str(path))
+        if path.exists():
+            paths = [str(path)] + [str(p) for p in path.rglob("*") if p.is_dir()]
+            self._watcher.addPaths(paths)
+
     def clear_workspace(self) -> None:
         self._stop_watching()
         self.current_workspace = None
+        self.workspace_file = None
+        self.workspace_folders = []
 
     # Metadata -----------------------------------------------------------
     def _metadata_path(self, workspace: Path) -> Path:

@@ -1,10 +1,13 @@
 """Dockable panel that lists tasks and shows output."""
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QPushButton,
     QStackedLayout,
     QTextEdit,
@@ -36,10 +39,24 @@ class TaskPanel(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(6)
         self.run_button = QPushButton("Run Task", self)
-        self.stop_button = QPushButton("Stop", self)
+        self.build_button = QPushButton("Run Build", self)
+        self.restart_button = QPushButton("Restart", self)
+        self.stop_button = QPushButton("Terminate", self)
+        self.configure_button = QPushButton("Configure Tasks", self)
         controls.addWidget(self.run_button)
+        controls.addWidget(self.build_button)
+        controls.addWidget(self.restart_button)
         controls.addWidget(self.stop_button)
+        controls.addWidget(self.configure_button)
         layout.addLayout(controls)
+
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        status_label = QLabel("Running Tasks", self)
+        self.running_tasks = QListWidget(self)
+        status_row.addWidget(status_label)
+        status_row.addWidget(self.running_tasks, 1)
+        layout.addLayout(status_row)
 
         self.output = QTextEdit(self)
         self.output.setReadOnly(True)
@@ -47,11 +64,15 @@ class TaskPanel(QWidget):
         layout.addWidget(self.output)
 
         self.run_button.clicked.connect(self._run_selected)
-        self.stop_button.clicked.connect(self.task_manager.stop)
+        self.build_button.clicked.connect(self.task_manager.run_build_task)
+        self.restart_button.clicked.connect(self._restart_selected)
+        self.stop_button.clicked.connect(self._terminate_selected)
+        self.configure_button.clicked.connect(lambda: self.task_manager.output.emit("Open task configuration from menu"))
 
         self.task_manager.tasks_loaded.connect(self._populate)
         self.task_manager.output.connect(self._append_output)
         self.task_manager.state_changed.connect(self._update_state)
+        self.task_manager.task_statuses.connect(self._refresh_running)
 
     def _populate(self, tasks) -> None:
         self.task_list.clear()
@@ -67,8 +88,9 @@ class TaskPanel(QWidget):
         self.output.append(text)
 
     def _update_state(self, state: str) -> None:
-        self.run_button.setEnabled(state != "running")
-        self.stop_button.setEnabled(state == "running")
+        running = state.startswith("running:")
+        self.run_button.setEnabled(not running)
+        self.stop_button.setEnabled(running)
 
     def _run_selected(self) -> None:
         item = self.task_list.currentItem()
@@ -76,7 +98,32 @@ class TaskPanel(QWidget):
             return
         self.task_manager.run_task(item.text())
 
+    def _restart_selected(self) -> None:
+        item = self.task_list.currentItem()
+        if not item:
+            return
+        self.task_manager.restart_task(item.text())
+
+    def _terminate_selected(self) -> None:
+        item = self.task_list.currentItem()
+        if not item:
+            return
+        self.task_manager.terminate_task(item.text())
+
+    def _refresh_running(self, statuses: dict) -> None:
+        self.running_tasks.clear()
+        for label, state in statuses.items():
+            text = f"{label} — {state}"
+            self.running_tasks.addItem(QListWidgetItem(text))
+
     def _show_empty_state(self, show_empty: bool) -> None:
         target = self.empty_label if show_empty else self.task_list
         self.list_container.setCurrentWidget(target)
+
+    def set_configure_handler(self, handler: Callable[[], None]) -> None:
+        try:
+            self.configure_button.clicked.disconnect()
+        except Exception:
+            pass
+        self.configure_button.clicked.connect(handler)
 

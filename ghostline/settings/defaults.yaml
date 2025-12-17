@@ -8,6 +8,9 @@ tabs:
   tab_size: 4
 editor:
   auto_close_brackets: true
+  word_wrap: false
+  column_selection_mode: false
+  multi_cursor_modifier: "alt"
 autosave:
   enabled: false
   interval_seconds: 60
@@ -79,6 +82,17 @@ ai:
 window:
   maximized: true
   geometry: null
+view:
+  word_wrap: false
+  bars:
+    activity: true
+    status: true
+    menu: true
+  panels:
+    project: true
+    terminal: false
+    architecture: false
+    ai: true
 ui:
   konami_enabled: true
 formatting:
