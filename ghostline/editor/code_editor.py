@@ -893,16 +893,19 @@ class CodeEditor(QPlainTextEdit):
                     Qt.AlignRight,
                     number,
                 )
-                if self.path and self.breakpoints.has(str(self.path), block_number):
-                    radius = 5
-                    painter.setBrush(QColor(200, 80, 80))
-                    painter.setPen(Qt.NoPen)
-                    painter.drawEllipse(
-                        self.line_number_area.width() - 2 * radius - 2,
-                        top + (self.fontMetrics().height() - radius) / 2,
-                        radius * 2,
-                        radius * 2,
-                    )
+                if self.path:
+                    bp = self.breakpoints.get(str(self.path), block_number)
+                    if bp:
+                        radius = 5
+                        color = QColor(200, 80, 80) if bp.enabled else QColor(110, 110, 110)
+                        painter.setBrush(color)
+                        painter.setPen(Qt.NoPen)
+                        painter.drawEllipse(
+                            self.line_number_area.width() - 2 * radius - 2,
+                            top + (self.fontMetrics().height() - radius) / 2,
+                            radius * 2,
+                            radius * 2,
+                        )
             block = block.next()
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
@@ -929,7 +932,7 @@ class CodeEditor(QPlainTextEdit):
     def toggle_breakpoint_from_gutter(self, event: QMouseEvent) -> None:
         block = self._block_at_position(event.position().y())
         if block and self.path:
-            self.breakpoints.toggle(str(self.path), block.blockNumber())
+            self.breakpoints.toggle_line(str(self.path), block.blockNumber())
             self.line_number_area.update()
 
     def paintEvent(self, event) -> None:  # type: ignore[override]

@@ -1123,8 +1123,7 @@ class MainWindow(QMainWindow):
                 self.git_panel.set_empty_state(True)
 
         if hasattr(self, "debugger_panel"):
-            config_exists = bool(workspace and (Path(workspace) / ".vscode" / "launch.json").exists())
-            self.debugger_panel.set_configured(config_exists)
+            self._refresh_debugger_config_ui()
 
         self._update_title_context()
 
@@ -1581,9 +1580,9 @@ class MainWindow(QMainWindow):
             ),
             CommandActionDefinition(
                 "run.run",
+                "Run Without Debugging",
                 "Run",
-                "Run",
-                handler=lambda: self.status.show_message("Run current project"),
+                handler=self._run_current_file,
             ),
             CommandActionDefinition("run.tests", "Run Tests", "Run", handler=self._run_tests),
             CommandActionDefinition("run.tasks", "Run Tasks", "Run", handler=self._run_task_command),
@@ -1591,31 +1590,104 @@ class MainWindow(QMainWindow):
                 "debug.start",
                 "Start Debugging",
                 "Debug",
-                handler=lambda: self.status.show_message("Starting debugger"),
+                handler=self._start_debugging,
+            ),
+            CommandActionDefinition(
+                "debug.continue",
+                "Continue",
+                "Debug",
+                handler=self._continue_debugging,
             ),
             CommandActionDefinition(
                 "debug.stop",
                 "Stop Debugging",
                 "Debug",
-                handler=lambda: self.status.show_message("Debugger stopped"),
+                handler=self._stop_debugging,
             ),
             CommandActionDefinition(
                 "debug.step_over",
                 "Step Over",
                 "Debug",
-                handler=lambda: self.status.show_message("Step over"),
+                handler=lambda: self._step_debugging("over"),
             ),
             CommandActionDefinition(
                 "debug.step_into",
                 "Step Into",
                 "Debug",
-                handler=lambda: self.status.show_message("Step into"),
+                handler=lambda: self._step_debugging("into"),
             ),
             CommandActionDefinition(
                 "debug.step_out",
                 "Step Out",
                 "Debug",
-                handler=lambda: self.status.show_message("Step out"),
+                handler=lambda: self._step_debugging("out"),
+            ),
+            CommandActionDefinition(
+                "debug.restart",
+                "Restart Debugging",
+                "Debug",
+                handler=self._restart_debugging,
+            ),
+            CommandActionDefinition(
+                "debug.run_without_debug",
+                "Run Without Debugging",
+                "Debug",
+                handler=self._run_current_file,
+            ),
+            CommandActionDefinition(
+                "debug.open_configurations",
+                "Open Configurations",
+                "Debug",
+                handler=self._open_debug_configurations,
+            ),
+            CommandActionDefinition(
+                "debug.add_configuration",
+                "Add Configuration...",
+                "Debug",
+                handler=self._add_debug_configuration,
+            ),
+            CommandActionDefinition(
+                "debug.install_debuggers",
+                "Install Additional Debuggers",
+                "Debug",
+                handler=self._install_debuggers,
+            ),
+            CommandActionDefinition(
+                "debug.toggle_breakpoint",
+                "Toggle Breakpoint",
+                "Debug",
+                handler=self._toggle_breakpoint,
+                shortcut=QKeySequence("F9"),
+            ),
+            CommandActionDefinition(
+                "debug.conditional_breakpoint",
+                "Add Conditional Breakpoint...",
+                "Debug",
+                handler=self._add_conditional_breakpoint,
+            ),
+            CommandActionDefinition(
+                "debug.logpoint",
+                "Add Logpoint...",
+                "Debug",
+                handler=self._add_logpoint,
+            ),
+            CommandActionDefinition(
+                "debug.disable_all_breakpoints",
+                "Disable All Breakpoints",
+                "Debug",
+                handler=self._disable_all_breakpoints,
+            ),
+            CommandActionDefinition(
+                "debug.enable_all_breakpoints",
+                "Enable All Breakpoints",
+                "Debug",
+                handler=self._enable_all_breakpoints,
+            ),
+            CommandActionDefinition(
+                "debug.remove_all_breakpoints",
+                "Remove All Breakpoints",
+                "Debug",
+                handler=self._remove_all_breakpoints,
             ),
             CommandActionDefinition(
                 "help.docs", "Documentation", "Help", handler=lambda: QDesktopServices.openUrl(QUrl("https://github.com"))
@@ -1686,10 +1758,22 @@ class MainWindow(QMainWindow):
         self.action_run_tests = actions["run.tests"]
         self.action_run_tasks = actions["run.tasks"]
         self.action_start_debugging = actions["debug.start"]
+        self.action_continue_debugging = actions["debug.continue"]
         self.action_stop_debugging = actions["debug.stop"]
         self.action_step_over = actions["debug.step_over"]
         self.action_step_into = actions["debug.step_into"]
         self.action_step_out = actions["debug.step_out"]
+        self.action_restart_debugging = actions["debug.restart"]
+        self.action_run_without_debug = actions["debug.run_without_debug"]
+        self.action_open_debug_configurations = actions["debug.open_configurations"]
+        self.action_add_debug_configuration = actions["debug.add_configuration"]
+        self.action_install_debuggers = actions["debug.install_debuggers"]
+        self.action_toggle_breakpoint = actions["debug.toggle_breakpoint"]
+        self.action_conditional_breakpoint = actions["debug.conditional_breakpoint"]
+        self.action_logpoint = actions["debug.logpoint"]
+        self.action_disable_breakpoints = actions["debug.disable_all_breakpoints"]
+        self.action_enable_breakpoints = actions["debug.enable_all_breakpoints"]
+        self.action_remove_breakpoints = actions["debug.remove_all_breakpoints"]
         self.action_docs = actions["help.docs"]
         self.action_report_issue = actions["help.report_issue"]
         self.action_about = actions["help.about"]
@@ -1764,14 +1848,30 @@ class MainWindow(QMainWindow):
 
         run_menu = menubar.addMenu("Run")
         run_menu.addAction(self.action_run)
+        run_menu.addAction(self.action_run_without_debug)
         run_menu.addAction(self.action_run_tests)
         run_menu.addAction(self.action_run_task)
         debug_menu = run_menu.addMenu("Debug")
         debug_menu.addAction(self.action_start_debugging)
+        debug_menu.addAction(self.action_continue_debugging)
+        debug_menu.addAction(self.action_restart_debugging)
         debug_menu.addAction(self.action_stop_debugging)
         debug_menu.addAction(self.action_step_over)
         debug_menu.addAction(self.action_step_into)
         debug_menu.addAction(self.action_step_out)
+        debug_menu.addSeparator()
+        config_menu = debug_menu.addMenu("Configurations")
+        config_menu.addAction(self.action_open_debug_configurations)
+        config_menu.addAction(self.action_add_debug_configuration)
+        debug_menu.addAction(self.action_install_debuggers)
+        breakpoints_menu = debug_menu.addMenu("Breakpoints")
+        breakpoints_menu.addAction(self.action_toggle_breakpoint)
+        breakpoints_menu.addAction(self.action_conditional_breakpoint)
+        breakpoints_menu.addAction(self.action_logpoint)
+        breakpoints_menu.addSeparator()
+        breakpoints_menu.addAction(self.action_enable_breakpoints)
+        breakpoints_menu.addAction(self.action_disable_breakpoints)
+        breakpoints_menu.addAction(self.action_remove_breakpoints)
 
         terminal_menu = menubar.addMenu("Terminal")
         terminal_menu.addAction(self.action_toggle_terminal)
@@ -1810,7 +1910,7 @@ class MainWindow(QMainWindow):
         # Add panels to bottom panel in Windsurf order
         self.bottom_panel.add_panel("Problems", self.problems_panel)
         self.output_panel_index = self.bottom_panel.add_panel("Output", self.output_panel)
-        self.bottom_panel.add_panel("Debug Console", self.debug_console_panel)
+        self.debug_console_panel_index = self.bottom_panel.add_panel("Debug Console", self.debug_console_panel)
         self.terminal_panel_index = self.bottom_panel.add_panel(
             "Terminal", self.terminal_widget, controls=self.terminal_widget.toolbar_widget
         )
@@ -1822,6 +1922,7 @@ class MainWindow(QMainWindow):
         # Keep backward compatibility references
         self.terminal = self.terminal_widget
         self.terminal_dock = self.bottom_panel  # For compatibility
+        self.debugger.output.connect(self.debug_console_panel.append_console)
 
     def _create_project_dock(self) -> None:
         dock = QDockWidget("Explorer", self)
@@ -1894,12 +1995,14 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("Debugger", self)
         dock.setObjectName("debuggerDock")
         panel = DebuggerPanel(self.debugger, self)
+        panel.set_current_file_provider(self._current_file_path)
         dock.setWidget(panel)
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
         self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.debugger_panel = panel
         self.debugger_dock = dock
+        self._refresh_debugger_config_ui()
 
     def _create_task_dock(self) -> None:
         dock = QDockWidget("Tasks", self)
@@ -2111,6 +2214,149 @@ class MainWindow(QMainWindow):
         else:
             self.status.show_message("Open a workspace to run tests")
 
+    def _current_file_path(self) -> Path | None:
+        editor = self.get_current_editor()
+        if editor and editor.path:
+            return editor.path
+        return None
+
+    def _show_debug_console(self) -> None:
+        if hasattr(self, "bottom_panel") and hasattr(self, "debug_console_panel_index"):
+            self.bottom_panel.show()
+            self.bottom_panel.set_current_panel(self.debug_console_panel_index)
+            if hasattr(self, "toggle_bottom_region"):
+                self.toggle_bottom_region.setChecked(True)
+
+    def _refresh_debugger_config_ui(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        self.debugger.set_workspace(workspace)
+        configs = self.debugger.configuration_names() if workspace else []
+        launch_path = self.debugger.launch_file_path()
+        launch_exists = bool(launch_path and launch_path.exists())
+        if hasattr(self, "debugger_panel"):
+            self.debugger_panel.set_configured(bool(workspace and (configs or launch_exists)))
+            self.debugger_panel.refresh_configurations(configs)
+        return launch_exists
+
+    def _start_debugging(self) -> None:
+        file_path = self._current_file_path()
+        if not file_path:
+            self.status.show_message("Open a file to debug")
+            return
+        launch_path = self.debugger.ensure_launch_file()
+        if not launch_path:
+            self.status.show_message("Open a workspace to debug")
+            return
+        self._refresh_debugger_config_ui()
+        self._show_debug_console()
+        config_name = None
+        if hasattr(self, "debugger_panel"):
+            config_name = self.debugger_panel.config_combo.currentText()
+        self.debugger.launch_for_file(file_path, config_name or None)
+
+    def _continue_debugging(self) -> None:
+        self._show_debug_console()
+        self.debugger.continue_execution()
+
+    def _step_debugging(self, action: str) -> None:
+        self._show_debug_console()
+        self.debugger.step(action)
+
+    def _restart_debugging(self) -> None:
+        self._show_debug_console()
+        self.debugger.restart()
+
+    def _stop_debugging(self) -> None:
+        self.debugger.stop()
+
+    def _open_debug_configurations(self) -> None:
+        launch_path = self.debugger.ensure_launch_file()
+        if launch_path:
+            self.open_file(str(launch_path))
+            self._refresh_debugger_config_ui()
+
+    def _add_debug_configuration(self) -> None:
+        file_path = self._current_file_path()
+        file_name = file_path.name if file_path else "file.py"
+        config = {
+            "name": f"Python: {file_name}",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+        }
+        self.debugger.add_configuration(config)
+        self._refresh_debugger_config_ui()
+        self.status.show_message("Added debug configuration")
+
+    def _install_debuggers(self) -> None:
+        self._open_plugin_manager(category_hint="Debuggers")
+
+    def _toggle_breakpoint(self) -> None:
+        editor = self.get_current_editor()
+        path = editor.path if editor else None
+        if not editor or not path:
+            self.status.show_message("Open a file to toggle a breakpoint")
+            return
+        line = editor.textCursor().blockNumber()
+        self.debugger.breakpoints.toggle_line(str(path), line)
+        editor.line_number_area.update()
+
+    def _add_conditional_breakpoint(self) -> None:
+        editor = self.get_current_editor()
+        path = editor.path if editor else None
+        if not editor or not path:
+            self.status.show_message("Open a file to add a conditional breakpoint")
+            return
+        line = editor.textCursor().blockNumber()
+        expr, ok = QInputDialog.getText(self, "Conditional Breakpoint", "Condition expression:")
+        if ok and expr:
+            self.debugger.breakpoints.set_conditional(str(path), line, expr)
+            editor.line_number_area.update()
+
+    def _add_logpoint(self) -> None:
+        editor = self.get_current_editor()
+        path = editor.path if editor else None
+        if not editor or not path:
+            self.status.show_message("Open a file to add a logpoint")
+            return
+        line = editor.textCursor().blockNumber()
+        message, ok = QInputDialog.getText(self, "Logpoint", "Log message:")
+        if ok and message:
+            self.debugger.breakpoints.set_logpoint(str(path), line, message)
+            editor.line_number_area.update()
+
+    def _enable_all_breakpoints(self) -> None:
+        path = self._current_file_path()
+        if not path:
+            self.status.show_message("Open a file to enable breakpoints")
+            return
+        self.debugger.breakpoints.enable_all(str(path))
+        editor = self.get_current_editor()
+        if editor:
+            editor.line_number_area.update()
+
+    def _disable_all_breakpoints(self) -> None:
+        path = self._current_file_path()
+        if not path:
+            self.status.show_message("Open a file to disable breakpoints")
+            return
+        self.debugger.breakpoints.disable_all(str(path))
+        editor = self.get_current_editor()
+        if editor:
+            editor.line_number_area.update()
+
+    def _remove_all_breakpoints(self) -> None:
+        path = self._current_file_path()
+        if not path:
+            self.status.show_message("Open a file to remove breakpoints")
+            return
+        self.debugger.breakpoints.clear(str(path))
+        editor = self.get_current_editor()
+        if editor:
+            editor.line_number_area.update()
+
     def _run_current_file(self, file_path: str | None = None) -> None:
         """Run the active Python file in the embedded terminal.
 
@@ -2135,6 +2381,12 @@ class MainWindow(QMainWindow):
 
         # Build the command we want to run. Quote the path so spaces are safe.
         command = f'{sys.executable} "{path}"'
+
+        if hasattr(self, "output_panel"):
+            self.output_panel.append_output(f"$ {command}")
+            if hasattr(self, "bottom_panel"):
+                self.bottom_panel.show()
+                self.bottom_panel.set_current_panel(self.output_panel_index)
 
         # Prefer the embedded terminal dock so the user sees a live stream
         # of the command and any errors / logs.
@@ -2480,6 +2732,16 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
         registry.register_command(CommandDescriptor("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
         registry.register_command(CommandDescriptor("python.runFile", "Run Current File", "Run", self._run_current_file))
+        registry.register_command(CommandDescriptor("debug.start", "Start Debugging", "Debug", self._start_debugging))
+        registry.register_command(CommandDescriptor("debug.continue", "Continue Debugging", "Debug", self._continue_debugging))
+        registry.register_command(CommandDescriptor("debug.restart", "Restart Debugging", "Debug", self._restart_debugging))
+        registry.register_command(CommandDescriptor("debug.stop", "Stop Debugging", "Debug", self._stop_debugging))
+        registry.register_command(CommandDescriptor("debug.open_config", "Open Debug Configurations", "Debug", self._open_debug_configurations))
+        registry.register_command(CommandDescriptor("debug.add_config", "Add Debug Configuration", "Debug", self._add_debug_configuration))
+        registry.register_command(CommandDescriptor("debug.install", "Install Additional Debuggers", "Debug", self._install_debuggers))
+        registry.register_command(CommandDescriptor("debug.toggle_breakpoint", "Toggle Breakpoint", "Debug", self._toggle_breakpoint))
+        registry.register_command(CommandDescriptor("debug.conditional_breakpoint", "Conditional Breakpoint", "Debug", self._add_conditional_breakpoint))
+        registry.register_command(CommandDescriptor("debug.logpoint", "Logpoint", "Debug", self._add_logpoint))
 
     def _show_and_raise_dock(self, dock: QDockWidget | None, tool_id: str | None = None) -> None:
         if not dock:
@@ -2913,8 +3175,8 @@ class MainWindow(QMainWindow):
                 return
         self.status.show_message("No matching file found")
 
-    def _open_plugin_manager(self) -> None:
-        dialog = PluginManagerDialog(self.plugin_loader, self)
+    def _open_plugin_manager(self, category_hint: str | None = None) -> None:
+        dialog = PluginManagerDialog(self.plugin_loader, self, category_hint=category_hint)
         dialog.exec()
 
     def _run_task_command(self) -> None:
