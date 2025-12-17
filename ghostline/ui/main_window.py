@@ -595,7 +595,9 @@ class MainWindow(QMainWindow):
         self.formatter = FormatterManager(self.lsp_manager)
         self.debugger = DebuggerManager()
         self.debugger.set_runtime_inspector(self.runtime_inspector)
-        self.task_manager = TaskManager(lambda: self.workspace_manager.current_workspace)
+        self.task_manager = TaskManager(
+            lambda: self.workspace_manager.current_workspace, self.config.settings.setdefault("tasks", {})
+        )
         self.test_manager = TestManager(
             self.task_manager, lambda: self.workspace_manager.current_workspace, semantic_query=self.semantic_query
         )
@@ -1592,6 +1594,27 @@ class MainWindow(QMainWindow):
                 handler=self._toggle_terminal,
                 checkable=True,
                 checked=bool(panel_settings.get("terminal", False)),
+                shortcut=QKeySequence("Ctrl+Shift+`"),
+            ),
+            CommandActionDefinition(
+                "terminal.new_tab",
+                "New Terminal",
+                "Terminal",
+                handler=self._new_terminal_tab,
+                shortcut="Ctrl+Shift+T",
+            ),
+            CommandActionDefinition(
+                "terminal.split",
+                "Split Terminal",
+                "Terminal",
+                handler=self._split_terminal_view,
+                shortcut="Ctrl+\\",
+            ),
+            CommandActionDefinition(
+                "terminal.new_window",
+                "Open Terminal Window",
+                "Terminal",
+                handler=self._open_terminal_window,
             ),
             CommandActionDefinition(
                 "view.toggle_architecture",
@@ -1705,6 +1728,24 @@ class MainWindow(QMainWindow):
                 shortcut="Ctrl+Shift+R",
             ),
             CommandActionDefinition(
+                "tasks.run_build",
+                "Run Build Task",
+                "Tasks",
+                handler=self._run_build_task,
+            ),
+            CommandActionDefinition(
+                "tasks.configure_default_build",
+                "Configure Default Build Task",
+                "Tasks",
+                handler=self._configure_default_build_task,
+            ),
+            CommandActionDefinition(
+                "tasks.configure_file",
+                "Configure Tasks",
+                "Tasks",
+                handler=self._open_tasks_configuration,
+            ),
+            CommandActionDefinition(
                 "lsp.restart",
                 "Restart Language Server",
                 "LSP",
@@ -1784,8 +1825,29 @@ class MainWindow(QMainWindow):
                 "Run",
                 handler=self._run_current_file,
             ),
+            CommandActionDefinition(
+                "run.active_file",
+                "Run Active File",
+                "Run",
+                handler=self._run_current_file,
+                shortcut="F5",
+            ),
+            CommandActionDefinition(
+                "run.selection",
+                "Run Selected Text",
+                "Run",
+                handler=self._run_selected_text,
+                shortcut="Ctrl+Shift+Enter",
+            ),
             CommandActionDefinition("run.tests", "Run Tests", "Run", handler=self._run_tests),
             CommandActionDefinition("run.tasks", "Run Tasks", "Run", handler=self._run_task_command),
+            CommandActionDefinition(
+                "run.build_task",
+                "Run Build Task",
+                "Run",
+                handler=self._run_build_task,
+                shortcut="Ctrl+Shift+B",
+            ),
             CommandActionDefinition(
                 "debug.start",
                 "Start Debugging",
@@ -1949,6 +2011,9 @@ class MainWindow(QMainWindow):
         self.action_focus_secondary_group = actions["view.focus_secondary_group"]
         self.action_move_to_other_group = actions["view.move_to_other_group"]
         self.action_toggle_terminal = actions["view.toggle_terminal"]
+        self.action_new_terminal_tab = actions["terminal.new_tab"]
+        self.action_split_terminal = actions["terminal.split"]
+        self.action_terminal_window = actions["terminal.new_window"]
         self.action_toggle_architecture_map = actions["view.toggle_architecture"]
         self.action_toggle_ai_dock = actions["view.toggle_ai_dock"]
         self.action_toggle_word_wrap = actions["view.word_wrap"]
@@ -1970,6 +2035,9 @@ class MainWindow(QMainWindow):
         self.action_ask_ai = actions["ai.panel"]
         self.action_open_plugins = actions["plugins.manage"]
         self.action_run_task = actions["tasks.run"]
+        self.action_run_build = actions["tasks.run_build"]
+        self.action_configure_default_build = actions["tasks.configure_default_build"]
+        self.action_configure_tasks_file = actions["tasks.configure_file"]
         self.action_restart_language = actions["lsp.restart"]
         self.action_format_document = actions["edit.format_document"]
         self.action_undo = actions["edit.undo"]
@@ -1982,8 +2050,11 @@ class MainWindow(QMainWindow):
         self.action_select_all = actions["edit.select_all"]
         self.action_project_settings = actions["project.settings"]
         self.action_run = actions["run.run"]
+        self.action_run_active_file = actions["run.active_file"]
+        self.action_run_selection = actions["run.selection"]
         self.action_run_tests = actions["run.tests"]
         self.action_run_tasks = actions["run.tasks"]
+        self.action_run_build_task = actions["run.build_task"]
         self.action_start_debugging = actions["debug.start"]
         self.action_continue_debugging = actions["debug.continue"]
         self.action_stop_debugging = actions["debug.stop"]
@@ -2117,9 +2188,16 @@ class MainWindow(QMainWindow):
 
         run_menu = menubar.addMenu("Run")
         run_menu.addAction(self.action_run)
+        run_menu.addAction(self.action_run_active_file)
+        run_menu.addAction(self.action_run_selection)
         run_menu.addAction(self.action_run_without_debug)
         run_menu.addAction(self.action_run_tests)
-        run_menu.addAction(self.action_run_task)
+        tasks_menu = run_menu.addMenu("Tasks")
+        tasks_menu.addAction(self.action_run_task)
+        tasks_menu.addAction(self.action_run_build_task)
+        tasks_menu.addSeparator()
+        tasks_menu.addAction(self.action_configure_default_build)
+        tasks_menu.addAction(self.action_configure_tasks_file)
         debug_menu = run_menu.addMenu("Debug")
         debug_menu.addAction(self.action_start_debugging)
         debug_menu.addAction(self.action_continue_debugging)
@@ -2144,6 +2222,10 @@ class MainWindow(QMainWindow):
 
         terminal_menu = menubar.addMenu("Terminal")
         terminal_menu.addAction(self.action_toggle_terminal)
+        terminal_menu.addAction(self.action_new_terminal_tab)
+        terminal_menu.addAction(self.action_split_terminal)
+        terminal_menu.addAction(self.action_terminal_window)
+        terminal_menu.addSeparator()
         terminal_menu.addAction(self.action_restart_language)
 
         help_menu = menubar.addMenu("Help")
@@ -2297,6 +2379,7 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("Tasks", self)
         dock.setObjectName("tasksDock")
         panel = TaskPanel(self.task_manager, self)
+        panel.set_configure_handler(self._open_tasks_configuration)
         dock.setWidget(panel)
         dock.setMinimumWidth(180)  # Changed from height to width for left dock
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.BottomDockWidgetArea)
@@ -2647,13 +2730,8 @@ class MainWindow(QMainWindow):
             editor.line_number_area.update()
 
     def _run_current_file(self, file_path: str | None = None) -> None:
-        """Run the active Python file in the embedded terminal.
+        """Run the active file using language-aware heuristics."""
 
-        This is wired to the editor header Run button (python.runFile) and
-        prefers the bottom terminal dock so the user can see the command and
-        its live output. If the terminal is not available, it falls back to
-        the generic task manager runner.
-        """
         path = Path(file_path) if file_path else None
         if not path:
             editor = self.get_current_editor()
@@ -2661,16 +2739,32 @@ class MainWindow(QMainWindow):
         if not path:
             self.status.show_message("No file selected to run")
             return
-        if path.suffix.lower() not in {".py", ".pyw"}:
-            self.status.show_message("This file type cannot be run")
-            return
         if not path.exists():
             self.status.show_message("File does not exist on disk")
             return
 
-        # Build the command we want to run. Quote the path so spaces are safe.
-        command = f'{sys.executable} "{path}"'
+        language = self._language_for_path(path)
+        command = self._build_file_command(path, language)
+        self._run_in_terminal_or_task(command, path.parent)
 
+    def _run_selected_text(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            self.status.show_message("No editor available")
+            return
+        cursor = editor.textCursor()
+        text = cursor.selectedText() or cursor.block().text()
+        text = text.replace("\u2029", "\n")
+        if not text.strip():
+            self.status.show_message("No text selected to run")
+            return
+        path = Path(editor.path) if editor.path else None
+        language = self._language_for_path(path)
+        command = self._build_selection_command(language, text)
+        cwd = path.parent if path else self.workspace_manager.current_workspace
+        self._run_in_terminal_or_task(command, cwd)
+
+    def _run_in_terminal_or_task(self, command: str, cwd: Path | None) -> None:
         if hasattr(self, "output_panel"):
             self.output_panel.append_output(f"$ {command}")
             if hasattr(self, "bottom_panel"):
@@ -2680,22 +2774,54 @@ class MainWindow(QMainWindow):
         # Prefer the embedded terminal dock so the user sees a live stream
         # of the command and any errors / logs.
         terminal = getattr(self, "terminal", None)
-        terminal_dock = getattr(self, "terminal_dock", None)
-        
-        if terminal is not None and terminal_dock is not None:
+        bottom_panel = getattr(self, "bottom_panel", None)
+        if terminal is not None and bottom_panel is not None:
             try:
-                self._show_and_raise_dock(terminal_dock, tool_id=None)
-                terminal.run_command(command)
+                self._show_terminal_panel()
+                terminal.run_command(self._prepend_cwd(command, cwd))
                 return
-            except Exception as e:
-                print(f"Error using terminal: {e}")
-                # If anything goes wrong showing the dock, fall back to tasks
-                self.task_manager.run_command("Run", command, cwd=str(path.parent))
-                return
+            except Exception as exc:  # noqa: BLE001
+                print(f"Error using terminal: {exc}")
+        cwd_text = str(cwd) if cwd else None
+        self.task_manager.run_command("Run", command, cwd=cwd_text)
 
-        # Final fallback: run through the generic task manager so the command
-        # still executes even if the terminal is missing.
-        self.task_manager.run_command("Run", command, cwd=str(path.parent))
+    def _show_terminal_panel(self) -> None:
+        bottom_panel = getattr(self, "bottom_panel", None)
+        if bottom_panel and hasattr(self, "terminal_panel_index"):
+            bottom_panel.show()
+            bottom_panel.set_current_panel(self.terminal_panel_index)
+
+    def _language_for_path(self, path: Path | None) -> str:
+        if not path:
+            return "bash"
+        ext = path.suffix.lower()
+        if ext in {".py", ".pyw"}:
+            return "python"
+        if ext in {".js", ".mjs", ".cjs", ".ts"}:
+            return "node"
+        if ext in {".sh"}:
+            return "bash"
+        return "bash"
+
+    def _build_file_command(self, path: Path, language: str) -> str:
+        quoted_path = f'"{path}"'
+        if language == "python":
+            return f"{sys.executable} {quoted_path}"
+        if language == "node":
+            return f"node {quoted_path}"
+        return f"bash {quoted_path}"
+
+    def _build_selection_command(self, language: str, text: str) -> str:
+        if language == "python":
+            return f"{sys.executable} - <<'PY'\n{text}\nPY"
+        if language == "node":
+            return f"node - <<'JS'\n{text}\nJS"
+        return f"bash <<'BASH'\n{text}\nBASH"
+
+    def _prepend_cwd(self, command: str, cwd: Path | None) -> str:
+        if cwd:
+            return f'cd "{cwd}" && {command}'
+        return command
 
     def get_current_editor(self) -> CodeEditor | None:
         return self.editor_tabs.current_editor()
@@ -3106,6 +3232,9 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("file.save_all", "Save All", "File", self.save_all))
         registry.register_command(CommandDescriptor("view.toggle_project", "Toggle Project", "View", self._toggle_project))
         registry.register_command(CommandDescriptor("view.toggle_terminal", "Toggle Terminal", "View", self._toggle_terminal))
+        registry.register_command(CommandDescriptor("terminal.new_tab", "New Terminal", "Terminal", self._new_terminal_tab))
+        registry.register_command(CommandDescriptor("terminal.split", "Split Terminal", "Terminal", self._split_terminal_view))
+        registry.register_command(CommandDescriptor("terminal.new_window", "Open Terminal Window", "Terminal", self._open_terminal_window))
         registry.register_command(
             CommandDescriptor(
                 "view.toggle_split", "Toggle Split Editor", "View", lambda: self._toggle_split_editor(not self.editor_tabs.split_active())
@@ -3126,9 +3255,17 @@ class MainWindow(QMainWindow):
         )
         registry.register_command(CommandDescriptor("workflow.run", "Run Pipelines", "Automation", self._run_all_pipelines))
         registry.register_command(CommandDescriptor("tasks.run", "Run Task", "Tasks", self._run_task_command))
+        registry.register_command(CommandDescriptor("tasks.run_build", "Run Build Task", "Tasks", self._run_build_task))
+        registry.register_command(
+            CommandDescriptor("tasks.configure_default_build", "Configure Default Build Task", "Tasks", self._configure_default_build_task)
+        )
+        registry.register_command(CommandDescriptor("tasks.configure_file", "Configure Tasks", "Tasks", self._open_tasks_configuration))
         registry.register_command(CommandDescriptor("plugins.manage", "Plugin Manager", "Plugins", self._open_plugin_manager))
         registry.register_command(CommandDescriptor("lsp.restart", "Restart Language Server", "LSP", self._restart_language_server))
         registry.register_command(CommandDescriptor("python.runFile", "Run Current File", "Run", self._run_current_file))
+        registry.register_command(CommandDescriptor("run.active_file", "Run Active File", "Run", self._run_current_file))
+        registry.register_command(CommandDescriptor("run.selection", "Run Selected Text", "Run", self._run_selected_text))
+        registry.register_command(CommandDescriptor("run.build_task", "Run Build Task", "Run", self._run_build_task))
         registry.register_command(CommandDescriptor("debug.start", "Start Debugging", "Debug", self._start_debugging))
         registry.register_command(CommandDescriptor("debug.continue", "Continue Debugging", "Debug", self._continue_debugging))
         registry.register_command(CommandDescriptor("debug.restart", "Restart Debugging", "Debug", self._restart_debugging))
@@ -3234,6 +3371,23 @@ class MainWindow(QMainWindow):
             self.toggle_bottom_region.setChecked(False)
 
         self._update_view_action_states()
+
+    def _new_terminal_tab(self) -> None:
+        terminal = getattr(self, "terminal_widget", None)
+        if terminal:
+            self._show_terminal_panel()
+            terminal.new_terminal_tab()
+
+    def _split_terminal_view(self) -> None:
+        terminal = getattr(self, "terminal_widget", None)
+        if terminal:
+            self._show_terminal_panel()
+            terminal.split_terminal()
+
+    def _open_terminal_window(self) -> None:
+        terminal = getattr(self, "terminal_widget", None)
+        if terminal:
+            terminal.open_new_window()
 
     def _toggle_architecture_map(self, checked: bool) -> None:
         dock = getattr(self, "architecture_dock", None)
@@ -3817,13 +3971,65 @@ class MainWindow(QMainWindow):
 
     def _run_task_command(self) -> None:
         self.task_manager.load_workspace_tasks()
-        panel = getattr(self, "task_dock", None)
-        if panel:
-            panel.show()
-        if self.task_manager.tasks:
-            self.task_manager.run_task(self.task_manager.tasks[0].name)
-        else:
-            self.status.show_message("No tasks configured in .ghostline/tasks.yaml")
+        self._open_tasks_panel()
+        if not self.task_manager.tasks:
+            self.status.show_message("No tasks configured in .ghostline/tasks.json")
+            return
+        choices = [task.name for task in self.task_manager.tasks]
+        name, ok = QInputDialog.getItem(self, "Run Task", "Select a task", choices, 0, False)
+        if ok and name:
+            self.task_manager.run_task(name)
+
+    def _run_build_task(self) -> None:
+        self.task_manager.load_workspace_tasks()
+        self._open_tasks_panel()
+        if not self.task_manager.tasks:
+            self.status.show_message("No tasks configured in .ghostline/tasks.json")
+            return
+        self.task_manager.run_build_task()
+
+    def _configure_default_build_task(self) -> None:
+        self.task_manager.load_workspace_tasks()
+        build_tasks = [task for task in self.task_manager.tasks if task.group == "build" or task.is_default]
+        if not build_tasks:
+            self.status.show_message("No build tasks available to configure")
+            return
+        names = [task.name for task in build_tasks]
+        current_index = max(names.index(self.task_manager.default_build_task), 0) if self.task_manager.default_build_task in names else 0
+        name, ok = QInputDialog.getItem(self, "Default Build Task", "Select build task", names, current_index, False)
+        if ok and name:
+            self.task_manager.set_default_build_task(name)
+            self.config.save()
+            self.status.show_message(f"Default build task set to {name}")
+
+    def _open_tasks_configuration(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        if not workspace:
+            self.status.show_message("Open a workspace to configure tasks")
+            return
+        ghost_dir = Path(workspace) / ".ghostline"
+        ghost_dir.mkdir(parents=True, exist_ok=True)
+        tasks_path = ghost_dir / "tasks.json"
+        if not tasks_path.exists():
+            sample = {
+                "version": "2.0.0",
+                "tasks": [
+                    {
+                        "label": "build",
+                        "type": "shell",
+                        "command": "npm run build",
+                        "group": {"kind": "build", "isDefault": True},
+                    },
+                    {
+                        "label": "test",
+                        "type": "shell",
+                        "command": "pytest",
+                        "options": {"cwd": "${workspaceRoot}"},
+                    },
+                ],
+            }
+            tasks_path.write_text(json.dumps(sample, indent=2))
+        self.open_file(str(tasks_path))
 
     def _restart_language_server(self) -> None:
         languages = sorted(set(self.lsp_manager._language_map.values()))
