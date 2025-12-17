@@ -965,6 +965,10 @@ class CodeEditor(QPlainTextEdit):
         finally:
             self._loading_document = False
 
+        # Reset modified flag after loading so autosave prompts only reflect
+        # changes made after the document is opened.
+        self.document().setModified(False)
+
         # Explicitly rebuild token cache to ensure syntax highlighting is applied immediately
         # after loading. This is necessary because the highlighter is created before the file
         # is loaded, and setPlainText() may not reliably trigger the contentsChange signal
@@ -978,6 +982,13 @@ class CodeEditor(QPlainTextEdit):
             return
         with self.path.open("w", encoding="utf-8") as handle:
             handle.write(self.toPlainText())
+        # Saving the document should clear the dirty flag
+        self.document().setModified(False)
+
+    def is_dirty(self) -> bool:
+        """Return True if the editor has unsaved changes."""
+
+        return bool(self.document().isModified())
 
     # Indentation helpers
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
