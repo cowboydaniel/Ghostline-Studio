@@ -740,6 +740,14 @@ class CodeEditor(QPlainTextEdit):
         self._lsp_document_opened = False
         self._diagnostics: list[Diagnostic] = []
         self._extra_cursors: list[QTextCursor] = []
+        self._selection_stack: list[list[tuple[int, int]]] = []
+        self._suppress_stack_reset = False
+        self._column_selection_enabled = bool(
+            (config or {}).get("editor", {}).get("column_selection_mode", False)
+        )
+        self._column_anchor: tuple[int, int] | None = None
+        editor_config = self.config.get("editor", {}) if self.config else {}
+        self._multi_cursor_modifier = editor_config.get("multi_cursor_modifier", "alt").lower()
         self._bracket_selection: list[QTextEdit.ExtraSelection] = []
         self._bracket_scope: tuple[int, int, int] | None = None
         self.breakpoints = BreakpointStore.instance()
@@ -780,7 +788,6 @@ class CodeEditor(QPlainTextEdit):
         self._min_chars_for_completion = intellisense_config.get("min_chars", 1)
 
         # Auto-closing brackets configuration
-        editor_config = self.config.get("editor", {}) if self.config else {}
         self._auto_close_brackets = editor_config.get("auto_close_brackets", True)
         self._bracket_pairs = {
             '(': ')',
@@ -804,6 +811,7 @@ class CodeEditor(QPlainTextEdit):
 
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_bracket_match)
+        self.selectionChanged.connect(self._reset_selection_stack)
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.textChanged.connect(self._notify_lsp_change)
@@ -1279,23 +1287,41 @@ class CodeEditor(QPlainTextEdit):
         self._paint_indent_guides()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
-        if event.modifiers() & Qt.AltModifier:
+        multi_modifier = Qt.AltModifier if self._multi_cursor_modifier == "alt" else Qt.ControlModifier
+        if self._column_selection_enabled and event.button() == Qt.MouseButton.LeftButton:
+            cursor = self.cursorForPosition(event.position().toPoint())
+            self._column_anchor = (cursor.blockNumber(), cursor.positionInBlock())
+            self.setTextCursor(cursor)
+            self._extra_cursors.clear()
+            self._highlight_current_line()
+            return
+        if event.modifiers() & multi_modifier:
             cursor = self.cursorForPosition(event.position().toPoint())
             self._extra_cursors.append(cursor)
             self._highlight_current_line()
             return
         super().mousePressEvent(event)
+        self._column_anchor = None
         self._extra_cursors.clear()
         self._highlight_current_line()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         """Track mouse position and trigger hover after 300ms delay."""
+        if self._column_selection_enabled and self._column_anchor:
+            cursor = self.cursorForPosition(event.position().toPoint())
+            self._update_column_selection(cursor)
+            return
         super().mouseMoveEvent(event)
         self._hover_position = event.position().toPoint()
         # Restart timer on every mouse movement
         if self._hover_timer.isActive():
             self._hover_timer.stop()
         self._hover_timer.start()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        super().mouseReleaseEvent(event)
+        if self._column_selection_enabled and event.button() == Qt.MouseButton.LeftButton:
+            self._column_anchor = None
 
     # File operations
     def _load_file(self, path: Path) -> None:
@@ -1668,10 +1694,417 @@ class CodeEditor(QPlainTextEdit):
         synced: list[QTextCursor] = []
         for cursor in self._extra_cursors:
             clone = QTextCursor(self.document())
-            clone.setPosition(cursor.position())
+            clone.setPosition(cursor.anchor())
+            clone.setPosition(cursor.position(), QTextCursor.MoveMode.KeepAnchor)
             synced.append(clone)
         self._extra_cursors = synced
         self._highlight_current_line()
+
+    def _reset_selection_stack(self) -> None:
+        if not self._suppress_stack_reset:
+            self._selection_stack.clear()
+
+    def _all_cursors(self) -> list[QTextCursor]:
+        return [self.textCursor(), *self._extra_cursors]
+
+    def _capture_selection_state(self) -> list[tuple[int, int]]:
+        return [
+            (cur.selectionStart(), cur.selectionEnd())
+            if cur.hasSelection()
+            else (cur.position(), cur.position())
+            for cur in self._all_cursors()
+        ]
+
+    def _apply_selection_state(self, ranges: list[tuple[int, int]]) -> None:
+        self._suppress_stack_reset = True
+        try:
+            self._extra_cursors = []
+            for index, (start, end) in enumerate(ranges):
+                doc_length = len(self.toPlainText())
+                start = max(0, min(start, doc_length))
+                end = max(0, min(end, doc_length))
+                cursor = QTextCursor(self.document())
+                cursor.setPosition(start)
+                if end != start:
+                    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                if index == 0:
+                    self.setTextCursor(cursor)
+                else:
+                    self._extra_cursors.append(cursor)
+            self._highlight_current_line()
+        finally:
+            self._suppress_stack_reset = False
+
+    def _range_for_cursor(self, cursor: QTextCursor, *, line_fallback: bool = True) -> tuple[int, int]:
+        if cursor.hasSelection():
+            return (min(cursor.selectionStart(), cursor.selectionEnd()), max(cursor.selectionStart(), cursor.selectionEnd()))
+        if line_fallback:
+            block = cursor.block()
+            return block.position(), block.position() + block.length()
+        pos = cursor.position()
+        return pos, pos
+
+    def _string_range_for_cursor(self, cursor: QTextCursor) -> tuple[int, int] | None:
+        block = cursor.block()
+        text = block.text()
+        col = cursor.positionInBlock()
+        left_candidates = [(text.rfind("\"", 0, col), "\""), (text.rfind("'", 0, col), "'")]
+        left_candidates = [(idx, ch) for idx, ch in left_candidates if idx != -1]
+        if not left_candidates:
+            return None
+        left_idx, quote_char = max(left_candidates, key=lambda item: item[0])
+        right_idx = text.find(quote_char, max(col, left_idx + 1))
+        if right_idx == -1:
+            return None
+        start = block.position() + left_idx
+        end = block.position() + right_idx + 1
+        if not (start <= cursor.position() <= end):
+            return None
+        return start, end
+
+    def _block_range_for_cursor(self, cursor: QTextCursor) -> tuple[int, int]:
+        block = cursor.block()
+        start_block = block
+        while start_block.previous().isValid() and start_block.previous().text().strip():
+            start_block = start_block.previous()
+        end_block = block
+        while end_block.next().isValid() and end_block.next().text().strip():
+            end_block = end_block.next()
+        return start_block.position(), end_block.position() + end_block.length()
+
+    def _selection_levels_for_cursor(self, cursor: QTextCursor) -> list[tuple[int, int]]:
+        levels: list[tuple[int, int]] = []
+
+        word_cursor = QTextCursor(cursor)
+        word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        if word_cursor.selectedText():
+            levels.append((word_cursor.selectionStart(), word_cursor.selectionEnd()))
+
+        string_range = self._string_range_for_cursor(cursor)
+        if string_range:
+            levels.append(string_range)
+
+        line_cursor = QTextCursor(cursor)
+        line_cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        levels.append((line_cursor.selectionStart(), line_cursor.selectionEnd()))
+
+        levels.append(self._block_range_for_cursor(cursor))
+
+        doc_cursor = QTextCursor(cursor)
+        doc_cursor.select(QTextCursor.SelectionType.Document)
+        levels.append((doc_cursor.selectionStart(), doc_cursor.selectionEnd()))
+        return levels
+
+    def _expand_range(self, cursor: QTextCursor) -> tuple[int, int]:
+        levels = self._selection_levels_for_cursor(cursor)
+        current = self._range_for_cursor(cursor, line_fallback=False)
+        for idx, level in enumerate(levels):
+            if level == current:
+                return levels[min(idx + 1, len(levels) - 1)]
+        return levels[0]
+
+    def expand_selection(self) -> None:
+        self._selection_stack.append(self._capture_selection_state())
+        expanded = [self._expand_range(cur) for cur in self._all_cursors()]
+        self._apply_selection_state(expanded)
+
+    def shrink_selection(self) -> None:
+        if not self._selection_stack:
+            return
+        previous = self._selection_stack.pop()
+        self._apply_selection_state(previous)
+
+    def _cursor_for_block_column(self, block_index: int, column: int) -> QTextCursor:
+        block = self.document().findBlockByNumber(block_index)
+        column = max(0, min(column, len(block.text())))
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(block.position() + column)
+        return cursor
+
+    def _update_column_selection(self, target_cursor: QTextCursor) -> None:
+        if not self._column_anchor:
+            return
+        anchor_line, anchor_col = self._column_anchor
+        current_line = target_cursor.blockNumber()
+        current_col = target_cursor.positionInBlock()
+        line_start, line_end = sorted((anchor_line, current_line))
+        col_start, col_end = sorted((anchor_col, current_col))
+        ranges: list[tuple[int, int]] = []
+        for line in range(line_start, line_end + 1):
+            start_cursor = self._cursor_for_block_column(line, col_start)
+            end_cursor = self._cursor_for_block_column(line, col_end)
+            start_pos = start_cursor.position()
+            end_pos = end_cursor.position()
+            if end_pos == start_pos and col_end != col_start:
+                end_cursor.movePosition(
+                    QTextCursor.MoveOperation.Right,
+                    QTextCursor.MoveMode.KeepAnchor,
+                    col_end - col_start,
+                )
+                end_pos = end_cursor.position()
+            ranges.append((min(start_pos, end_pos), max(start_pos, end_pos)))
+        self._apply_selection_state(ranges)
+
+    def toggle_column_selection(self, enabled: bool | None = None) -> None:
+        self._column_selection_enabled = (not self._column_selection_enabled) if enabled is None else bool(enabled)
+        if not self._column_selection_enabled:
+            self._column_anchor = None
+            self._extra_cursors.clear()
+            self._highlight_current_line()
+
+    def _merge_ranges(self, ranges: list[tuple[int, int]]) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+        if not ranges:
+            return [], []
+        sorted_ranges = sorted(ranges, key=lambda pair: pair[0])
+        merged: list[list[int]] = [[sorted_ranges[0][0], sorted_ranges[0][1]]]
+        for start, end in sorted_ranges[1:]:
+            last_start, last_end = merged[-1]
+            if start <= last_end:
+                merged[-1][1] = max(last_end, end)
+            else:
+                merged.append([start, end])
+        merged_tuples = [(start, end) for start, end in merged]
+        mapping: list[tuple[int, int]] = []
+        for start, end in ranges:
+            for merged_start, merged_end in merged_tuples:
+                if merged_start <= start and end <= merged_end:
+                    mapping.append((merged_start, merged_end))
+                    break
+            else:
+                mapping.append((start, end))
+        return merged_tuples, mapping
+
+    def _selection_or_line_ranges(self) -> list[tuple[int, int]]:
+        return [self._range_for_cursor(cur) for cur in self._all_cursors()]
+
+    def _position_for_line(self, lines: list[str], line_index: int) -> int:
+        return sum(len(line) for line in lines[:line_index])
+
+    def _positions_for_lines(self, lines: list[str], start_line: int, end_line: int) -> tuple[int, int]:
+        start_pos = self._position_for_line(lines, start_line)
+        end_pos = self._position_for_line(lines, end_line + 1)
+        return start_pos, end_pos
+
+    def _apply_text_and_selections(self, new_text: str, selections: list[tuple[int, int]]) -> None:
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        self.setPlainText(new_text)
+        cursor.endEditBlock()
+        self._apply_selection_state(selections)
+        self._selection_stack.clear()
+
+    def duplicate_selections(self) -> None:
+        ranges = self._selection_or_line_ranges()
+        merged, mapping = self._merge_ranges(ranges)
+        if not merged:
+            return
+        text = self.toPlainText()
+        new_text = text
+        insertion_map: dict[tuple[int, int], tuple[int, int]] = {}
+        for start, end in sorted(merged, reverse=True):
+            segment = text[start:end]
+            new_text = new_text[:end] + segment + new_text[end:]
+            insertion_map[(start, end)] = (end, end + len(segment))
+        selections = [insertion_map[m] for m in mapping]
+        self._apply_text_and_selections(new_text, selections)
+
+    def copy_lines_up(self) -> None:
+        ranges = self._selection_or_line_ranges()
+        merged, mapping = self._merge_ranges(ranges)
+        if not merged:
+            return
+        text = self.toPlainText()
+        new_text = text
+        insertion_map: dict[tuple[int, int], tuple[int, int]] = {}
+        for start, end in sorted(merged, reverse=True):
+            segment = text[start:end]
+            new_text = new_text[:start] + segment + new_text[start:]
+            insertion_map[(start, end)] = (start, start + len(segment))
+        selections = [insertion_map[m] for m in mapping]
+        self._apply_text_and_selections(new_text, selections)
+
+    def copy_lines_down(self) -> None:
+        ranges = self._selection_or_line_ranges()
+        merged, mapping = self._merge_ranges(ranges)
+        if not merged:
+            return
+        text = self.toPlainText()
+        new_text = text
+        insertion_map: dict[tuple[int, int], tuple[int, int]] = {}
+        for start, end in sorted(merged, reverse=True):
+            segment = text[start:end]
+            new_text = new_text[:end] + segment + new_text[end:]
+            insertion_map[(start, end)] = (end, end + len(segment))
+        selections = [insertion_map[m] for m in mapping]
+        self._apply_text_and_selections(new_text, selections)
+
+    def _line_ranges_from_cursors(self) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+        line_ranges: list[tuple[int, int]] = []
+        for start, end in self._selection_or_line_ranges():
+            start_block = self.document().findBlock(start)
+            end_block = self.document().findBlock(max(start, end - 1))
+            line_ranges.append((start_block.blockNumber(), end_block.blockNumber()))
+        return self._merge_ranges(line_ranges)
+
+    def move_lines_up(self) -> None:
+        merged, mapping = self._line_ranges_from_cursors()
+        lines = self.toPlainText().splitlines(keepends=True)
+        if not merged or not lines:
+            return
+        new_lines = list(lines)
+        new_locations: dict[tuple[int, int], tuple[int, int]] = {}
+        for start_line, end_line in merged:
+            if start_line == 0:
+                new_locations[(start_line, end_line)] = (start_line, end_line)
+                continue
+            segment = new_lines[start_line : end_line + 1]
+            del new_lines[start_line : end_line + 1]
+            insert_pos = start_line - 1
+            new_lines[insert_pos:insert_pos] = segment
+            new_locations[(start_line, end_line)] = (insert_pos, insert_pos + len(segment) - 1)
+        new_text = "".join(new_lines)
+        selections = []
+        for original_range in mapping:
+            new_start, new_end = new_locations.get(original_range, original_range)
+            selections.append(self._positions_for_lines(new_lines, new_start, new_end))
+        self._apply_text_and_selections(new_text, selections)
+
+    def move_lines_down(self) -> None:
+        merged, mapping = self._line_ranges_from_cursors()
+        lines = self.toPlainText().splitlines(keepends=True)
+        if not merged or not lines:
+            return
+        new_lines = list(lines)
+        new_locations: dict[tuple[int, int], tuple[int, int]] = {}
+        for start_line, end_line in sorted(merged, reverse=True):
+            if end_line >= len(new_lines) - 1:
+                new_locations[(start_line, end_line)] = (start_line, end_line)
+                continue
+            segment = new_lines[start_line : end_line + 1]
+            del new_lines[start_line : end_line + 1]
+            insert_pos = min(len(new_lines), start_line + 1)
+            new_lines[insert_pos:insert_pos] = segment
+            new_locations[(start_line, end_line)] = (insert_pos, insert_pos + len(segment) - 1)
+        new_text = "".join(new_lines)
+        selections = []
+        for original_range in mapping:
+            new_start, new_end = new_locations.get(original_range, original_range)
+            selections.append(self._positions_for_lines(new_lines, new_start, new_end))
+        self._apply_text_and_selections(new_text, selections)
+
+    def _clone_cursor_to_line(self, cursor: QTextCursor, target_line: int) -> QTextCursor:
+        target_block = self.document().findBlockByNumber(target_line)
+        base_block = cursor.block()
+        column = cursor.positionInBlock()
+        target_column = min(column, len(target_block.text()))
+        new_cursor = QTextCursor(self.document())
+        new_cursor.setPosition(target_block.position() + target_column)
+        if cursor.hasSelection() and base_block.blockNumber() == self.document().findBlock(cursor.selectionEnd()).blockNumber():
+            sel_start_col = cursor.selectionStart() - base_block.position()
+            sel_end_col = cursor.selectionEnd() - base_block.position()
+            start = target_block.position() + min(sel_start_col, len(target_block.text()))
+            end = target_block.position() + min(sel_end_col, len(target_block.text()))
+            new_cursor.setPosition(start)
+            new_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        return new_cursor
+
+    def _add_vertical_cursors(self, offset: int) -> None:
+        new_cursors: list[QTextCursor] = []
+        for cursor in self._all_cursors():
+            target_line = cursor.block().blockNumber() + offset
+            if target_line < 0 or target_line >= self.document().blockCount():
+                continue
+            new_cursors.append(self._clone_cursor_to_line(cursor, target_line))
+        if not new_cursors:
+            return
+        self._extra_cursors.extend(new_cursors)
+        self._highlight_current_line()
+
+    def add_cursor_above(self) -> None:
+        self._add_vertical_cursors(-1)
+
+    def add_cursor_below(self) -> None:
+        self._add_vertical_cursors(1)
+
+    def add_cursors_to_line_ends(self) -> None:
+        merged, _ = self._line_ranges_from_cursors()
+        if not merged:
+            return
+        cursors: list[QTextCursor] = []
+        for start_line, end_line in merged:
+            for line in range(start_line, end_line + 1):
+                block = self.document().findBlockByNumber(line)
+                cursor = QTextCursor(self.document())
+                cursor.setPosition(block.position() + len(block.text()))
+                cursors.append(cursor)
+        if not cursors:
+            return
+        self.setTextCursor(cursors[0])
+        self._extra_cursors = cursors[1:]
+        self._highlight_current_line()
+
+    def _occurrence_text(self) -> str:
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return cursor.selectedText()
+        word_cursor = QTextCursor(cursor)
+        word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        return word_cursor.selectedText()
+
+    def _existing_ranges(self) -> set[tuple[int, int]]:
+        ranges: set[tuple[int, int]] = set()
+        for cursor in self._all_cursors():
+            if cursor.hasSelection():
+                ranges.add((min(cursor.selectionStart(), cursor.selectionEnd()), max(cursor.selectionStart(), cursor.selectionEnd())))
+            else:
+                pos = cursor.position()
+                ranges.add((pos, pos))
+        return ranges
+
+    def _add_occurrence_cursor(self, direction: int) -> None:
+        needle = self._occurrence_text()
+        if not needle:
+            return
+        text = self.toPlainText()
+        current_range = self._range_for_cursor(self.textCursor())
+        start_pos = current_range[1] if direction > 0 else max(0, current_range[0] - 1)
+        if direction > 0:
+            index = text.find(needle, start_pos)
+        else:
+            index = text.rfind(needle, 0, start_pos)
+        if index == -1:
+            return
+        new_range = (index, index + len(needle))
+        if new_range in self._existing_ranges():
+            return
+        new_cursor = QTextCursor(self.document())
+        new_cursor.setPosition(new_range[0])
+        new_cursor.setPosition(new_range[1], QTextCursor.MoveMode.KeepAnchor)
+        self._extra_cursors.append(new_cursor)
+        self._highlight_current_line()
+
+    def add_cursor_to_next_occurrence(self) -> None:
+        self._add_occurrence_cursor(1)
+
+    def add_cursor_to_previous_occurrence(self) -> None:
+        self._add_occurrence_cursor(-1)
+
+    def select_all_occurrences(self) -> None:
+        needle = self._occurrence_text()
+        if not needle:
+            return
+        text = self.toPlainText()
+        ranges: list[tuple[int, int]] = []
+        start = 0
+        while True:
+            index = text.find(needle, start)
+            if index == -1:
+                break
+            ranges.append((index, index + len(needle)))
+            start = index + len(needle)
+        if not ranges:
+            return
+        self._apply_selection_state(ranges)
 
     def _indent_columns(self, text: str) -> list[int]:
         tab_size = self.config.get("tabs", {}).get("tab_size", 4) if self.config else 4
