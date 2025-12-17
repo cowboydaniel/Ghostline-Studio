@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -72,9 +73,9 @@ from ghostline.formatter.formatter_manager import FormatterManager
 from ghostline.runtime.inspector import RuntimeInspector
 from ghostline.indexer.index_manager import IndexManager
 from ghostline.indexer.workspace_indexer import WorkspaceIndexer
-from ghostline.search.global_search import GlobalSearchDialog
 from ghostline.search.symbol_search import SymbolSearcher
 from ghostline.plugins.loader import PluginLoader
+from ghostline.ui.docks.search_panel import SearchPanel
 from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
 from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
@@ -625,6 +626,10 @@ class MainWindow(QMainWindow):
         editor_view_cfg = self.config.settings.setdefault("editor", {}) if self.config else {}
         self._word_wrap_enabled = bool(self.view_settings.get("word_wrap", editor_view_cfg.get("word_wrap", False)))
         self._autosave_enabled = bool(self.config.get("autosave", {}).get("enabled", False))
+        autosave_cfg = self.config.get("autosave", {}) if self.config else {}
+        self._autosave_interval = int(autosave_cfg.get("interval_seconds", 60))
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.timeout.connect(self._perform_autosave)
 
         self.setWindowTitle("Ghostline Studio")
         self.resize(1200, 800)
@@ -797,6 +802,7 @@ class MainWindow(QMainWindow):
         self._install_title_bar()
         self._create_terminal_dock()
         self._create_project_dock()
+        self._create_search_dock()
         self._create_ai_dock()
         self._create_diagnostics_dock()
         self._create_debugger_dock()
@@ -1319,6 +1325,31 @@ class MainWindow(QMainWindow):
                 ai_open = self.ai_dock.isVisible()
             self.action_toggle_ai_dock.setChecked(ai_open)
 
+    def _collect_view_actions(self) -> list[QAction]:
+        actions: list[QAction] = []
+
+        def walk(menu: QMenu) -> None:
+            for action in menu.actions():
+                if action.menu():
+                    walk(action.menu())
+                else:
+                    actions.append(action)
+
+        if hasattr(self, "view_menu") and self.view_menu:
+            walk(self.view_menu)
+
+        for dock in getattr(self, "left_docks", []) + getattr(self, "right_docks", []):
+            toggle = dock.toggleViewAction()
+            if toggle not in actions:
+                actions.append(toggle)
+
+        return [action for action in actions if action.isCheckable()]
+
+    def _open_view_picker(self) -> None:
+        dialog = ViewPickerDialog(self._collect_view_actions(), self)
+        dialog.resize(360, 420)
+        dialog.show()
+
     def _update_title_context(self) -> None:
         if not hasattr(self, "title_bar"):
             return
@@ -1353,12 +1384,15 @@ class MainWindow(QMainWindow):
         bar_settings = self.view_settings.setdefault("bars", {})
 
         command_definitions = [
+            CommandActionDefinition("file.new", "New File", "File", handler=self._create_new_file, shortcut="Ctrl+N"),
+            CommandActionDefinition("file.save", "Save", "File", handler=self._save_current_file, shortcut="Ctrl+S"),
+            CommandActionDefinition("file.save_as", "Save As...", "File", handler=self._save_current_file_as),
             CommandActionDefinition("file.open", "Open File", "File", handler=self._prompt_open_file),
             CommandActionDefinition("file.open_folder", "Open Folder", "File", handler=self._prompt_open_folder),
             CommandActionDefinition("file.close_folder", "Close Folder", "File", handler=self._close_folder),
             CommandActionDefinition(
                 "search.global",
-                "Global Search",
+                "Find in Files",
                 "Navigate",
                 handler=self._trigger_global_search_action,
                 shortcut="Ctrl+Shift+F",
@@ -1370,7 +1404,14 @@ class MainWindow(QMainWindow):
                 "Command Palette",
                 "View",
                 handler=self.show_command_palette,
-                shortcut="Ctrl+P",
+                shortcut="Ctrl+Shift+P",
+            ),
+            CommandActionDefinition(
+                "view.picker",
+                "View Picker",
+                "View",
+                handler=self._open_view_picker,
+                shortcut="Ctrl+Alt+V",
             ),
             CommandActionDefinition(
                 "ai.toggle_autoflow",
@@ -1566,14 +1607,14 @@ class MainWindow(QMainWindow):
                 "edit.find",
                 "Find",
                 "Edit",
-                handler=self._open_global_search,
+                handler=lambda: self._focus_editor_find(),
                 shortcut="Ctrl+F",
             ),
             CommandActionDefinition(
                 "edit.replace",
                 "Replace",
                 "Edit",
-                handler=self._open_global_search,
+                handler=lambda: self._focus_editor_find(replace=True),
                 shortcut="Ctrl+H",
             ),
             CommandActionDefinition(
@@ -1657,6 +1698,9 @@ class MainWindow(QMainWindow):
         self.ui_action_registry.bulk_register(command_definitions)
         actions = self.ui_action_registry.build()
 
+        self.action_new_file = actions["file.new"]
+        self.action_save_file = actions["file.save"]
+        self.action_save_file_as = actions["file.save_as"]
         self.action_open_file = actions["file.open"]
         self.action_open_folder = actions["file.open_folder"]
         self.action_close_folder = actions["file.close_folder"]
@@ -1664,6 +1708,7 @@ class MainWindow(QMainWindow):
         self.action_goto_symbol = actions["navigate.symbol"]
         self.action_goto_file = actions["navigate.file"]
         self.action_command_palette = actions["palette.command"]
+        self.action_view_picker = actions["view.picker"]
         self.action_toggle_autoflow = actions["ai.toggle_autoflow"]
         self.action_toggle_project = actions["view.toggle_project"]
         self.action_toggle_split_editor = actions["view.toggle_split"]
@@ -1731,14 +1776,30 @@ class MainWindow(QMainWindow):
     def _create_menus(self) -> None:
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
+        file_menu.addAction(self.action_new_file)
+        file_menu.addAction(self.action_save_file)
+        file_menu.addAction(self.action_save_file_as)
         file_menu.addAction(self.action_open_file)
         file_menu.addAction(self.action_open_folder)
         file_menu.addAction(self.action_close_folder)
         file_menu.addAction(self.action_project_settings)
         file_menu.addSeparator()
+        new_window_action = QAction("New Window", self)
+        new_window_action.triggered.connect(lambda: self._launch_new_window())
+        file_menu.addAction(new_window_action)
+        profile_window_action = QAction("New Window with Profile...", self)
+        profile_window_action.triggered.connect(self._prompt_new_profile_window)
+        file_menu.addAction(profile_window_action)
+        file_menu.addSeparator()
+        share_menu = file_menu.addMenu("Share")
+        share_menu.addAction(self._create_share_file_action())
+        share_menu.addAction(self._create_share_workspace_action())
+        file_menu.addSeparator()
         tools_menu = file_menu.addMenu("Tools")
         tools_menu.addAction(self.action_open_plugins)
-        file_menu.addAction(self.action_ghostline_settings)
+        prefs_menu = file_menu.addMenu("Preferences")
+        prefs_menu.addAction(self.action_ghostline_settings)
+        prefs_menu.addAction(self.action_keyboard_shortcuts)
 
         edit_menu = menubar.addMenu("Edit")
         edit_menu.addAction(self.action_undo)
@@ -1761,6 +1822,7 @@ class MainWindow(QMainWindow):
 
         self.view_menu = menubar.addMenu("View")
         self.view_menu.addAction(self.action_command_palette)
+        self.view_menu.addAction(self.action_view_picker)
         self.view_menu.addAction(self.action_toggle_project)
         self.view_menu.addAction(self.action_toggle_split_editor)
         self.view_menu.addAction(self.action_toggle_terminal)
@@ -1881,6 +1943,18 @@ class MainWindow(QMainWindow):
         self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.project_dock = dock
+
+    def _create_search_dock(self) -> None:
+        dock = SearchPanel(
+            lambda: str(self.workspace_manager.current_workspace) if self.workspace_manager.current_workspace else None,
+            lambda path, line: self.open_file_at(path, line),
+            self,
+        )
+        dock.setObjectName("searchDock")
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._place_left_dock(dock)
+        self._register_dock_action(dock)
+        self.search_dock = dock
 
     def _create_ai_dock(self) -> None:
         dock = QDockWidget("Ghostline AI", self)
@@ -2271,6 +2345,40 @@ class MainWindow(QMainWindow):
         if command_id in commands:
             commands[command_id](**kwargs)
 
+    def _create_new_file(self) -> None:
+        editor = self.editor_tabs.add_untitled_editor()
+        editor.document().setModified(True)
+        self._update_title_context()
+
+    def _save_current_file(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        if not editor.path:
+            self._save_current_file_as()
+            return
+        editor.save()
+        self.editor_tabs.update_tab_for_editor(editor)
+        self.status.show_message("File saved")
+        if editor.path:
+            self.workspace_manager.record_recent_file(str(editor.path))
+            self.plugin_loader.emit_event("file.saved", path=str(editor.path))
+
+    def _save_current_file_as(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save File")
+        if not path:
+            return
+        editor.set_path(Path(path))
+        editor.save()
+        self.editor_tabs.update_tab_for_editor(editor)
+        self.workspace_manager.register_recent(path)
+        self.workspace_manager.record_recent_file(path)
+        self.status.show_message(f"Saved {Path(path).name}")
+        self.plugin_loader.emit_event("file.saved", path=path)
+
     def _prompt_open_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open File")
         if path:
@@ -2302,7 +2410,78 @@ class MainWindow(QMainWindow):
         workspace_path = self.workspace_manager.templates.create(template, destination)
         self.open_folder(str(workspace_path))
 
+    def _create_share_file_action(self) -> QAction:
+        action = QAction("Copy Active File Path", self)
+        action.triggered.connect(self._copy_active_file_path)
+        return action
+
+    def _create_share_workspace_action(self) -> QAction:
+        action = QAction("Copy Workspace Path", self)
+        action.triggered.connect(self._copy_workspace_path)
+        return action
+
+    def _copy_active_file_path(self) -> None:
+        editor = self.get_current_editor()
+        if editor and editor.path:
+            QApplication.clipboard().setText(str(editor.path))
+            self.status.show_message("Copied file path to clipboard")
+        else:
+            self.status.show_message("No active file to share")
+
+    def _copy_workspace_path(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        if workspace:
+            QApplication.clipboard().setText(str(workspace))
+            self.status.show_message("Copied workspace path to clipboard")
+        else:
+            self.status.show_message("No workspace open")
+
+    def _launch_new_window(self, profile: str | None = None) -> None:
+        executable = sys.executable
+        entry = Path(sys.argv[0]).resolve()
+        if not entry.exists():
+            entry = Path(__file__).resolve().parents[2] / "start.py"
+
+        env = dict(os.environ)
+        if profile:
+            profile_dir = CONFIG_DIR / "profiles" / profile
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            env["GHOSTLINE_CONFIG_DIR"] = str(profile_dir)
+        else:
+            env.setdefault("GHOSTLINE_CONFIG_DIR", str(CONFIG_DIR))
+
+        subprocess.Popen([executable, str(entry)], env=env)
+
+    def _prompt_new_profile_window(self) -> None:
+        profile, ok = QInputDialog.getText(self, "Profile", "Profile name", QLineEdit.Normal, "default")
+        if not ok or not profile.strip():
+            return
+        self._launch_new_window(profile.strip())
+
+    def _dirty_editors(self) -> list[CodeEditor]:
+        return [editor for editor in self.editor_tabs.iter_editors() if editor.is_dirty()]
+
+    def _confirm_unsaved_changes(self) -> bool:
+        dirty = self._dirty_editors()
+        if not dirty:
+            return True
+
+        answer = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "You have unsaved changes. Save them before continuing?",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            QMessageBox.Yes,
+        )
+        if answer == QMessageBox.Cancel:
+            return False
+        if answer == QMessageBox.Yes:
+            self.save_all()
+        return True
+
     def _close_folder(self) -> None:
+        if not self._confirm_unsaved_changes():
+            return
         self.workspace_manager.clear_workspace()
         self._restored_workspace = None
         if hasattr(self, "project_model"):
@@ -2326,6 +2505,9 @@ class MainWindow(QMainWindow):
             editor.setTextCursor(cursor)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        if not self._confirm_unsaved_changes():
+            event.ignore()
+            return
         try:
             if hasattr(self, "analysis_service") and self.analysis_service:
                 try:
@@ -2499,7 +2681,7 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode))
         registry.register_command(CommandDescriptor("ai.settings", "AI Settings", "AI", self._open_ai_settings))
         registry.register_command(CommandDescriptor("ai.setup", "Re-run Setup Wizard", "AI", self.show_setup_wizard))
-        registry.register_command(CommandDescriptor("search.global", "Global Search", "Navigate", self._open_global_search))
+        registry.register_command(CommandDescriptor("search.global", "Find in Files", "Navigate", self._open_global_search))
         registry.register_command(CommandDescriptor("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker))
         registry.register_command(CommandDescriptor("navigate.file", "Go to File", "Navigate", self._open_file_picker))
         registry.register_command(
@@ -2556,12 +2738,19 @@ class MainWindow(QMainWindow):
         )
         self.activity_bar.settingsRequested.connect(self._open_settings)
 
+    def _focus_editor_find(self, replace: bool = False) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.show_find_bar(replace=replace)
+            editor.setFocus()
+
     def _focus_global_search(self) -> None:
         query: str | None = None
-        if hasattr(self, "title_bar") and hasattr(self.title_bar, "command_input"):
-            query = self.title_bar.command_input.text()
-            self.title_bar.command_input.setFocus()
-            self.title_bar.command_input.selectAll()
+        editor = self.get_current_editor()
+        if editor:
+            cursor = editor.textCursor()
+            if cursor.hasSelection():
+                query = cursor.selectedText()
         self._open_global_search(query)
 
     def _trigger_global_search_action(self) -> None:
@@ -2653,6 +2842,22 @@ class MainWindow(QMainWindow):
         self._autosave_enabled = bool(checked)
         autosave_cfg = self.config.settings.setdefault("autosave", {}) if self.config else {}
         autosave_cfg["enabled"] = self._autosave_enabled
+        autosave_cfg.setdefault("interval_seconds", self._autosave_interval)
+        self._autosave_interval = int(autosave_cfg.get("interval_seconds", self._autosave_interval))
+        if self._autosave_enabled:
+            self._autosave_timer.start(self._autosave_interval * 1000)
+        else:
+            self._autosave_timer.stop()
+
+    def _perform_autosave(self) -> None:
+        if not self._autosave_enabled:
+            return
+        for editor in self.editor_tabs.iter_editors():
+            if editor.is_dirty():
+                editor.save()
+                if editor.path:
+                    self.plugin_loader.emit_event("file.saved", path=str(editor.path))
+        self.status.show_message("Autosaved dirty files")
 
     def _toggle_activity_bar_visible(self, checked: bool) -> None:
         self.view_settings.setdefault("bars", {})["activity"] = bool(checked)
@@ -2719,20 +2924,12 @@ class MainWindow(QMainWindow):
         return result
 
     def _open_global_search(self, initial_query: str | None = None) -> None:
-        if not hasattr(self, "_global_search_dialog"):
-            self._global_search_dialog = GlobalSearchDialog(
-                lambda: str(self.workspace_manager.current_workspace) if self.workspace_manager.current_workspace else None,
-                lambda path, line: self.open_file_at(path, line),
-                self,
-            )
-
+        dock = getattr(self, "search_dock", None)
+        if not dock:
+            return
+        self._show_and_raise_dock(dock, "search")
         if initial_query:
-            if hasattr(self._global_search_dialog, "open_with_query"):
-                self._global_search_dialog.open_with_query(initial_query)
-            else:
-                self._global_search_dialog.input.setText(initial_query)
-        self._global_search_dialog.show()
-        self._global_search_dialog.raise_()
+            dock.open_with_query(initial_query)
 
     def _apply_theme_from_config(self) -> None:
         configured_theme = self._theme_id_from_value(self.config.get("theme"))
