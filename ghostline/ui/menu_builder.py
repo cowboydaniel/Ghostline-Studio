@@ -573,23 +573,45 @@ class MenuBuilder:
 
     def _populate_recent_submenu(self, menu: QMenu) -> None:
         """Populate the Open Recent submenu."""
+        from pathlib import Path
         menu.clear()
-        recents = self.window.workspace_manager.get_recent_workspaces()
-        recent_files = self.window.workspace_manager.get_recent_files()
 
-        if recents:
-            for path in recents[:10]:
+        # Get recent items from workspace manager (contains both files and folders)
+        recent_items = getattr(self.window.workspace_manager, 'recent_items', [])
+
+        # Separate into folders and files
+        recent_folders = []
+        recent_files = []
+        for item in recent_items:
+            path = Path(item)
+            if path.exists():
+                if path.is_dir():
+                    recent_folders.append(item)
+                else:
+                    recent_files.append(item)
+
+        # Also get workspace-specific recent files
+        workspace_recent_files = self.window.workspace_manager.get_recent_files()
+
+        has_items = False
+
+        if recent_folders:
+            has_items = True
+            for path in recent_folders[:5]:
                 action = menu.addAction(str(path))
                 action.triggered.connect(lambda checked, p=str(path): self.window.open_folder(p))
 
-        if recent_files:
-            if recents:
+        if recent_files or workspace_recent_files:
+            if recent_folders:
                 menu.addSeparator()
-            for path in recent_files[:10]:
+            has_items = True
+            # Combine and deduplicate
+            all_files = list(dict.fromkeys(recent_files + workspace_recent_files))
+            for path in all_files[:10]:
                 action = menu.addAction(str(path))
                 action.triggered.connect(lambda checked, p=str(path): self.window.open_file(p))
 
-        if recents or recent_files:
+        if has_items:
             menu.addSeparator()
             clear_action = menu.addAction("Clear Recently Opened")
             clear_action.triggered.connect(self.window._clear_recent)

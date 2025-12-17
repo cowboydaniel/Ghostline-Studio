@@ -201,6 +201,12 @@ class MenuActionsMixin:
             clipboard.setText(str(editor.path))
             self.status.show_message("File path copied to clipboard")
 
+    def _clear_recent(self: "MainWindow") -> None:
+        """Clear recently opened files and folders."""
+        self.workspace_manager.recent_items.clear()
+        self.workspace_manager.save_recents()
+        self.status.show_message("Cleared recent items")
+
     def _open_icon_theme_picker(self: "MainWindow") -> None:
         """Open file icon theme picker."""
         themes = ["Seti (Visual Studio Code)", "Material Icon Theme", "None"]
