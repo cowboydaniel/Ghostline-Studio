@@ -20,6 +20,7 @@ class SplitEditorArea(QWidget):
     """Wrap two EditorTabs instances to enable side-by-side editing."""
 
     countChanged = Signal(int)
+    currentChanged = Signal(int)
 
     def __init__(
         self,
@@ -53,8 +54,8 @@ class SplitEditorArea(QWidget):
 
         self.primary.countChanged.connect(self._emit_count)
         self.secondary.countChanged.connect(self._emit_count)
-        self.primary.currentChanged.connect(lambda _=None: self._set_active_pane("primary"))
-        self.secondary.currentChanged.connect(lambda _=None: self._set_active_pane("secondary"))
+        self.primary.currentChanged.connect(lambda index=None: self._handle_current_changed(index, "primary"))
+        self.secondary.currentChanged.connect(lambda index=None: self._handle_current_changed(index, "secondary"))
 
         splitter = QSplitter(Qt.Horizontal, self)
         splitter.addWidget(self.primary)
@@ -117,6 +118,10 @@ class SplitEditorArea(QWidget):
 
     def _set_active_pane(self, pane: str) -> None:
         self._active_pane = pane if pane in {"primary", "secondary"} else "primary"
+
+    def _handle_current_changed(self, index: int | None, pane: str) -> None:
+        self._set_active_pane(pane)
+        self.currentChanged.emit(index if index is not None else -1)
 
     def _emit_count(self) -> None:
         self.countChanged.emit(self.count())
