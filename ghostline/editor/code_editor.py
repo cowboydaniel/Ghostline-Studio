@@ -10,11 +10,12 @@ from io import StringIO
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from PySide6.QtCore import QTimer, QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QTimer, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QKeyEvent,
+    QKeySequence,
     QMouseEvent,
     QPainter,
     QPen,
@@ -24,6 +25,7 @@ from PySide6.QtGui import (
     QSyntaxHighlighter,
     QTextDocument,
     QPalette,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
     QPlainTextEdit,
@@ -34,8 +36,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QLabel,
     QVBoxLayout,
-    QHBoxLayout,
     QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QToolButton,
+    QCheckBox,
 )
 
 from ghostline.core.config import ConfigManager
@@ -361,6 +367,85 @@ class CompletionWidget(QWidget):
 
         self.doc_label.setText(''.join(html_parts) if html_parts else "No documentation available.")
 
+
+class InlineFindReplaceBar(QWidget):
+    """Lightweight in-editor find/replace bar that hugs the editor viewport."""
+
+    findRequested = Signal(str, bool)
+    replaceRequested = Signal(str, str)
+    replaceAllRequested = Signal(str, str)
+    closed = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("inlineFindReplace")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(6)
+
+        self.find_input = QLineEdit(self)
+        self.find_input.setPlaceholderText("Find")
+        self.find_input.returnPressed.connect(lambda: self.findRequested.emit(self.find_input.text(), True))
+        layout.addWidget(self.find_input, 1)
+
+        self.case_checkbox = QCheckBox("Aa", self)
+        self.case_checkbox.setToolTip("Match case")
+        layout.addWidget(self.case_checkbox)
+
+        self.prev_button = QPushButton("Prev", self)
+        self.prev_button.clicked.connect(lambda: self.findRequested.emit(self.find_input.text(), False))
+        layout.addWidget(self.prev_button)
+
+        self.next_button = QPushButton("Next", self)
+        self.next_button.clicked.connect(lambda: self.findRequested.emit(self.find_input.text(), True))
+        layout.addWidget(self.next_button)
+
+        self.replace_input = QLineEdit(self)
+        self.replace_input.setPlaceholderText("Replace")
+        layout.addWidget(self.replace_input, 1)
+
+        self.replace_button = QPushButton("Replace", self)
+        self.replace_button.clicked.connect(self._emit_replace)
+        layout.addWidget(self.replace_button)
+
+        self.replace_all_button = QPushButton("Replace All", self)
+        self.replace_all_button.clicked.connect(self._emit_replace_all)
+        layout.addWidget(self.replace_all_button)
+
+        self.close_button = QToolButton(self)
+        self.close_button.setText("✕")
+        self.close_button.clicked.connect(self.hide)
+        self.close_button.clicked.connect(self.closed.emit)
+        layout.addWidget(self.close_button)
+
+    def set_query(self, text: str) -> None:
+        self.find_input.setText(text)
+        self.find_input.selectAll()
+        self.find_input.setFocus()
+
+    def set_replace_visible(self, visible: bool) -> None:
+        for widget in (self.replace_input, self.replace_button, self.replace_all_button):
+            widget.setVisible(visible)
+
+    def current_query(self) -> str:
+        return self.find_input.text()
+
+    def current_replacement(self) -> str:
+        return self.replace_input.text()
+
+    def case_sensitive(self) -> bool:
+        return self.case_checkbox.isChecked()
+
+    def focus_find(self) -> None:
+        self.find_input.setFocus()
+
+    def _emit_replace(self) -> None:
+        self.replaceRequested.emit(self.find_input.text(), self.replace_input.text())
+
+    def _emit_replace_all(self) -> None:
+        self.replaceAllRequested.emit(self.find_input.text(), self.replace_input.text())
+
     def _insert_completion(self, item: QListWidgetItem) -> None:
         """Insert the selected completion item."""
         completion_data = item.data(Qt.ItemDataRole.UserRole)
@@ -635,6 +720,8 @@ class PythonHighlighter(QSyntaxHighlighter):
 
 
 class CodeEditor(QPlainTextEdit):
+    navigationStateChanged = Signal(bool, bool)
+    editNavigationChanged = Signal(bool, bool)
     def __init__(
         self,
         path: Path | None = None,
@@ -655,6 +742,14 @@ class CodeEditor(QPlainTextEdit):
         self._lsp_document_opened = False
         self._diagnostics: list[Diagnostic] = []
         self._extra_cursors: list[QTextCursor] = []
+        self._selection_stack: list[list[tuple[int, int]]] = []
+        self._suppress_stack_reset = False
+        self._column_selection_enabled = bool(
+            (config or {}).get("editor", {}).get("column_selection_mode", False)
+        )
+        self._column_anchor: tuple[int, int] | None = None
+        editor_config = self.config.get("editor", {}) if self.config else {}
+        self._multi_cursor_modifier = editor_config.get("multi_cursor_modifier", "alt").lower()
         self._bracket_selection: list[QTextEdit.ExtraSelection] = []
         self._bracket_scope: tuple[int, int, int] | None = None
         self.breakpoints = BreakpointStore.instance()
@@ -695,7 +790,6 @@ class CodeEditor(QPlainTextEdit):
         self._min_chars_for_completion = intellisense_config.get("min_chars", 1)
 
         # Auto-closing brackets configuration
-        editor_config = self.config.get("editor", {}) if self.config else {}
         self._auto_close_brackets = editor_config.get("auto_close_brackets", True)
         self._bracket_pairs = {
             '(': ')',
@@ -705,6 +799,13 @@ class CodeEditor(QPlainTextEdit):
             "'": "'",
         }
         self._word_wrap_enabled = bool(editor_config.get("word_wrap", False))
+
+        self._nav_back_stack: list[tuple[int, int]] = []
+        self._nav_forward_stack: list[tuple[int, int]] = []
+        self._navigating = False
+        self._edit_locations: list[tuple[int, int]] = []
+        self._edit_index: int | None = None
+        self._last_edit_location: tuple[int, int] | None = None
 
         wrap_mode = QPlainTextEdit.WidgetWidth if self._word_wrap_enabled else QPlainTextEdit.NoWrap
         self.setLineWrapMode(wrap_mode)
@@ -719,17 +820,28 @@ class CodeEditor(QPlainTextEdit):
 
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_bracket_match)
+        self.cursorPositionChanged.connect(self._record_cursor_history)
+        self.selectionChanged.connect(self._reset_selection_stack)
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.textChanged.connect(self._notify_lsp_change)
         self.textChanged.connect(self._refresh_semantic_tokens)
+        self.textChanged.connect(self._record_edit_location)
 
         self._update_language_for_context()
         self.folding = FoldingManager(self)
         self.minimap = MiniMap(self)
         self.completion_widget = CompletionWidget(self)
         self.snippet_manager = SnippetManager(self)
+        self.find_bar = InlineFindReplaceBar(self)
+        self.find_bar.hide()
+        self.find_bar.findRequested.connect(self._run_inline_search)
+        self.find_bar.replaceRequested.connect(self._replace_current)
+        self.find_bar.replaceAllRequested.connect(self._replace_all)
+        self.find_bar.closed.connect(self.setFocus)
         self.setMouseTracking(True)  # Enable mouse tracking for hover
+
+        self._install_shortcuts()
 
         self._update_line_number_area_width(self.blockCount())
         if path and path.exists():
@@ -741,6 +853,245 @@ class CodeEditor(QPlainTextEdit):
         else:
             # For new/empty files, use the delayed request
             self._refresh_semantic_tokens()
+
+        self._record_position_for_history(initial=True)
+    # Editing utilities
+    def _install_shortcuts(self) -> None:
+        """Ensure core edit commands work even with custom key handling."""
+
+        bindings = [
+            (QKeySequence.Undo, self.undo),
+            (QKeySequence.Redo, self.redo),
+            (QKeySequence.Cut, self.cut),
+            (QKeySequence.Copy, self.copy),
+            (QKeySequence.Paste, self.paste),
+            (QKeySequence.SelectAll, self.selectAll),
+            (QKeySequence.Find, lambda: self.show_find_bar()),
+            (QKeySequence.Replace, lambda: self.show_find_bar(replace=True)),
+            (QKeySequence.FindNext, self.find_next),
+            (QKeySequence.FindPrevious, self.find_previous),
+        ]
+
+        for sequence, handler in bindings:
+            shortcut = QShortcut(sequence, self)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(handler)
+
+    def _selected_text_or_word(self) -> str:
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return cursor.selectedText()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        return cursor.selectedText()
+
+    def show_find_bar(self, *, replace: bool = False, preset: str | None = None) -> None:
+        if preset is None:
+            preset = self._selected_text_or_word()
+        if preset:
+            self.find_bar.set_query(preset)
+        self.find_bar.set_replace_visible(replace)
+        self.find_bar.show()
+        self._layout_find_bar()
+        self.find_bar.focus_find()
+
+    def hide_find_bar(self) -> None:
+        self.find_bar.hide()
+
+    def find_next(self) -> None:
+        query = self.find_bar.current_query() or self._selected_text_or_word()
+        self.show_find_bar(preset=query)
+        self._run_inline_search(query, True)
+
+    def find_previous(self) -> None:
+        query = self.find_bar.current_query() or self._selected_text_or_word()
+        self.show_find_bar(preset=query)
+        self._run_inline_search(query, False)
+
+    def _find_flags(self, forward: bool) -> QTextDocument.FindFlags:
+        flags = QTextDocument.FindFlag(0)
+        if not forward:
+            flags |= QTextDocument.FindBackward
+        if self.find_bar.case_sensitive():
+            flags |= QTextDocument.FindCaseSensitively
+        return flags
+
+    def _run_inline_search(self, text: str, forward: bool = True) -> None:
+        if not text:
+            return
+
+        flags = self._find_flags(forward)
+        cursor = self.textCursor()
+        match = self.document().find(text, cursor, flags)
+        if match.isNull():
+            anchor = QTextCursor(self.document())
+            if not forward:
+                anchor.movePosition(QTextCursor.MoveOperation.End)
+            match = self.document().find(text, anchor, flags)
+
+        if not match.isNull():
+            self.setTextCursor(match)
+
+    def _replace_current(self, find_text: str, replace_text: str) -> None:
+        if not find_text:
+            return
+        cursor = self.textCursor()
+        if cursor.hasSelection() and cursor.selectedText() == find_text:
+            cursor.insertText(replace_text)
+            self.setTextCursor(cursor)
+        self._run_inline_search(find_text, True)
+
+    def _replace_all(self, find_text: str, replace_text: str) -> None:
+        if not find_text:
+            return
+        cursor = QTextCursor(self.document())
+        flags = self._find_flags(True)
+        replacements = []
+        while True:
+            match = self.document().find(find_text, cursor, flags)
+            if match.isNull():
+                break
+            replacements.append(match)
+            cursor = match
+
+        # Apply in reverse to keep offsets stable
+        for match in reversed(replacements):
+            match.insertText(replace_text)
+
+    def toggle_line_comment(self) -> None:
+        line_token, _, _ = self._comment_tokens()
+        if not line_token:
+            # Fallback to block style if no line comment exists
+            self.toggle_block_comment()
+            return
+
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        cursor.beginEditBlock()
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
+        while cursor.position() <= end:
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfLine, QTextCursor.MoveMode.KeepAnchor)
+            text = cursor.selectedText()
+            stripped = text.lstrip()
+            indent = text[: len(text) - len(stripped)]
+            if stripped.startswith(line_token):
+                new_text = indent + stripped[len(line_token) :].lstrip()
+            else:
+                new_text = indent + f"{line_token} {stripped}" if stripped else indent + line_token
+            cursor.insertText(new_text)
+            end += len(new_text) - len(text)
+            if not cursor.movePosition(QTextCursor.MoveOperation.Down):
+                break
+        cursor.endEditBlock()
+
+    def toggle_block_comment(self) -> None:
+        _, block_start, block_end = self._comment_tokens()
+        if not (block_start and block_end):
+            return
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        text = cursor.selectedText()
+        if text.startswith(block_start) and text.endswith(block_end):
+            inner = text[len(block_start) : -len(block_end)]
+            cursor.insertText(inner)
+        else:
+            cursor.insertText(f"{block_start}{text}{block_end}")
+
+    def _comment_tokens(self) -> tuple[str, str, str]:
+        language = (self._language or "").lower()
+        line_token = "#"
+        block_start = "/*"
+        block_end = "*/"
+
+        if language in {"python", "shell", "bash"}:
+            block_start = block_end = "\"\"\""
+        elif language in {"c", "cpp", "javascript", "typescript", "java", "go", "rust", "css"}:
+            line_token = "//"
+        elif language in {"html", "xml"}:
+            line_token = ""
+            block_start, block_end = "<!--", "-->"
+
+        return line_token, block_start, block_end
+
+    def expand_emmet_selection(self) -> None:
+        abbreviation = self._selected_text_or_word()
+        if not abbreviation:
+            return
+
+        expansion = self._expand_emmet(abbreviation)
+        if not expansion:
+            return
+
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        indent = self._current_line_indent()
+        indented = "\n".join(indent + line if line.strip() else line for line in expansion.split("\n"))
+        cursor.insertText(indented)
+        self.setTextCursor(cursor)
+
+    def _current_line_indent(self) -> str:
+        cursor = self.textCursor()
+        cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        line = cursor.selectedText()
+        return line[: len(line) - len(line.lstrip())]
+
+    def _expand_emmet(self, abbreviation: str) -> str:
+        def parse_node(segment: str) -> tuple[str, list[str], str | None, int]:
+            body, multiplier = segment, 1
+            if "*" in segment:
+                base, mult = segment.rsplit("*", 1)
+                if mult.isdigit():
+                    body, multiplier = base, int(mult)
+            tag = re.match(r"[a-zA-Z0-9]+", body)
+            name = tag.group(0) if tag else "div"
+            remainder = body[len(name) :]
+            classes = [part[1:] for part in remainder.split(".") if part.startswith(".")]
+            element_id = None
+            for part in remainder.split("."):
+                if part.startswith("#"):
+                    element_id = part[1:]
+            return name, classes, element_id, multiplier
+
+        def build_tree(expr: str) -> list[dict]:
+            nodes: list[dict] = []
+            for sibling in expr.split("+"):
+                parts = sibling.split(">", 1)
+                head = parts[0]
+                children_expr = parts[1] if len(parts) > 1 else None
+                name, classes, element_id, multiplier = parse_node(head)
+                children = build_tree(children_expr) if children_expr else []
+                for _ in range(multiplier):
+                    nodes.append({"name": name, "classes": classes, "id": element_id, "children": children})
+            return nodes
+
+        def render(nodes: list[dict], depth: int = 0) -> str:
+            lines: list[str] = []
+            indent = "    " * depth
+            for node in nodes:
+                attrs = []
+                if node["id"]:
+                    attrs.append(f'id="{node["id"]}"')
+                if node["classes"]:
+                    class_attr = " ".join(node["classes"])
+                    attrs.append(f'class="{class_attr}"')
+                attr_text = f" {' '.join(attrs)}" if attrs else ""
+                if node["children"]:
+                    lines.append(f"{indent}<{node['name']}{attr_text}>")
+                    lines.append(render(node["children"], depth + 1))
+                    lines.append(f"{indent}</{node['name']}>")
+                else:
+                    lines.append(f"{indent}<{node['name']}{attr_text}></{node['name']}>")
+            return "\n".join(lines).rstrip("\n")
+
+        try:
+            tree = build_tree(abbreviation)
+            return render(tree)
+        except Exception:
+            return ""
 
     # Highlighting helpers
     def set_language(self, language: str | None) -> None:
@@ -825,6 +1176,7 @@ class CodeEditor(QPlainTextEdit):
             QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
         )
         self._position_minimap(cr)
+        self._layout_find_bar()
 
     def _update_line_number_area_width(self, _=None) -> None:
         # Left margin for gutter, small top margin so code does not stick
@@ -846,6 +1198,16 @@ class CodeEditor(QPlainTextEdit):
         self.minimap.setGeometry(
             QRect(cr.right() - minimap_width + 1, cr.top(), minimap_width, cr.height())
         )
+
+    def _layout_find_bar(self) -> None:
+        if not self.find_bar.isVisible():
+            return
+        bar_height = self.find_bar.sizeHint().height()
+        bar_width = min(self.width() - 20, 640)
+        rect = self.contentsRect()
+        x_pos = rect.right() - bar_width - 8
+        y_pos = rect.bottom() - bar_height - 8
+        self.find_bar.setGeometry(x_pos, y_pos, bar_width, bar_height)
 
     def _update_line_number_area(self, rect, dy) -> None:
         """Update the visible area of the line number gutter.
@@ -940,23 +1302,41 @@ class CodeEditor(QPlainTextEdit):
         self._paint_indent_guides()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
-        if event.modifiers() & Qt.AltModifier:
+        multi_modifier = Qt.AltModifier if self._multi_cursor_modifier == "alt" else Qt.ControlModifier
+        if self._column_selection_enabled and event.button() == Qt.MouseButton.LeftButton:
+            cursor = self.cursorForPosition(event.position().toPoint())
+            self._column_anchor = (cursor.blockNumber(), cursor.positionInBlock())
+            self.setTextCursor(cursor)
+            self._extra_cursors.clear()
+            self._highlight_current_line()
+            return
+        if event.modifiers() & multi_modifier:
             cursor = self.cursorForPosition(event.position().toPoint())
             self._extra_cursors.append(cursor)
             self._highlight_current_line()
             return
         super().mousePressEvent(event)
+        self._column_anchor = None
         self._extra_cursors.clear()
         self._highlight_current_line()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
         """Track mouse position and trigger hover after 300ms delay."""
+        if self._column_selection_enabled and self._column_anchor:
+            cursor = self.cursorForPosition(event.position().toPoint())
+            self._update_column_selection(cursor)
+            return
         super().mouseMoveEvent(event)
         self._hover_position = event.position().toPoint()
         # Restart timer on every mouse movement
         if self._hover_timer.isActive():
             self._hover_timer.stop()
         self._hover_timer.start()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        super().mouseReleaseEvent(event)
+        if self._column_selection_enabled and event.button() == Qt.MouseButton.LeftButton:
+            self._column_anchor = None
 
     # File operations
     def _load_file(self, path: Path) -> None:
@@ -967,6 +1347,10 @@ class CodeEditor(QPlainTextEdit):
                 self.setPlainText(handle.read())
         finally:
             self._loading_document = False
+
+        # Reset modified flag after loading so autosave prompts only reflect
+        # changes made after the document is opened.
+        self.document().setModified(False)
 
         # Explicitly rebuild token cache to ensure syntax highlighting is applied immediately
         # after loading. This is necessary because the highlighter is created before the file
@@ -981,9 +1365,38 @@ class CodeEditor(QPlainTextEdit):
             return
         with self.path.open("w", encoding="utf-8") as handle:
             handle.write(self.toPlainText())
+        # Saving the document should clear the dirty flag
+        self.document().setModified(False)
+
+    def is_dirty(self) -> bool:
+        """Return True if the editor has unsaved changes."""
+
+        return bool(self.document().isModified())
 
     # Indentation helpers
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        if event.matches(QKeySequence.Find):
+            self.show_find_bar()
+            return
+        if event.matches(QKeySequence.Replace):
+            self.show_find_bar(replace=True)
+            return
+        if event.matches(QKeySequence.FindNext):
+            self.find_next()
+            return
+        if event.matches(QKeySequence.FindPrevious):
+            self.find_previous()
+            return
+        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_Slash:
+            self.toggle_line_comment()
+            return
+        if event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier) and event.key() == Qt.Key_A:
+            self.toggle_block_comment()
+            return
+        if event.modifiers() == (Qt.ControlModifier | Qt.AltModifier) and event.key() == Qt.Key_E:
+            self.expand_emmet_selection()
+            return
+
         # Handle completion widget navigation
         if self.completion_widget.isVisible():
             if event.key() == Qt.Key_Down:
@@ -1296,10 +1709,417 @@ class CodeEditor(QPlainTextEdit):
         synced: list[QTextCursor] = []
         for cursor in self._extra_cursors:
             clone = QTextCursor(self.document())
-            clone.setPosition(cursor.position())
+            clone.setPosition(cursor.anchor())
+            clone.setPosition(cursor.position(), QTextCursor.MoveMode.KeepAnchor)
             synced.append(clone)
         self._extra_cursors = synced
         self._highlight_current_line()
+
+    def _reset_selection_stack(self) -> None:
+        if not self._suppress_stack_reset:
+            self._selection_stack.clear()
+
+    def _all_cursors(self) -> list[QTextCursor]:
+        return [self.textCursor(), *self._extra_cursors]
+
+    def _capture_selection_state(self) -> list[tuple[int, int]]:
+        return [
+            (cur.selectionStart(), cur.selectionEnd())
+            if cur.hasSelection()
+            else (cur.position(), cur.position())
+            for cur in self._all_cursors()
+        ]
+
+    def _apply_selection_state(self, ranges: list[tuple[int, int]]) -> None:
+        self._suppress_stack_reset = True
+        try:
+            self._extra_cursors = []
+            for index, (start, end) in enumerate(ranges):
+                doc_length = len(self.toPlainText())
+                start = max(0, min(start, doc_length))
+                end = max(0, min(end, doc_length))
+                cursor = QTextCursor(self.document())
+                cursor.setPosition(start)
+                if end != start:
+                    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                if index == 0:
+                    self.setTextCursor(cursor)
+                else:
+                    self._extra_cursors.append(cursor)
+            self._highlight_current_line()
+        finally:
+            self._suppress_stack_reset = False
+
+    def _range_for_cursor(self, cursor: QTextCursor, *, line_fallback: bool = True) -> tuple[int, int]:
+        if cursor.hasSelection():
+            return (min(cursor.selectionStart(), cursor.selectionEnd()), max(cursor.selectionStart(), cursor.selectionEnd()))
+        if line_fallback:
+            block = cursor.block()
+            return block.position(), block.position() + block.length()
+        pos = cursor.position()
+        return pos, pos
+
+    def _string_range_for_cursor(self, cursor: QTextCursor) -> tuple[int, int] | None:
+        block = cursor.block()
+        text = block.text()
+        col = cursor.positionInBlock()
+        left_candidates = [(text.rfind("\"", 0, col), "\""), (text.rfind("'", 0, col), "'")]
+        left_candidates = [(idx, ch) for idx, ch in left_candidates if idx != -1]
+        if not left_candidates:
+            return None
+        left_idx, quote_char = max(left_candidates, key=lambda item: item[0])
+        right_idx = text.find(quote_char, max(col, left_idx + 1))
+        if right_idx == -1:
+            return None
+        start = block.position() + left_idx
+        end = block.position() + right_idx + 1
+        if not (start <= cursor.position() <= end):
+            return None
+        return start, end
+
+    def _block_range_for_cursor(self, cursor: QTextCursor) -> tuple[int, int]:
+        block = cursor.block()
+        start_block = block
+        while start_block.previous().isValid() and start_block.previous().text().strip():
+            start_block = start_block.previous()
+        end_block = block
+        while end_block.next().isValid() and end_block.next().text().strip():
+            end_block = end_block.next()
+        return start_block.position(), end_block.position() + end_block.length()
+
+    def _selection_levels_for_cursor(self, cursor: QTextCursor) -> list[tuple[int, int]]:
+        levels: list[tuple[int, int]] = []
+
+        word_cursor = QTextCursor(cursor)
+        word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        if word_cursor.selectedText():
+            levels.append((word_cursor.selectionStart(), word_cursor.selectionEnd()))
+
+        string_range = self._string_range_for_cursor(cursor)
+        if string_range:
+            levels.append(string_range)
+
+        line_cursor = QTextCursor(cursor)
+        line_cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        levels.append((line_cursor.selectionStart(), line_cursor.selectionEnd()))
+
+        levels.append(self._block_range_for_cursor(cursor))
+
+        doc_cursor = QTextCursor(cursor)
+        doc_cursor.select(QTextCursor.SelectionType.Document)
+        levels.append((doc_cursor.selectionStart(), doc_cursor.selectionEnd()))
+        return levels
+
+    def _expand_range(self, cursor: QTextCursor) -> tuple[int, int]:
+        levels = self._selection_levels_for_cursor(cursor)
+        current = self._range_for_cursor(cursor, line_fallback=False)
+        for idx, level in enumerate(levels):
+            if level == current:
+                return levels[min(idx + 1, len(levels) - 1)]
+        return levels[0]
+
+    def expand_selection(self) -> None:
+        self._selection_stack.append(self._capture_selection_state())
+        expanded = [self._expand_range(cur) for cur in self._all_cursors()]
+        self._apply_selection_state(expanded)
+
+    def shrink_selection(self) -> None:
+        if not self._selection_stack:
+            return
+        previous = self._selection_stack.pop()
+        self._apply_selection_state(previous)
+
+    def _cursor_for_block_column(self, block_index: int, column: int) -> QTextCursor:
+        block = self.document().findBlockByNumber(block_index)
+        column = max(0, min(column, len(block.text())))
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(block.position() + column)
+        return cursor
+
+    def _update_column_selection(self, target_cursor: QTextCursor) -> None:
+        if not self._column_anchor:
+            return
+        anchor_line, anchor_col = self._column_anchor
+        current_line = target_cursor.blockNumber()
+        current_col = target_cursor.positionInBlock()
+        line_start, line_end = sorted((anchor_line, current_line))
+        col_start, col_end = sorted((anchor_col, current_col))
+        ranges: list[tuple[int, int]] = []
+        for line in range(line_start, line_end + 1):
+            start_cursor = self._cursor_for_block_column(line, col_start)
+            end_cursor = self._cursor_for_block_column(line, col_end)
+            start_pos = start_cursor.position()
+            end_pos = end_cursor.position()
+            if end_pos == start_pos and col_end != col_start:
+                end_cursor.movePosition(
+                    QTextCursor.MoveOperation.Right,
+                    QTextCursor.MoveMode.KeepAnchor,
+                    col_end - col_start,
+                )
+                end_pos = end_cursor.position()
+            ranges.append((min(start_pos, end_pos), max(start_pos, end_pos)))
+        self._apply_selection_state(ranges)
+
+    def toggle_column_selection(self, enabled: bool | None = None) -> None:
+        self._column_selection_enabled = (not self._column_selection_enabled) if enabled is None else bool(enabled)
+        if not self._column_selection_enabled:
+            self._column_anchor = None
+            self._extra_cursors.clear()
+            self._highlight_current_line()
+
+    def _merge_ranges(self, ranges: list[tuple[int, int]]) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+        if not ranges:
+            return [], []
+        sorted_ranges = sorted(ranges, key=lambda pair: pair[0])
+        merged: list[list[int]] = [[sorted_ranges[0][0], sorted_ranges[0][1]]]
+        for start, end in sorted_ranges[1:]:
+            last_start, last_end = merged[-1]
+            if start <= last_end:
+                merged[-1][1] = max(last_end, end)
+            else:
+                merged.append([start, end])
+        merged_tuples = [(start, end) for start, end in merged]
+        mapping: list[tuple[int, int]] = []
+        for start, end in ranges:
+            for merged_start, merged_end in merged_tuples:
+                if merged_start <= start and end <= merged_end:
+                    mapping.append((merged_start, merged_end))
+                    break
+            else:
+                mapping.append((start, end))
+        return merged_tuples, mapping
+
+    def _selection_or_line_ranges(self) -> list[tuple[int, int]]:
+        return [self._range_for_cursor(cur) for cur in self._all_cursors()]
+
+    def _position_for_line(self, lines: list[str], line_index: int) -> int:
+        return sum(len(line) for line in lines[:line_index])
+
+    def _positions_for_lines(self, lines: list[str], start_line: int, end_line: int) -> tuple[int, int]:
+        start_pos = self._position_for_line(lines, start_line)
+        end_pos = self._position_for_line(lines, end_line + 1)
+        return start_pos, end_pos
+
+    def _apply_text_and_selections(self, new_text: str, selections: list[tuple[int, int]]) -> None:
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        self.setPlainText(new_text)
+        cursor.endEditBlock()
+        self._apply_selection_state(selections)
+        self._selection_stack.clear()
+
+    def duplicate_selections(self) -> None:
+        ranges = self._selection_or_line_ranges()
+        merged, mapping = self._merge_ranges(ranges)
+        if not merged:
+            return
+        text = self.toPlainText()
+        new_text = text
+        insertion_map: dict[tuple[int, int], tuple[int, int]] = {}
+        for start, end in sorted(merged, reverse=True):
+            segment = text[start:end]
+            new_text = new_text[:end] + segment + new_text[end:]
+            insertion_map[(start, end)] = (end, end + len(segment))
+        selections = [insertion_map[m] for m in mapping]
+        self._apply_text_and_selections(new_text, selections)
+
+    def copy_lines_up(self) -> None:
+        ranges = self._selection_or_line_ranges()
+        merged, mapping = self._merge_ranges(ranges)
+        if not merged:
+            return
+        text = self.toPlainText()
+        new_text = text
+        insertion_map: dict[tuple[int, int], tuple[int, int]] = {}
+        for start, end in sorted(merged, reverse=True):
+            segment = text[start:end]
+            new_text = new_text[:start] + segment + new_text[start:]
+            insertion_map[(start, end)] = (start, start + len(segment))
+        selections = [insertion_map[m] for m in mapping]
+        self._apply_text_and_selections(new_text, selections)
+
+    def copy_lines_down(self) -> None:
+        ranges = self._selection_or_line_ranges()
+        merged, mapping = self._merge_ranges(ranges)
+        if not merged:
+            return
+        text = self.toPlainText()
+        new_text = text
+        insertion_map: dict[tuple[int, int], tuple[int, int]] = {}
+        for start, end in sorted(merged, reverse=True):
+            segment = text[start:end]
+            new_text = new_text[:end] + segment + new_text[end:]
+            insertion_map[(start, end)] = (end, end + len(segment))
+        selections = [insertion_map[m] for m in mapping]
+        self._apply_text_and_selections(new_text, selections)
+
+    def _line_ranges_from_cursors(self) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+        line_ranges: list[tuple[int, int]] = []
+        for start, end in self._selection_or_line_ranges():
+            start_block = self.document().findBlock(start)
+            end_block = self.document().findBlock(max(start, end - 1))
+            line_ranges.append((start_block.blockNumber(), end_block.blockNumber()))
+        return self._merge_ranges(line_ranges)
+
+    def move_lines_up(self) -> None:
+        merged, mapping = self._line_ranges_from_cursors()
+        lines = self.toPlainText().splitlines(keepends=True)
+        if not merged or not lines:
+            return
+        new_lines = list(lines)
+        new_locations: dict[tuple[int, int], tuple[int, int]] = {}
+        for start_line, end_line in merged:
+            if start_line == 0:
+                new_locations[(start_line, end_line)] = (start_line, end_line)
+                continue
+            segment = new_lines[start_line : end_line + 1]
+            del new_lines[start_line : end_line + 1]
+            insert_pos = start_line - 1
+            new_lines[insert_pos:insert_pos] = segment
+            new_locations[(start_line, end_line)] = (insert_pos, insert_pos + len(segment) - 1)
+        new_text = "".join(new_lines)
+        selections = []
+        for original_range in mapping:
+            new_start, new_end = new_locations.get(original_range, original_range)
+            selections.append(self._positions_for_lines(new_lines, new_start, new_end))
+        self._apply_text_and_selections(new_text, selections)
+
+    def move_lines_down(self) -> None:
+        merged, mapping = self._line_ranges_from_cursors()
+        lines = self.toPlainText().splitlines(keepends=True)
+        if not merged or not lines:
+            return
+        new_lines = list(lines)
+        new_locations: dict[tuple[int, int], tuple[int, int]] = {}
+        for start_line, end_line in sorted(merged, reverse=True):
+            if end_line >= len(new_lines) - 1:
+                new_locations[(start_line, end_line)] = (start_line, end_line)
+                continue
+            segment = new_lines[start_line : end_line + 1]
+            del new_lines[start_line : end_line + 1]
+            insert_pos = min(len(new_lines), start_line + 1)
+            new_lines[insert_pos:insert_pos] = segment
+            new_locations[(start_line, end_line)] = (insert_pos, insert_pos + len(segment) - 1)
+        new_text = "".join(new_lines)
+        selections = []
+        for original_range in mapping:
+            new_start, new_end = new_locations.get(original_range, original_range)
+            selections.append(self._positions_for_lines(new_lines, new_start, new_end))
+        self._apply_text_and_selections(new_text, selections)
+
+    def _clone_cursor_to_line(self, cursor: QTextCursor, target_line: int) -> QTextCursor:
+        target_block = self.document().findBlockByNumber(target_line)
+        base_block = cursor.block()
+        column = cursor.positionInBlock()
+        target_column = min(column, len(target_block.text()))
+        new_cursor = QTextCursor(self.document())
+        new_cursor.setPosition(target_block.position() + target_column)
+        if cursor.hasSelection() and base_block.blockNumber() == self.document().findBlock(cursor.selectionEnd()).blockNumber():
+            sel_start_col = cursor.selectionStart() - base_block.position()
+            sel_end_col = cursor.selectionEnd() - base_block.position()
+            start = target_block.position() + min(sel_start_col, len(target_block.text()))
+            end = target_block.position() + min(sel_end_col, len(target_block.text()))
+            new_cursor.setPosition(start)
+            new_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        return new_cursor
+
+    def _add_vertical_cursors(self, offset: int) -> None:
+        new_cursors: list[QTextCursor] = []
+        for cursor in self._all_cursors():
+            target_line = cursor.block().blockNumber() + offset
+            if target_line < 0 or target_line >= self.document().blockCount():
+                continue
+            new_cursors.append(self._clone_cursor_to_line(cursor, target_line))
+        if not new_cursors:
+            return
+        self._extra_cursors.extend(new_cursors)
+        self._highlight_current_line()
+
+    def add_cursor_above(self) -> None:
+        self._add_vertical_cursors(-1)
+
+    def add_cursor_below(self) -> None:
+        self._add_vertical_cursors(1)
+
+    def add_cursors_to_line_ends(self) -> None:
+        merged, _ = self._line_ranges_from_cursors()
+        if not merged:
+            return
+        cursors: list[QTextCursor] = []
+        for start_line, end_line in merged:
+            for line in range(start_line, end_line + 1):
+                block = self.document().findBlockByNumber(line)
+                cursor = QTextCursor(self.document())
+                cursor.setPosition(block.position() + len(block.text()))
+                cursors.append(cursor)
+        if not cursors:
+            return
+        self.setTextCursor(cursors[0])
+        self._extra_cursors = cursors[1:]
+        self._highlight_current_line()
+
+    def _occurrence_text(self) -> str:
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return cursor.selectedText()
+        word_cursor = QTextCursor(cursor)
+        word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        return word_cursor.selectedText()
+
+    def _existing_ranges(self) -> set[tuple[int, int]]:
+        ranges: set[tuple[int, int]] = set()
+        for cursor in self._all_cursors():
+            if cursor.hasSelection():
+                ranges.add((min(cursor.selectionStart(), cursor.selectionEnd()), max(cursor.selectionStart(), cursor.selectionEnd())))
+            else:
+                pos = cursor.position()
+                ranges.add((pos, pos))
+        return ranges
+
+    def _add_occurrence_cursor(self, direction: int) -> None:
+        needle = self._occurrence_text()
+        if not needle:
+            return
+        text = self.toPlainText()
+        current_range = self._range_for_cursor(self.textCursor())
+        start_pos = current_range[1] if direction > 0 else max(0, current_range[0] - 1)
+        if direction > 0:
+            index = text.find(needle, start_pos)
+        else:
+            index = text.rfind(needle, 0, start_pos)
+        if index == -1:
+            return
+        new_range = (index, index + len(needle))
+        if new_range in self._existing_ranges():
+            return
+        new_cursor = QTextCursor(self.document())
+        new_cursor.setPosition(new_range[0])
+        new_cursor.setPosition(new_range[1], QTextCursor.MoveMode.KeepAnchor)
+        self._extra_cursors.append(new_cursor)
+        self._highlight_current_line()
+
+    def add_cursor_to_next_occurrence(self) -> None:
+        self._add_occurrence_cursor(1)
+
+    def add_cursor_to_previous_occurrence(self) -> None:
+        self._add_occurrence_cursor(-1)
+
+    def select_all_occurrences(self) -> None:
+        needle = self._occurrence_text()
+        if not needle:
+            return
+        text = self.toPlainText()
+        ranges: list[tuple[int, int]] = []
+        start = 0
+        while True:
+            index = text.find(needle, start)
+            if index == -1:
+                break
+            ranges.append((index, index + len(needle)))
+            start = index + len(needle)
+        if not ranges:
+            return
+        self._apply_selection_state(ranges)
 
     def _indent_columns(self, text: str) -> list[int]:
         tab_size = self.config.get("tabs", {}).get("tab_size", 4) if self.config else 4
@@ -1585,6 +2405,152 @@ class CodeEditor(QPlainTextEdit):
         next_cursor = QTextCursor(cursor)
         next_cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
         return next_cursor.selectedText()
+
+    # Navigation helpers -------------------------------------------------
+    def _record_position_for_history(self, initial: bool = False) -> None:
+        if self._navigating:
+            return
+        cursor = self.textCursor()
+        location = (cursor.blockNumber(), cursor.positionInBlock())
+        if self._nav_back_stack and self._nav_back_stack[-1] == location and not initial:
+            return
+        self._nav_back_stack.append(location)
+        self._nav_back_stack = self._nav_back_stack[-200:]
+        if not initial:
+            self._nav_forward_stack.clear()
+        self.navigationStateChanged.emit(self.can_go_back(), self.can_go_forward())
+
+    def _record_cursor_history(self) -> None:
+        self._record_position_for_history(initial=False)
+
+    def _record_edit_location(self) -> None:
+        cursor = self.textCursor()
+        location = (cursor.blockNumber(), cursor.positionInBlock())
+        if self._edit_locations and self._edit_locations[-1] == location:
+            return
+        self._edit_locations.append(location)
+        self._edit_locations = self._edit_locations[-200:]
+        self._edit_index = len(self._edit_locations) - 1
+        self._last_edit_location = location
+        self.editNavigationChanged.emit(self.has_previous_change(), self.has_next_change())
+
+    def can_go_back(self) -> bool:
+        return len(self._nav_back_stack) > 1
+
+    def can_go_forward(self) -> bool:
+        return bool(self._nav_forward_stack)
+
+    def go_back(self) -> None:
+        if not self.can_go_back():
+            return
+        current = self._nav_back_stack.pop()
+        target = self._nav_back_stack[-1]
+        self._nav_forward_stack.append(current)
+        self._move_to_location(target)
+        self.navigationStateChanged.emit(self.can_go_back(), self.can_go_forward())
+
+    def go_forward(self) -> None:
+        if not self.can_go_forward():
+            return
+        target = self._nav_forward_stack.pop()
+        self._nav_back_stack.append(target)
+        self._move_to_location(target)
+        self.navigationStateChanged.emit(self.can_go_back(), self.can_go_forward())
+
+    def go_to_last_edit(self) -> None:
+        if not self._last_edit_location:
+            return
+        self._move_to_location(self._last_edit_location)
+
+    def has_previous_change(self) -> bool:
+        return self._edit_index is not None and self._edit_index > 0
+
+    def has_next_change(self) -> bool:
+        return self._edit_index is not None and self._edit_index < len(self._edit_locations) - 1
+
+    def previous_change(self) -> None:
+        if not self.has_previous_change():
+            return
+        assert self._edit_index is not None
+        self._edit_index -= 1
+        self._move_to_location(self._edit_locations[self._edit_index])
+        self.editNavigationChanged.emit(self.has_previous_change(), self.has_next_change())
+
+    def next_change(self) -> None:
+        if not self.has_next_change():
+            return
+        assert self._edit_index is not None
+        self._edit_index += 1
+        self._move_to_location(self._edit_locations[self._edit_index])
+        self.editNavigationChanged.emit(self.has_previous_change(), self.has_next_change())
+
+    def go_to_line_column(self, line: int, column: int = 0) -> None:
+        line = max(1, line)
+        column = max(0, column)
+        block = self.document().findBlockByNumber(line - 1)
+        if not block.isValid():
+            return
+        position = block.position() + min(column, len(block.text()))
+        self._set_cursor_position(position)
+
+    def jump_to_matching_bracket(self) -> None:
+        match_position = self._find_matching_bracket_position()
+        if match_position is None:
+            return
+        self._set_cursor_position(match_position)
+
+    def _move_to_location(self, location: tuple[int, int]) -> None:
+        block_number, column = location
+        block = self.document().findBlockByNumber(max(block_number, 0))
+        if not block.isValid():
+            return
+        position = block.position() + min(column, len(block.text()))
+        self._set_cursor_position(position)
+
+    def _set_cursor_position(self, position: int) -> None:
+        self._navigating = True
+        cursor = self.textCursor()
+        cursor.setPosition(max(0, min(position, len(self.toPlainText()))))
+        self.setTextCursor(cursor)
+        self.centerCursor()
+        self._navigating = False
+
+    def _find_matching_bracket_position(self) -> int | None:
+        text = self.toPlainText()
+        if not text:
+            return None
+        brackets = {'(': ')', '[': ']', '{': '}', ')': '(', ']': '[', '}': '{'}
+        cursor = self.textCursor()
+        pos = cursor.position()
+        char = text[pos - 1] if pos > 0 and text[pos - 1] in brackets else (text[pos] if pos < len(text) and text[pos] in brackets else "")
+        if not char:
+            return None
+        target = brackets[char]
+        if char in "([{":
+            depth = 1
+            i = pos
+            while i < len(text):
+                c = text[i]
+                if c == char:
+                    depth += 1
+                elif c == target:
+                    depth -= 1
+                    if depth == 0:
+                        return i
+                i += 1
+        else:
+            depth = 1
+            i = pos - 2
+            while i >= 0:
+                c = text[i]
+                if c == char:
+                    depth += 1
+                elif c == target:
+                    depth -= 1
+                    if depth == 0:
+                        return i
+                i -= 1
+        return None
 
     def apply_unified_patch(self, patch: str) -> None:
         """Apply a unified diff to the current buffer as a single undo step."""
