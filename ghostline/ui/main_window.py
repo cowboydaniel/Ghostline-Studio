@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex, QSize
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeyEvent
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QLineEdit,
     QMessageBox,
+    QMenu,
     QStyle,
 )
 
@@ -233,7 +234,7 @@ class GhostlineTitleBar(QWidget):
         self.settings_button.setIcon(load_icon("configure.svg"))
         self.settings_button.setIconSize(self.ICON_SIZE)
         self.settings_button.setAutoRaise(True)
-        self.settings_button.clicked.connect(self.window._open_settings)
+        self.settings_button.clicked.connect(self._show_settings_menu)
         right_layout.addWidget(self.settings_button)
 
         self.profile_button = QToolButton(right_container)
@@ -275,6 +276,45 @@ class GhostlineTitleBar(QWidget):
 
         self._apply_styles()
         self.update_maximize_icon()
+
+    def _show_settings_menu(self) -> None:
+        menu = QMenu(self)
+        menu.setObjectName("TitleSettingsMenu")
+        menu.setStyleSheet(
+            """
+            QMenu#TitleSettingsMenu {
+                background: palette(window);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QMenu#TitleSettingsMenu::item {
+                padding: 6px 14px;
+                border-radius: 6px;
+                color: palette(text);
+            }
+            QMenu#TitleSettingsMenu::item:selected {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QMenu#TitleSettingsMenu::separator {
+                height: 1px;
+                margin: 6px 4px;
+                background: rgba(255, 255, 255, 0.08);
+            }
+            """
+        )
+
+        menu.addAction(self.window.action_editor_settings)
+        menu.addAction(self.window.action_ghostline_settings)
+        menu.addSeparator()
+        menu.addAction(self.window.action_extensions)
+        menu.addAction(self.window.action_keyboard_shortcuts)
+        menu.addAction(self.window.action_configure_snippets)
+        menu.addSeparator()
+        menu.addAction(self.window.action_tasks_view)
+
+        pos = self.settings_button.mapToGlobal(QPoint(0, self.settings_button.height()))
+        menu.exec(pos)
 
     def _emit_command_search(self) -> None:
         query = self.command_input.text().strip()
@@ -1217,8 +1257,26 @@ class MainWindow(QMainWindow):
         self.action_toggle_ai_dock.setChecked(True)  # AI dock is visible by default
         self.action_toggle_ai_dock.triggered.connect(self._toggle_ai_dock)
 
-        self.action_settings = QAction("Settings", self)
-        self.action_settings.triggered.connect(self._open_settings)
+        self.action_editor_settings = QAction("Editor Settings", self)
+        self.action_editor_settings.triggered.connect(self._open_settings)
+
+        self.action_ghostline_settings = QAction("Ghostline Settings", self)
+        self.action_ghostline_settings.setShortcut(QKeySequence("Ctrl+,"))
+        self.action_ghostline_settings.triggered.connect(self._open_settings)
+
+        self.action_extensions = QAction("Extensions", self)
+        self.action_extensions.setShortcut(QKeySequence("Ctrl+Shift+X"))
+        self.action_extensions.triggered.connect(self._open_extensions)
+
+        self.action_keyboard_shortcuts = QAction("Open Keyboard Shortcuts", self)
+        self.action_keyboard_shortcuts.setShortcut(QKeySequence("Ctrl+K, Ctrl+S"))
+        self.action_keyboard_shortcuts.triggered.connect(self._open_keyboard_shortcuts)
+
+        self.action_configure_snippets = QAction("Configure Snippets", self)
+        self.action_configure_snippets.triggered.connect(self._open_snippets)
+
+        self.action_tasks_view = QAction("Tasks", self)
+        self.action_tasks_view.triggered.connect(self._open_tasks_panel)
 
         self.action_ai_settings = QAction("AI Settings…", self)
         self.action_ai_settings.triggered.connect(self._open_ai_settings)
@@ -1326,6 +1384,14 @@ class MainWindow(QMainWindow):
         self.action_ghost_terminal.setVisible(False)
         self.action_ghost_terminal.triggered.connect(self._open_ghost_terminal)
 
+        self.addActions(
+            [
+                self.action_ghostline_settings,
+                self.action_extensions,
+                self.action_keyboard_shortcuts,
+            ]
+        )
+
     def _create_menus(self) -> None:
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
@@ -1336,7 +1402,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         tools_menu = file_menu.addMenu("Tools")
         tools_menu.addAction(self.action_open_plugins)
-        file_menu.addAction(self.action_settings)
+        file_menu.addAction(self.action_ghostline_settings)
 
         edit_menu = menubar.addMenu("Edit")
         edit_menu.addAction(self.action_undo)
@@ -2225,6 +2291,22 @@ class MainWindow(QMainWindow):
             app = QApplication.instance()
             if app:
                 self.theme.apply(app)
+
+    def _open_extensions(self) -> None:
+        self._open_plugin_manager()
+
+    def _open_keyboard_shortcuts(self) -> None:
+        QMessageBox.information(self, "Keyboard Shortcuts", "Keyboard shortcuts UI not implemented yet")
+
+    def _open_snippets(self) -> None:
+        QMessageBox.information(self, "Snippets", "Snippets UI not implemented yet")
+
+    def _open_tasks_panel(self) -> None:
+        dock = getattr(self, "task_dock", None)
+        if dock:
+            self._show_and_raise_dock(dock, "tasks")
+            return
+        QMessageBox.information(self, "Tasks", "Tasks panel not available")
 
     def _open_ai_settings(self) -> None:
         dialog = AISettingsDialog(self.config, self)
