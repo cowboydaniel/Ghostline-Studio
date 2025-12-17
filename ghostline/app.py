@@ -3,9 +3,31 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import traceback
 from pathlib import Path
+
+
+def _ensure_qt_platform() -> None:
+    """Force a safe Qt platform when no display server is available.
+
+    Running in headless environments (such as CI containers) can cause Qt to
+    segfault while trying to load the default platform plugin. To avoid this
+    we explicitly set ``QT_QPA_PLATFORM`` to ``offscreen`` when no display is
+    detected and the variable is not already configured by the user.
+    """
+
+    if os.environ.get("QT_QPA_PLATFORM"):
+        return
+
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        return
+
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+
+_ensure_qt_platform()
 
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 
@@ -78,7 +100,13 @@ class GhostlineApplication:
         self.dependency_worker = DependencyWorker()
         self.dependency_worker.progress.connect(self._on_dependency_progress)
         self.dependency_worker.finished.connect(self._on_dependency_finished)
+        self.dependency_worker.finished.connect(lambda _success: self._clear_dependency_worker())
         self.dependency_worker.start()
+
+    def _clear_dependency_worker(self) -> None:
+        worker, self.dependency_worker = self.dependency_worker, None
+        if worker:
+            worker.deleteLater()
 
     def _on_dependency_progress(self, message: str) -> None:
         """Handle progress updates from dependency worker."""
@@ -141,9 +169,15 @@ class GhostlineApplication:
         try:
             # Stop dependency worker if still running
             if hasattr(self, 'dependency_worker') and self.dependency_worker:
-                if self.dependency_worker.isRunning():
-                    self.dependency_worker.terminate()
-                    self.dependency_worker.wait(1000)
+                worker = self.dependency_worker
+                if worker.isRunning():
+                    worker.requestInterruption()
+                    worker.quit()
+                    if not worker.wait(2000):
+                        self.logger.warning("Dependency worker did not exit cleanly; terminating")
+                        worker.terminate()
+                        worker.wait(1000)
+                worker.deleteLater()
                 self.dependency_worker = None
 
             # Close main window first to trigger any pending operations
