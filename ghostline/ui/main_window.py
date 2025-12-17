@@ -76,6 +76,7 @@ from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
 from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
 from ghostline.ui.dialogs.ai_settings_dialog import AISettingsDialog
+from ghostline.ui.dialogs.quick_open_dialog import QuickOpenDialog
 from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.commands.registry import CommandActionDefinition, CommandActionRegistry
 from ghostline.ui.activity_bar import ActivityBar
@@ -630,6 +631,7 @@ class MainWindow(QMainWindow):
         self.editor_tabs.countChanged.connect(self._show_welcome_if_empty)
         self.editor_tabs.countChanged.connect(lambda _=None: self._update_title_context())
         self.editor_tabs.currentChanged.connect(lambda _=None: self._update_title_context())
+        self.editor_tabs.currentChanged.connect(lambda _=None: self._bind_navigation_signals())
 
         self.activity_bar = ActivityBar(self)
 
@@ -785,6 +787,10 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_menus()
         self._install_title_bar()
+        self.title_bar.back_button.clicked.connect(self._navigate_back)
+        self.title_bar.forward_button.clicked.connect(self._navigate_forward)
+        self.title_bar.back_button.setToolTip("Back")
+        self.title_bar.forward_button.setToolTip("Forward")
         self._create_terminal_dock()
         self._create_project_dock()
         self._create_ai_dock()
@@ -817,6 +823,7 @@ class MainWindow(QMainWindow):
         self._update_workspace_state()
         self._show_welcome_if_empty()
         self._update_title_context()
+        self._bind_navigation_signals()
 
     def _setup_global_search_toolbar(self) -> None:
         icon_dir = Path(__file__).resolve().parent.parent / "resources" / "icons" / "dock_controls"
@@ -1329,6 +1336,48 @@ class MainWindow(QMainWindow):
 
         self.title_bar.set_context_text(context)
 
+    def _bind_navigation_signals(self) -> None:
+        editor = self.get_current_editor()
+        if getattr(self, "_nav_editor", None) is editor:
+            return
+        previous = getattr(self, "_nav_editor", None)
+        if previous:
+            try:
+                previous.navigationStateChanged.disconnect(self._update_nav_buttons)
+            except Exception:
+                pass
+            try:
+                previous.editNavigationChanged.disconnect(self._update_edit_nav_actions)
+            except Exception:
+                pass
+        self._nav_editor = editor
+        if editor:
+            editor.navigationStateChanged.connect(self._update_nav_buttons)
+            editor.editNavigationChanged.connect(self._update_edit_nav_actions)
+            self._update_nav_buttons(editor.can_go_back(), editor.can_go_forward())
+            self._update_edit_nav_actions(editor.has_previous_change(), editor.has_next_change())
+        else:
+            self._update_nav_buttons(False, False)
+            self._update_edit_nav_actions(False, False)
+
+    def _update_nav_buttons(self, can_back: bool, can_forward: bool) -> None:
+        self.title_bar.back_button.setEnabled(can_back)
+        self.title_bar.forward_button.setEnabled(can_forward)
+        back_action = self.ui_action_registry.action("navigate.back")
+        if back_action:
+            back_action.setEnabled(can_back)
+        forward_action = self.ui_action_registry.action("navigate.forward")
+        if forward_action:
+            forward_action.setEnabled(can_forward)
+
+    def _update_edit_nav_actions(self, has_prev: bool, has_next: bool) -> None:
+        prev_action = self.ui_action_registry.action("navigate.prev_change")
+        next_action = self.ui_action_registry.action("navigate.next_change")
+        if prev_action:
+            prev_action.setEnabled(has_prev)
+        if next_action:
+            next_action.setEnabled(has_next)
+
     def _enforce_left_exclusivity(self, dock: QDockWidget, visible: bool) -> None:
         if not visible or self.dockWidgetArea(dock) != Qt.LeftDockWidgetArea or dock.isFloating():
             return
@@ -1353,14 +1402,82 @@ class MainWindow(QMainWindow):
                 handler=self._trigger_global_search_action,
                 shortcut="Ctrl+Shift+F",
             ),
+            CommandActionDefinition(
+                "navigate.quick_open",
+                "Quick Open",
+                "Navigate",
+                handler=self._open_quick_open,
+                shortcut="Ctrl+P",
+            ),
             CommandActionDefinition("navigate.symbol", "Go to Symbol", "Navigate", handler=self._open_symbol_picker),
             CommandActionDefinition("navigate.file", "Go to File", "Navigate", handler=self._open_file_picker),
+            CommandActionDefinition(
+                "navigate.goto_line",
+                "Go to Line/Column",
+                "Navigate",
+                handler=self._prompt_goto_line,
+                shortcut="Ctrl+G",
+            ),
+            CommandActionDefinition(
+                "navigate.goto_bracket",
+                "Go to Matching Bracket",
+                "Navigate",
+                handler=self._jump_to_matching_bracket,
+                shortcut="Ctrl+Shift+\\",
+            ),
+            CommandActionDefinition(
+                "navigate.back",
+                "Back",
+                "Navigate",
+                handler=self._navigate_back,
+                shortcut="Alt+Left",
+            ),
+            CommandActionDefinition(
+                "navigate.forward",
+                "Forward",
+                "Navigate",
+                handler=self._navigate_forward,
+                shortcut="Alt+Right",
+            ),
+            CommandActionDefinition(
+                "navigate.last_edit",
+                "Go to Last Edit",
+                "Navigate",
+                handler=self._navigate_last_edit,
+                shortcut="Ctrl+Alt+Z",
+            ),
+            CommandActionDefinition(
+                "navigate.next_change",
+                "Next Change",
+                "Navigate",
+                handler=self._navigate_next_change,
+            ),
+            CommandActionDefinition(
+                "navigate.prev_change",
+                "Previous Change",
+                "Navigate",
+                handler=self._navigate_prev_change,
+            ),
+            CommandActionDefinition(
+                "problems.next",
+                "Next Problem",
+                "Navigate",
+                handler=self._jump_next_problem,
+                shortcut="F8",
+            ),
+            CommandActionDefinition(
+                "problems.previous",
+                "Previous Problem",
+                "Navigate",
+                handler=self._jump_previous_problem,
+                shortcut="Shift+F8",
+            ),
             CommandActionDefinition(
                 "palette.command",
                 "Command Palette",
                 "View",
                 handler=self.show_command_palette,
-                shortcut="Ctrl+P",
+                shortcut="Ctrl+Shift+P",
             ),
             CommandActionDefinition(
                 "ai.toggle_autoflow",
@@ -1385,6 +1502,38 @@ class MainWindow(QMainWindow):
                 handler=self._toggle_split_editor,
                 checkable=True,
                 checked=self.editor_tabs.split_active(),
+            ),
+            CommandActionDefinition(
+                "view.next_editor",
+                "Next Editor Tab",
+                "View",
+                handler=self._focus_next_editor,
+                shortcut="Ctrl+PageDown",
+            ),
+            CommandActionDefinition(
+                "view.prev_editor",
+                "Previous Editor Tab",
+                "View",
+                handler=self._focus_previous_editor,
+                shortcut="Ctrl+PageUp",
+            ),
+            CommandActionDefinition(
+                "view.focus_primary_group",
+                "Focus Primary Group",
+                "View",
+                handler=lambda: self._focus_editor_group("primary"),
+            ),
+            CommandActionDefinition(
+                "view.focus_secondary_group",
+                "Focus Secondary Group",
+                "View",
+                handler=lambda: self._focus_editor_group("secondary"),
+            ),
+            CommandActionDefinition(
+                "view.move_to_other_group",
+                "Move Editor To Other Group",
+                "View",
+                handler=self._move_editor_to_other_group,
             ),
             CommandActionDefinition(
                 "view.toggle_terminal",
@@ -1643,12 +1792,27 @@ class MainWindow(QMainWindow):
         self.action_open_folder = actions["file.open_folder"]
         self.action_close_folder = actions["file.close_folder"]
         self.action_global_search = actions["search.global"]
+        self.action_quick_open = actions["navigate.quick_open"]
         self.action_goto_symbol = actions["navigate.symbol"]
         self.action_goto_file = actions["navigate.file"]
+        self.action_goto_line = actions["navigate.goto_line"]
+        self.action_goto_bracket = actions["navigate.goto_bracket"]
+        self.action_back = actions["navigate.back"]
+        self.action_forward = actions["navigate.forward"]
+        self.action_last_edit = actions["navigate.last_edit"]
+        self.action_next_change = actions["navigate.next_change"]
+        self.action_prev_change = actions["navigate.prev_change"]
+        self.action_next_problem = actions["problems.next"]
+        self.action_prev_problem = actions["problems.previous"]
         self.action_command_palette = actions["palette.command"]
         self.action_toggle_autoflow = actions["ai.toggle_autoflow"]
         self.action_toggle_project = actions["view.toggle_project"]
         self.action_toggle_split_editor = actions["view.toggle_split"]
+        self.action_next_editor = actions["view.next_editor"]
+        self.action_prev_editor = actions["view.prev_editor"]
+        self.action_focus_primary_group = actions["view.focus_primary_group"]
+        self.action_focus_secondary_group = actions["view.focus_secondary_group"]
+        self.action_move_to_other_group = actions["view.move_to_other_group"]
         self.action_toggle_terminal = actions["view.toggle_terminal"]
         self.action_toggle_architecture_map = actions["view.toggle_architecture"]
         self.action_toggle_ai_dock = actions["view.toggle_ai_dock"]
@@ -1739,6 +1903,13 @@ class MainWindow(QMainWindow):
         self.view_menu.addAction(self.action_command_palette)
         self.view_menu.addAction(self.action_toggle_project)
         self.view_menu.addAction(self.action_toggle_split_editor)
+        switch_menu = self.view_menu.addMenu("Switch Editor/Group")
+        switch_menu.addAction(self.action_next_editor)
+        switch_menu.addAction(self.action_prev_editor)
+        switch_menu.addSeparator()
+        switch_menu.addAction(self.action_focus_primary_group)
+        switch_menu.addAction(self.action_focus_secondary_group)
+        switch_menu.addAction(self.action_move_to_other_group)
         self.view_menu.addAction(self.action_toggle_terminal)
         self.view_menu.addAction(self.action_toggle_architecture_map)
         self.view_menu.addAction(self.action_toggle_ai_dock)
@@ -1758,8 +1929,20 @@ class MainWindow(QMainWindow):
         ai_menu.addAction(self.action_setup_wizard)
 
         go_menu = menubar.addMenu("Go")
+        go_menu.addAction(self.action_quick_open)
         go_menu.addAction(self.action_goto_file)
         go_menu.addAction(self.action_goto_symbol)
+        go_menu.addAction(self.action_goto_line)
+        go_menu.addAction(self.action_goto_bracket)
+        go_menu.addSeparator()
+        go_menu.addAction(self.action_back)
+        go_menu.addAction(self.action_forward)
+        go_menu.addAction(self.action_last_edit)
+        go_menu.addAction(self.action_prev_change)
+        go_menu.addAction(self.action_next_change)
+        go_menu.addSeparator()
+        go_menu.addAction(self.action_next_problem)
+        go_menu.addAction(self.action_prev_problem)
         go_menu.addAction(self.action_global_search)
 
         run_menu = menubar.addMenu("Run")
@@ -2912,6 +3095,112 @@ class MainWindow(QMainWindow):
                 self.open_file(str(file))
                 return
         self.status.show_message("No matching file found")
+
+    def _open_quick_open(self) -> None:
+        workspace = self.workspace_manager.current_workspace
+        if not workspace:
+            self.status.show_message("Open a workspace to use Quick Open")
+            return
+        files: list[Path] = []
+        for recent in self.workspace_manager.get_recent_files(workspace):
+            path = Path(recent)
+            if path.exists():
+                files.append(path)
+        for path in workspace.rglob("*"):
+            if path.is_file():
+                files.append(path)
+            if len(files) >= 400:
+                break
+        dialog = QuickOpenDialog(files, self)
+        if dialog.exec():
+            if dialog.selected:
+                self.open_file(str(dialog.selected))
+            else:
+                self._prompt_goto_line()
+
+    def _prompt_goto_line(self) -> None:
+        editor = self.get_current_editor()
+        if not editor:
+            return
+        text, ok = QInputDialog.getText(self, "Go to Line/Column", "Enter line[:column]:")
+        if not ok or not text:
+            return
+        parts = text.replace(":", ",").split(",")
+        try:
+            line = int(parts[0])
+            column = int(parts[1]) if len(parts) > 1 else 0
+        except ValueError:
+            self.status.show_message("Invalid line or column")
+            return
+        editor.go_to_line_column(line, column)
+
+    def _jump_to_matching_bracket(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.jump_to_matching_bracket()
+
+    def _navigate_back(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.go_back()
+
+    def _navigate_forward(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.go_forward()
+
+    def _navigate_last_edit(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.go_to_last_edit()
+
+    def _navigate_next_change(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.next_change()
+
+    def _navigate_prev_change(self) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.previous_change()
+
+    def _jump_problem(self, direction: int) -> None:
+        table = self.problems_panel.table
+        row_count = table.rowCount()
+        if row_count == 0:
+            return
+        current = table.currentRow()
+        if current < 0:
+            current = 0
+        target = (current + direction) % row_count
+        table.setCurrentCell(target, 0)
+        file_item = table.item(target, 2)
+        line_item = table.item(target, 3)
+        if file_item:
+            file_path = file_item.text()
+            try:
+                line_number = int(line_item.text()) - 1 if line_item else 0
+            except (TypeError, ValueError):
+                line_number = 0
+            self.open_file_at(file_path, line_number)
+
+    def _jump_next_problem(self) -> None:
+        self._jump_problem(1)
+
+    def _jump_previous_problem(self) -> None:
+        self._jump_problem(-1)
+
+    def _focus_next_editor(self) -> None:
+        self.editor_tabs.focus_next_tab()
+
+    def _focus_previous_editor(self) -> None:
+        self.editor_tabs.focus_previous_tab()
+
+    def _focus_editor_group(self, pane: str) -> None:
+        self.editor_tabs.focus_pane(pane)
+
+    def _move_editor_to_other_group(self) -> None:
+        self.editor_tabs.move_current_to_other()
 
     def _open_plugin_manager(self) -> None:
         dialog = PluginManagerDialog(self.plugin_loader, self)
