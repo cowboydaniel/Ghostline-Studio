@@ -55,6 +55,9 @@ class UpdateInstaller:
                 logger.error(f"Could not extract tag from URL: {release_url}")
                 return False
 
+            # Extract version from tag (remove 'v' prefix if present)
+            version = tag.lstrip("v")
+
             # Build download URL for source code ZIP
             download_url = f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag}.zip"
 
@@ -92,8 +95,8 @@ class UpdateInstaller:
                 project_dir = extracted_dirs[0]
                 logger.info(f"Project directory: {project_dir}")
 
-                # Install the update
-                return self._install_from_directory(project_dir)
+                # Install the update with the extracted version
+                return self._install_from_directory(project_dir, version)
 
             finally:
                 # Clean up temp directory
@@ -109,11 +112,12 @@ class UpdateInstaller:
             logger.error(f"Error downloading/installing update: {e}")
             return False
 
-    def _install_from_directory(self, source_dir: Path) -> bool:
+    def _install_from_directory(self, source_dir: Path, version: str | None = None) -> bool:
         """Install from a downloaded/extracted directory.
 
         Args:
             source_dir: Directory containing the downloaded project
+            version: Version string to update in pyproject.toml (e.g., "0.0.6")
 
         Returns:
             True if successful
@@ -154,6 +158,10 @@ class UpdateInstaller:
                 else:
                     shutil.copy2(item, dest)
 
+            # Update version in pyproject.toml if provided
+            if version:
+                self._update_version_in_pyproject(version)
+
             logger.info("Update installed successfully")
             return True
 
@@ -170,6 +178,38 @@ class UpdateInstaller:
                 logger.error(f"Failed to restore backup: {restore_error}")
 
             return False
+
+    def _update_version_in_pyproject(self, version: str) -> None:
+        """Update the version in pyproject.toml.
+
+        Args:
+            version: Version string to set (e.g., "0.0.6")
+        """
+        try:
+            pyproject_path = self.project_root / "pyproject.toml"
+            if not pyproject_path.exists():
+                logger.warning("pyproject.toml not found, skipping version update")
+                return
+
+            content = pyproject_path.read_text()
+            lines = content.split("\n")
+            updated_lines = []
+
+            for line in lines:
+                if line.strip().startswith("version"):
+                    # Replace the version line with the new version
+                    # Preserves indentation and format
+                    indent = len(line) - len(line.lstrip())
+                    updated_lines.append(f'{" " * indent}version = "{version}"')
+                else:
+                    updated_lines.append(line)
+
+            updated_content = "\n".join(updated_lines)
+            pyproject_path.write_text(updated_content)
+            logger.info(f"Updated pyproject.toml version to {version}")
+
+        except Exception as e:
+            logger.error(f"Error updating version in pyproject.toml: {e}")
 
     def restart_application(self) -> None:
         """Restart the application with the same arguments."""
