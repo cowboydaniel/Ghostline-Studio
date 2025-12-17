@@ -37,6 +37,7 @@ from ghostline.core.theme import ThemeManager
 from ghostline.core.resources import load_icon
 from ghostline.core import threads as _threads
 from ghostline.core.dependency_worker import DependencyWorker
+from ghostline.core.usage_stats import UsageStatsTracker
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.ui.main_window import MainWindow
 from ghostline.ui.splash_screen import GhostlineSplash
@@ -54,7 +55,7 @@ class GhostlineApplication:
         self.logger = get_logger(__name__)
         self.qt_app = QApplication(sys.argv)
         self.qt_app.setWindowIcon(load_icon("ghostline_logo.svg"))
-        
+
         def _on_about_to_quit() -> None:
             _threads.SHUTTING_DOWN = True
 
@@ -68,6 +69,10 @@ class GhostlineApplication:
         self.splash: GhostlineSplash | None = None
         self.dependency_worker: DependencyWorker | None = None
         self._dependency_setup_success = True
+
+        # Initialize usage stats tracking
+        self.usage_stats = UsageStatsTracker()
+        self.usage_stats.record_app_launch()
 
     def _parse_args(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(description="Ghostline Studio")
@@ -167,6 +172,10 @@ class GhostlineApplication:
     def cleanup(self) -> None:
         """Clean up resources in the correct order."""
         try:
+            # Record session end in usage stats
+            if hasattr(self, 'usage_stats') and self.usage_stats:
+                self.usage_stats.record_session_end()
+
             # Stop dependency worker if still running
             if hasattr(self, 'dependency_worker') and self.dependency_worker:
                 worker = self.dependency_worker

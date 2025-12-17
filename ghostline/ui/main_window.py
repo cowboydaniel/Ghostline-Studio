@@ -47,9 +47,19 @@ from PySide6.QtWidgets import (
 from ghostline.core.config import CONFIG_DIR, USER_SETTINGS_PATH, ConfigManager
 from ghostline.core.events import CommandDescriptor, CommandRegistry
 from ghostline.core.logging import LOG_DIR, LOG_FILE
+from ghostline.core.account import AccountStore
+from ghostline.core.usage_stats import UsageStatsTracker
+from ghostline.core.diagnostics import DiagnosticsCollector
+from ghostline.core.urls import DOCS_URL, FEATURE_REQUEST_URL, COMMUNITY_URL, CHANGELOG_URL, RELEASES_URL, REPO_URL
 from ghostline.ui.actions import ActionRegistry, create_all_actions
 from ghostline.ui.menu_builder import MenuBuilder
 from ghostline.ui.menu_actions import MenuActionsMixin
+from ghostline.ui.dialogs.account_dialogs import SignInDialog, ManageAccountDialog, AccountDetailsWindow
+from ghostline.ui.dialogs.usage_stats_dialog import UsageStatsDialog
+from ghostline.ui.dialogs.update_dialog import UpdateDialog
+from ghostline.ui.dialogs.docs_dialog import DocsDialog
+from ghostline.ui.dialogs.community_dialog import CommunityDialog, ChangelogDialog
+from ghostline.ui.docks.quick_settings_panel import QuickSettingsPanel
 from ghostline.core.resources import icon_path, load_icon
 from ghostline.core.theme import ThemeManager
 from ghostline.lang.diagnostics import DiagnosticsModel
@@ -146,10 +156,7 @@ QMenu#TitleSettingsMenu::separator {
 }
 """
 
-DOCS_URL = QUrl("https://github.com/ghostline-studio/Ghostline-Studio#readme")
-FEATURE_REQUEST_URL = QUrl("https://github.com/ghostline-studio/Ghostline-Studio/issues/new/choose")
-COMMUNITY_URL = QUrl("https://github.com/ghostline-studio/Ghostline-Studio/discussions")
-CHANGELOG_URL = QUrl("https://github.com/ghostline-studio/Ghostline-Studio/releases")
+# URL constants are now imported from ghostline.core.urls
 
 
 class TitleContextLineEdit(QLineEdit):
@@ -2275,51 +2282,97 @@ class MainWindow(MenuActionsMixin, QMainWindow):
         self._refresh_theme_checks(theme_id)
 
     def _current_user_identity(self) -> tuple[str, str | None]:
-        user_cfg = self.config.get("user", {}) if self.config else {}
-        name = "Guest"
-        email: str | None = None
-        if isinstance(user_cfg, dict):
-            name = user_cfg.get("display_name") or user_cfg.get("name") or name
-            email = user_cfg.get("email")
+        """Get current user identity from account store."""
+        if not hasattr(self, "_account_store"):
+            self._account_store = AccountStore()
+        name = self._account_store.get_display_name()
+        email = self._account_store.get_email()
         return name, email
 
     def _trigger_sign_in_placeholder(self) -> None:
-        QMessageBox.information(self, "Sign in", "Authentication is not implemented yet.")
+        """Open sign in dialog."""
+        if not hasattr(self, "_account_store"):
+            self._account_store = AccountStore()
+        dialog = SignInDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Refresh the profile menu label
+            if hasattr(self, "title_bar"):
+                self.title_bar.update()
 
     def _trigger_sign_out_placeholder(self) -> None:
-        QMessageBox.information(self, "Sign out", "No signed-in account to sign out from." if not self._current_user_identity()[1] else "Signed out.")
+        """Sign out current user."""
+        if not hasattr(self, "_account_store"):
+            self._account_store = AccountStore()
+        reply = QMessageBox.question(
+            self,
+            "Confirm Sign Out",
+            "Are you sure you want to sign out?",
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._account_store.sign_out()
+            QMessageBox.information(self, "Signed Out", "You have been signed out.")
+            # Refresh the profile menu label
+            if hasattr(self, "title_bar"):
+                self.title_bar.update()
 
     def _trigger_manage_account_placeholder(self) -> None:
-        QMessageBox.information(self, "Manage Account", "Account management is not implemented yet.")
+        """Open account management dialog."""
+        if not hasattr(self, "_account_store"):
+            self._account_store = AccountStore()
+        dialog = ManageAccountDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Refresh the profile menu label
+            if hasattr(self, "title_bar"):
+                self.title_bar.update()
 
     def _show_account_details(self) -> None:
-        name, email = self._current_user_identity()
-        QMessageBox.information(
-            self,
-            "Ghostline Account",
-            f"User: {name}\nEmail: {email or 'not signed in'}",
-        )
+        """Show account details window."""
+        dialog = AccountDetailsWindow(self)
+        dialog.exec()
 
     def _show_usage_placeholder(self) -> None:
-        QMessageBox.information(self, "Ghostline Usage", "Usage not implemented yet")
+        """Show usage statistics window."""
+        dialog = UsageStatsDialog(self)
+        dialog.exec()
 
     def _open_quick_settings_placeholder(self) -> None:
-        QMessageBox.information(self, "Quick Settings", "Quick Settings Panel not implemented yet")
+        """Open quick settings panel as a floating dialog."""
+        # Create a simple dialog containing the quick settings panel
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Quick Settings")
+        dialog.setMinimumWidth(350)
+        dialog.setMinimumHeight(500)
+
+        layout = QVBoxLayout(dialog)
+
+        quick_settings = QuickSettingsPanel(self.config, self.theme_manager, dialog)
+        layout.addWidget(quick_settings)
+
+        dialog.exec()
 
     def _check_for_updates_placeholder(self) -> None:
-        QMessageBox.information(self, "Check for Updates", "Update checker not implemented yet")
+        """Check for updates using GitHub API."""
+        dialog = UpdateDialog(self)
+        dialog.exec()
 
     def _open_docs(self) -> None:
-        QDesktopServices.openUrl(DOCS_URL)
+        """Open documentation viewer or browser."""
+        dialog = DocsDialog(self)
+        dialog.exec()
 
     def _open_feature_request(self) -> None:
-        QDesktopServices.openUrl(FEATURE_REQUEST_URL)
+        """Open feature request creation page."""
+        QDesktopServices.openUrl(QUrl(FEATURE_REQUEST_URL))
 
     def _open_community(self) -> None:
-        QDesktopServices.openUrl(COMMUNITY_URL)
+        """Open community panel."""
+        dialog = CommunityDialog(self)
+        dialog.exec()
 
     def _open_changelog(self) -> None:
-        QDesktopServices.openUrl(CHANGELOG_URL)
+        """Open changelog viewer."""
+        dialog = ChangelogDialog(self)
+        dialog.exec()
 
     def _detect_app_version(self) -> str:
         try:
@@ -2328,6 +2381,7 @@ class MainWindow(MenuActionsMixin, QMainWindow):
             return "unknown"
 
     def _download_diagnostics(self) -> None:
+        """Export diagnostics bundle with optional email redaction."""
         default_name = "ghostline-diagnostics.zip"
         default_path = str(CONFIG_DIR / default_name)
         filename, _ = QFileDialog.getSaveFileName(
@@ -2338,49 +2392,27 @@ class MainWindow(MenuActionsMixin, QMainWindow):
         if not filename.lower().endswith(".zip"):
             filename = f"{filename}.zip"
 
-        temp_dir = Path(tempfile.mkdtemp(prefix="ghostline_diagnostics_"))
         try:
-            info = {
-                "app_version": self._detect_app_version(),
-                "os": platform.platform(),
-                "python_version": sys.version.replace("\n", " "),
-                "config_dir": str(CONFIG_DIR),
-            }
-            (temp_dir / "diagnostics.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
-
-            config_files = [USER_SETTINGS_PATH]
-            for extra_cfg in CONFIG_DIR.glob("*.yaml"):
-                if extra_cfg not in config_files:
-                    config_files.append(extra_cfg)
-            for extra_cfg in CONFIG_DIR.glob("*.json"):
-                if extra_cfg not in config_files:
-                    config_files.append(extra_cfg)
-            for cfg in config_files:
-                if cfg.exists():
-                    shutil.copy(cfg, temp_dir / cfg.name)
-
-            log_dir = LOG_DIR if LOG_DIR.exists() else LOG_FILE.parent
-            if log_dir.exists():
-                copied = False
-                for log_path in log_dir.glob("ghostline.log*"):
-                    if log_path.is_file():
-                        shutil.copy(log_path, temp_dir / log_path.name)
-                        copied = True
-                if not copied:
-                    (temp_dir / "logs.txt").write_text("No log files found.", encoding="utf-8")
+            collector = DiagnosticsCollector()
+            if collector.create_diagnostics_zip(filename):
+                QMessageBox.information(
+                    self,
+                    "Diagnostics Exported",
+                    f"Diagnostics have been saved.\n\nLocation: {filename}\n\nNote: Sensitive data (API keys, tokens, emails) have been automatically redacted.",
+                )
             else:
-                (temp_dir / "logs.txt").write_text("Log directory missing.", encoding="utf-8")
-
-            with zipfile.ZipFile(filename, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                for item in temp_dir.iterdir():
-                    archive.write(item, item.name)
-
-            QMessageBox.information(self, "Diagnostics", f"Diagnostics saved to {filename}")
+                QMessageBox.warning(
+                    self,
+                    "Export Failed",
+                    "Failed to export diagnostics. Check logs for details.",
+                )
         except Exception:
             logger.exception("Failed to export diagnostics")
-            QMessageBox.warning(self, "Diagnostics", "Unable to export diagnostics bundle.")
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            QMessageBox.warning(
+                self,
+                "Diagnostics Export Error",
+                "An error occurred while exporting diagnostics.",
+            )
 
     def _open_symbol_picker(self) -> None:
         query, ok = QInputDialog.getText(self, "Go to Symbol", "Name contains:")
