@@ -10,11 +10,12 @@ from io import StringIO
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from PySide6.QtCore import QTimer, QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QTimer, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QKeyEvent,
+    QKeySequence,
     QMouseEvent,
     QPainter,
     QPen,
@@ -24,6 +25,7 @@ from PySide6.QtGui import (
     QSyntaxHighlighter,
     QTextDocument,
     QPalette,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
     QPlainTextEdit,
@@ -34,8 +36,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QLabel,
     QVBoxLayout,
-    QHBoxLayout,
     QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QToolButton,
+    QCheckBox,
 )
 
 from ghostline.core.config import ConfigManager
@@ -360,6 +366,85 @@ class CompletionWidget(QWidget):
             html_parts.append('</div>')
 
         self.doc_label.setText(''.join(html_parts) if html_parts else "No documentation available.")
+
+
+class InlineFindReplaceBar(QWidget):
+    """Lightweight in-editor find/replace bar that hugs the editor viewport."""
+
+    findRequested = Signal(str, bool)
+    replaceRequested = Signal(str, str)
+    replaceAllRequested = Signal(str, str)
+    closed = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("inlineFindReplace")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(6)
+
+        self.find_input = QLineEdit(self)
+        self.find_input.setPlaceholderText("Find")
+        self.find_input.returnPressed.connect(lambda: self.findRequested.emit(self.find_input.text(), True))
+        layout.addWidget(self.find_input, 1)
+
+        self.case_checkbox = QCheckBox("Aa", self)
+        self.case_checkbox.setToolTip("Match case")
+        layout.addWidget(self.case_checkbox)
+
+        self.prev_button = QPushButton("Prev", self)
+        self.prev_button.clicked.connect(lambda: self.findRequested.emit(self.find_input.text(), False))
+        layout.addWidget(self.prev_button)
+
+        self.next_button = QPushButton("Next", self)
+        self.next_button.clicked.connect(lambda: self.findRequested.emit(self.find_input.text(), True))
+        layout.addWidget(self.next_button)
+
+        self.replace_input = QLineEdit(self)
+        self.replace_input.setPlaceholderText("Replace")
+        layout.addWidget(self.replace_input, 1)
+
+        self.replace_button = QPushButton("Replace", self)
+        self.replace_button.clicked.connect(self._emit_replace)
+        layout.addWidget(self.replace_button)
+
+        self.replace_all_button = QPushButton("Replace All", self)
+        self.replace_all_button.clicked.connect(self._emit_replace_all)
+        layout.addWidget(self.replace_all_button)
+
+        self.close_button = QToolButton(self)
+        self.close_button.setText("✕")
+        self.close_button.clicked.connect(self.hide)
+        self.close_button.clicked.connect(self.closed.emit)
+        layout.addWidget(self.close_button)
+
+    def set_query(self, text: str) -> None:
+        self.find_input.setText(text)
+        self.find_input.selectAll()
+        self.find_input.setFocus()
+
+    def set_replace_visible(self, visible: bool) -> None:
+        for widget in (self.replace_input, self.replace_button, self.replace_all_button):
+            widget.setVisible(visible)
+
+    def current_query(self) -> str:
+        return self.find_input.text()
+
+    def current_replacement(self) -> str:
+        return self.replace_input.text()
+
+    def case_sensitive(self) -> bool:
+        return self.case_checkbox.isChecked()
+
+    def focus_find(self) -> None:
+        self.find_input.setFocus()
+
+    def _emit_replace(self) -> None:
+        self.replaceRequested.emit(self.find_input.text(), self.replace_input.text())
+
+    def _emit_replace_all(self) -> None:
+        self.replaceAllRequested.emit(self.find_input.text(), self.replace_input.text())
 
     def _insert_completion(self, item: QListWidgetItem) -> None:
         """Insert the selected completion item."""
@@ -729,7 +814,15 @@ class CodeEditor(QPlainTextEdit):
         self.minimap = MiniMap(self)
         self.completion_widget = CompletionWidget(self)
         self.snippet_manager = SnippetManager(self)
+        self.find_bar = InlineFindReplaceBar(self)
+        self.find_bar.hide()
+        self.find_bar.findRequested.connect(self._run_inline_search)
+        self.find_bar.replaceRequested.connect(self._replace_current)
+        self.find_bar.replaceAllRequested.connect(self._replace_all)
+        self.find_bar.closed.connect(self.setFocus)
         self.setMouseTracking(True)  # Enable mouse tracking for hover
+
+        self._install_shortcuts()
 
         self._update_line_number_area_width(self.blockCount())
         if path and path.exists():
@@ -741,6 +834,244 @@ class CodeEditor(QPlainTextEdit):
         else:
             # For new/empty files, use the delayed request
             self._refresh_semantic_tokens()
+
+    # Editing utilities
+    def _install_shortcuts(self) -> None:
+        """Ensure core edit commands work even with custom key handling."""
+
+        bindings = [
+            (QKeySequence.Undo, self.undo),
+            (QKeySequence.Redo, self.redo),
+            (QKeySequence.Cut, self.cut),
+            (QKeySequence.Copy, self.copy),
+            (QKeySequence.Paste, self.paste),
+            (QKeySequence.SelectAll, self.selectAll),
+            (QKeySequence.Find, lambda: self.show_find_bar()),
+            (QKeySequence.Replace, lambda: self.show_find_bar(replace=True)),
+            (QKeySequence.FindNext, self.find_next),
+            (QKeySequence.FindPrevious, self.find_previous),
+        ]
+
+        for sequence, handler in bindings:
+            shortcut = QShortcut(sequence, self)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(handler)
+
+    def _selected_text_or_word(self) -> str:
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return cursor.selectedText()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        return cursor.selectedText()
+
+    def show_find_bar(self, *, replace: bool = False, preset: str | None = None) -> None:
+        if preset is None:
+            preset = self._selected_text_or_word()
+        if preset:
+            self.find_bar.set_query(preset)
+        self.find_bar.set_replace_visible(replace)
+        self.find_bar.show()
+        self._layout_find_bar()
+        self.find_bar.focus_find()
+
+    def hide_find_bar(self) -> None:
+        self.find_bar.hide()
+
+    def find_next(self) -> None:
+        query = self.find_bar.current_query() or self._selected_text_or_word()
+        self.show_find_bar(preset=query)
+        self._run_inline_search(query, True)
+
+    def find_previous(self) -> None:
+        query = self.find_bar.current_query() or self._selected_text_or_word()
+        self.show_find_bar(preset=query)
+        self._run_inline_search(query, False)
+
+    def _find_flags(self, forward: bool) -> QTextDocument.FindFlags:
+        flags = QTextDocument.FindFlag(0)
+        if not forward:
+            flags |= QTextDocument.FindBackward
+        if self.find_bar.case_sensitive():
+            flags |= QTextDocument.FindCaseSensitively
+        return flags
+
+    def _run_inline_search(self, text: str, forward: bool = True) -> None:
+        if not text:
+            return
+
+        flags = self._find_flags(forward)
+        cursor = self.textCursor()
+        match = self.document().find(text, cursor, flags)
+        if match.isNull():
+            anchor = QTextCursor(self.document())
+            if not forward:
+                anchor.movePosition(QTextCursor.MoveOperation.End)
+            match = self.document().find(text, anchor, flags)
+
+        if not match.isNull():
+            self.setTextCursor(match)
+
+    def _replace_current(self, find_text: str, replace_text: str) -> None:
+        if not find_text:
+            return
+        cursor = self.textCursor()
+        if cursor.hasSelection() and cursor.selectedText() == find_text:
+            cursor.insertText(replace_text)
+            self.setTextCursor(cursor)
+        self._run_inline_search(find_text, True)
+
+    def _replace_all(self, find_text: str, replace_text: str) -> None:
+        if not find_text:
+            return
+        cursor = QTextCursor(self.document())
+        flags = self._find_flags(True)
+        replacements = []
+        while True:
+            match = self.document().find(find_text, cursor, flags)
+            if match.isNull():
+                break
+            replacements.append(match)
+            cursor = match
+
+        # Apply in reverse to keep offsets stable
+        for match in reversed(replacements):
+            match.insertText(replace_text)
+
+    def toggle_line_comment(self) -> None:
+        line_token, _, _ = self._comment_tokens()
+        if not line_token:
+            # Fallback to block style if no line comment exists
+            self.toggle_block_comment()
+            return
+
+        cursor = self.textCursor()
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        cursor.beginEditBlock()
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
+        while cursor.position() <= end:
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfLine, QTextCursor.MoveMode.KeepAnchor)
+            text = cursor.selectedText()
+            stripped = text.lstrip()
+            indent = text[: len(text) - len(stripped)]
+            if stripped.startswith(line_token):
+                new_text = indent + stripped[len(line_token) :].lstrip()
+            else:
+                new_text = indent + f"{line_token} {stripped}" if stripped else indent + line_token
+            cursor.insertText(new_text)
+            end += len(new_text) - len(text)
+            if not cursor.movePosition(QTextCursor.MoveOperation.Down):
+                break
+        cursor.endEditBlock()
+
+    def toggle_block_comment(self) -> None:
+        _, block_start, block_end = self._comment_tokens()
+        if not (block_start and block_end):
+            return
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        text = cursor.selectedText()
+        if text.startswith(block_start) and text.endswith(block_end):
+            inner = text[len(block_start) : -len(block_end)]
+            cursor.insertText(inner)
+        else:
+            cursor.insertText(f"{block_start}{text}{block_end}")
+
+    def _comment_tokens(self) -> tuple[str, str, str]:
+        language = (self._language or "").lower()
+        line_token = "#"
+        block_start = "/*"
+        block_end = "*/"
+
+        if language in {"python", "shell", "bash"}:
+            block_start = block_end = "\"\"\""
+        elif language in {"c", "cpp", "javascript", "typescript", "java", "go", "rust", "css"}:
+            line_token = "//"
+        elif language in {"html", "xml"}:
+            line_token = ""
+            block_start, block_end = "<!--", "-->"
+
+        return line_token, block_start, block_end
+
+    def expand_emmet_selection(self) -> None:
+        abbreviation = self._selected_text_or_word()
+        if not abbreviation:
+            return
+
+        expansion = self._expand_emmet(abbreviation)
+        if not expansion:
+            return
+
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        indent = self._current_line_indent()
+        indented = "\n".join(indent + line if line.strip() else line for line in expansion.split("\n"))
+        cursor.insertText(indented)
+        self.setTextCursor(cursor)
+
+    def _current_line_indent(self) -> str:
+        cursor = self.textCursor()
+        cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        line = cursor.selectedText()
+        return line[: len(line) - len(line.lstrip())]
+
+    def _expand_emmet(self, abbreviation: str) -> str:
+        def parse_node(segment: str) -> tuple[str, list[str], str | None, int]:
+            body, multiplier = segment, 1
+            if "*" in segment:
+                base, mult = segment.rsplit("*", 1)
+                if mult.isdigit():
+                    body, multiplier = base, int(mult)
+            tag = re.match(r"[a-zA-Z0-9]+", body)
+            name = tag.group(0) if tag else "div"
+            remainder = body[len(name) :]
+            classes = [part[1:] for part in remainder.split(".") if part.startswith(".")]
+            element_id = None
+            for part in remainder.split("."):
+                if part.startswith("#"):
+                    element_id = part[1:]
+            return name, classes, element_id, multiplier
+
+        def build_tree(expr: str) -> list[dict]:
+            nodes: list[dict] = []
+            for sibling in expr.split("+"):
+                parts = sibling.split(">", 1)
+                head = parts[0]
+                children_expr = parts[1] if len(parts) > 1 else None
+                name, classes, element_id, multiplier = parse_node(head)
+                children = build_tree(children_expr) if children_expr else []
+                for _ in range(multiplier):
+                    nodes.append({"name": name, "classes": classes, "id": element_id, "children": children})
+            return nodes
+
+        def render(nodes: list[dict], depth: int = 0) -> str:
+            lines: list[str] = []
+            indent = "    " * depth
+            for node in nodes:
+                attrs = []
+                if node["id"]:
+                    attrs.append(f'id="{node["id"]}"')
+                if node["classes"]:
+                    class_attr = " ".join(node["classes"])
+                    attrs.append(f'class="{class_attr}"')
+                attr_text = f" {' '.join(attrs)}" if attrs else ""
+                if node["children"]:
+                    lines.append(f"{indent}<{node['name']}{attr_text}>")
+                    lines.append(render(node["children"], depth + 1))
+                    lines.append(f"{indent}</{node['name']}>")
+                else:
+                    lines.append(f"{indent}<{node['name']}{attr_text}></{node['name']}>")
+            return "\n".join(lines).rstrip("\n")
+
+        try:
+            tree = build_tree(abbreviation)
+            return render(tree)
+        except Exception:
+            return ""
 
     # Highlighting helpers
     def set_language(self, language: str | None) -> None:
@@ -825,6 +1156,7 @@ class CodeEditor(QPlainTextEdit):
             QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
         )
         self._position_minimap(cr)
+        self._layout_find_bar()
 
     def _update_line_number_area_width(self, _=None) -> None:
         # Left margin for gutter, small top margin so code does not stick
@@ -846,6 +1178,16 @@ class CodeEditor(QPlainTextEdit):
         self.minimap.setGeometry(
             QRect(cr.right() - minimap_width + 1, cr.top(), minimap_width, cr.height())
         )
+
+    def _layout_find_bar(self) -> None:
+        if not self.find_bar.isVisible():
+            return
+        bar_height = self.find_bar.sizeHint().height()
+        bar_width = min(self.width() - 20, 640)
+        rect = self.contentsRect()
+        x_pos = rect.right() - bar_width - 8
+        y_pos = rect.bottom() - bar_height - 8
+        self.find_bar.setGeometry(x_pos, y_pos, bar_width, bar_height)
 
     def _update_line_number_area(self, rect, dy) -> None:
         """Update the visible area of the line number gutter.
@@ -981,6 +1323,28 @@ class CodeEditor(QPlainTextEdit):
 
     # Indentation helpers
     def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        if event.matches(QKeySequence.Find):
+            self.show_find_bar()
+            return
+        if event.matches(QKeySequence.Replace):
+            self.show_find_bar(replace=True)
+            return
+        if event.matches(QKeySequence.FindNext):
+            self.find_next()
+            return
+        if event.matches(QKeySequence.FindPrevious):
+            self.find_previous()
+            return
+        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_Slash:
+            self.toggle_line_comment()
+            return
+        if event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier) and event.key() == Qt.Key_A:
+            self.toggle_block_comment()
+            return
+        if event.modifiers() == (Qt.ControlModifier | Qt.AltModifier) and event.key() == Qt.Key_E:
+            self.expand_emmet_selection()
+            return
+
         # Handle completion widget navigation
         if self.completion_widget.isVisible():
             if event.key() == Qt.Key_Down:
