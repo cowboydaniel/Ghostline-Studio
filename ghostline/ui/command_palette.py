@@ -29,6 +29,12 @@ class CommandPalette(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Command Palette")
         self.setWindowModality(Qt.ApplicationModal)
+        self.setWindowFlags(
+            Qt.Popup
+            | Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.NoDropShadowWindowHint
+        )
         self.registry: CommandRegistry | None = None
         self.navigation_assistant: NavigationAssistant | None = None
         self.predictive_context: PredictiveContext | None = None
@@ -90,14 +96,26 @@ class CommandPalette(QDialog):
     def open_palette(self) -> None:
         self._refresh_list()
         self.input.clear()
+        self._position_overlay()
         self.show()
         self.input.setFocus()
 
     def open_with_query(self, query: str) -> None:
         self.input.setText(query)
         self._refresh_list()
+        self._position_overlay()
         self.show()
         self.input.setFocus()
+
+    def _position_overlay(self) -> None:
+        if not self.parent():
+            return
+        parent_rect = self.parent().geometry()
+        width = max(int(parent_rect.width() * 0.45), 480)
+        height = max(int(parent_rect.height() * 0.5), 420)
+        x = parent_rect.center().x() - width // 2
+        y = parent_rect.top() + 80
+        self.setGeometry(x, y, width, height)
 
     def _refresh_list(self) -> None:
         self.list_widget.clear()

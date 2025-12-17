@@ -78,6 +78,7 @@ from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
 from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
 from ghostline.ui.dialogs.ai_settings_dialog import AISettingsDialog
+from ghostline.ui.dialogs.view_picker_dialog import ViewPickerDialog
 from ghostline.ui.command_palette import CommandPalette
 from ghostline.ui.commands.registry import CommandActionDefinition, CommandActionRegistry
 from ghostline.ui.activity_bar import ActivityBar
@@ -1315,6 +1316,31 @@ class MainWindow(QMainWindow):
                 ai_open = self.ai_dock.isVisible()
             self.action_toggle_ai_dock.setChecked(ai_open)
 
+    def _collect_view_actions(self) -> list[QAction]:
+        actions: list[QAction] = []
+
+        def walk(menu: QMenu) -> None:
+            for action in menu.actions():
+                if action.menu():
+                    walk(action.menu())
+                else:
+                    actions.append(action)
+
+        if hasattr(self, "view_menu") and self.view_menu:
+            walk(self.view_menu)
+
+        for dock in getattr(self, "left_docks", []) + getattr(self, "right_docks", []):
+            toggle = dock.toggleViewAction()
+            if toggle not in actions:
+                actions.append(toggle)
+
+        return [action for action in actions if action.isCheckable()]
+
+    def _open_view_picker(self) -> None:
+        dialog = ViewPickerDialog(self._collect_view_actions(), self)
+        dialog.resize(360, 420)
+        dialog.show()
+
     def _update_title_context(self) -> None:
         if not hasattr(self, "title_bar"):
             return
@@ -1369,7 +1395,14 @@ class MainWindow(QMainWindow):
                 "Command Palette",
                 "View",
                 handler=self.show_command_palette,
-                shortcut="Ctrl+P",
+                shortcut="Ctrl+Shift+P",
+            ),
+            CommandActionDefinition(
+                "view.picker",
+                "View Picker",
+                "View",
+                handler=self._open_view_picker,
+                shortcut="Ctrl+Alt+V",
             ),
             CommandActionDefinition(
                 "ai.toggle_autoflow",
@@ -1658,6 +1691,7 @@ class MainWindow(QMainWindow):
         self.action_goto_symbol = actions["navigate.symbol"]
         self.action_goto_file = actions["navigate.file"]
         self.action_command_palette = actions["palette.command"]
+        self.action_view_picker = actions["view.picker"]
         self.action_toggle_autoflow = actions["ai.toggle_autoflow"]
         self.action_toggle_project = actions["view.toggle_project"]
         self.action_toggle_split_editor = actions["view.toggle_split"]
@@ -1765,6 +1799,7 @@ class MainWindow(QMainWindow):
 
         self.view_menu = menubar.addMenu("View")
         self.view_menu.addAction(self.action_command_palette)
+        self.view_menu.addAction(self.action_view_picker)
         self.view_menu.addAction(self.action_toggle_project)
         self.view_menu.addAction(self.action_toggle_split_editor)
         self.view_menu.addAction(self.action_toggle_terminal)
