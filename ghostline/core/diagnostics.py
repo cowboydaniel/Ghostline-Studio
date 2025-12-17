@@ -5,7 +5,6 @@ import json
 import logging
 import platform
 import shutil
-import subprocess
 import sys
 import tempfile
 import zipfile
@@ -13,7 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ghostline.core.config import CONFIG_DIR, LOG_DIR, LOG_FILE, USER_SETTINGS_PATH
+from ghostline.core.config import CONFIG_DIR, USER_SETTINGS_PATH
+from ghostline.core.logging import LOG_DIR, LOG_FILE
 from ghostline.core.urls import get_app_version
 
 logger = logging.getLogger(__name__)
