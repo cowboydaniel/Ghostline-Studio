@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ast
 from pathlib import Path
 from typing import Callable, List
 
@@ -36,6 +37,10 @@ class SymbolSearcher:
                 {"textDocument": {"uri": Path(path).resolve().as_uri()}},
             )
             self.lsp._pending[request_id] = _handle
+            return
+
+        symbols = self._python_symbols(Path(path))
+        callback(symbols)
 
     def workspace_symbols(self, query: str, callback: Callable[[List[SymbolResult]], None]) -> None:
         def _handle(resp: dict) -> None:
@@ -53,3 +58,43 @@ class SymbolSearcher:
         if client:
             request_id = client.send_request("workspace/symbol", {"query": query})
             self.lsp._pending[request_id] = _handle
+            return
+
+        root = self.lsp.workspace_manager.current_workspace
+        if not root:
+            callback([])
+            return
+        results: list[SymbolResult] = []
+        for path in root.rglob("*.py"):
+            for symbol in self._python_symbols(path):
+                if query.lower() in symbol.name.lower():
+                    results.append(symbol)
+                    if len(results) >= 100:
+                        callback(results)
+                        return
+        callback(results)
+
+    def _python_symbols(self, path: Path) -> List[SymbolResult]:
+        symbols: list[SymbolResult] = []
+        if not path.exists():
+            return symbols
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            return symbols
+
+        class Visitor(ast.NodeVisitor):
+            def visit_FunctionDef(self, node: ast.FunctionDef):  # type: ignore[override]
+                symbols.append(SymbolResult(node.name, "function", str(path), node.lineno - 1))
+                self.generic_visit(node)
+
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):  # type: ignore[override]
+                symbols.append(SymbolResult(node.name, "function", str(path), node.lineno - 1))
+                self.generic_visit(node)
+
+            def visit_ClassDef(self, node: ast.ClassDef):  # type: ignore[override]
+                symbols.append(SymbolResult(node.name, "class", str(path), node.lineno - 1))
+                self.generic_visit(node)
+
+        Visitor().visit(tree)
+        return symbols
