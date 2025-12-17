@@ -1,0 +1,83 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on tags like v0.1.0, v1.2.3, etc.
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for changelog generation
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Extract release notes from CHANGELOG
+        id: changelog
+        run: |
+          # Extract release notes for this version from CHANGELOG.md
+          VERSION=${{ steps.version.outputs.version }}
+
+          # If CHANGELOG.md exists, extract notes
+          if [ -f CHANGELOG.md ]; then
+            # Extract section for this version (between this version and next version marker)
+            sed -n "/^## \[$VERSION\]/,/^## \[/p" CHANGELOG.md | head -n -1 > release_notes.txt
+
+            # If we got content, use it; otherwise use commit message
+            if [ -s release_notes.txt ]; then
+              echo "release_notes<<EOF" >> $GITHUB_OUTPUT
+              cat release_notes.txt >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+            else
+              # Fallback to commit message
+              echo "release_notes=$(git log -1 --format=%B)" >> $GITHUB_OUTPUT
+            fi
+          else
+            # No CHANGELOG, use commit message
+            echo "release_notes=$(git log -1 --format=%B)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## Ghostline Studio ${{ steps.version.outputs.version }}
+
+            ${{ steps.changelog.outputs.release_notes }}
+
+            ### Installation
+
+            Download the latest version from the [Releases page](https://github.com/cowboydaniel/Ghostline-Studio/releases).
+
+            ```bash
+            # Clone the repository
+            git clone https://github.com/cowboydaniel/Ghostline-Studio.git
+            cd Ghostline-Studio
+
+            # Run the application
+            python3 start.py
+            ```
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update pyproject.toml version (optional - for patch releases)
+        if: always()
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          # Remove 'v' prefix for version in pyproject.toml
+          VERSION_NUM=${VERSION#v}
+          echo "Created release for version: $VERSION_NUM"
