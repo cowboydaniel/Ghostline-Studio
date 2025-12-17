@@ -71,9 +71,9 @@ from ghostline.formatter.formatter_manager import FormatterManager
 from ghostline.runtime.inspector import RuntimeInspector
 from ghostline.indexer.index_manager import IndexManager
 from ghostline.indexer.workspace_indexer import WorkspaceIndexer
-from ghostline.search.global_search import GlobalSearchDialog
 from ghostline.search.symbol_search import SymbolSearcher
 from ghostline.plugins.loader import PluginLoader
+from ghostline.ui.docks.search_panel import SearchPanel
 from ghostline.ui.dialogs.settings_dialog import SettingsDialog
 from ghostline.ui.dialogs.plugin_manager_dialog import PluginManagerDialog
 from ghostline.ui.dialogs.setup_wizard import SetupWizardDialog
@@ -794,6 +794,7 @@ class MainWindow(QMainWindow):
         self._install_title_bar()
         self._create_terminal_dock()
         self._create_project_dock()
+        self._create_search_dock()
         self._create_ai_dock()
         self._create_diagnostics_dock()
         self._create_debugger_dock()
@@ -1383,7 +1384,7 @@ class MainWindow(QMainWindow):
             CommandActionDefinition("file.close_folder", "Close Folder", "File", handler=self._close_folder),
             CommandActionDefinition(
                 "search.global",
-                "Global Search",
+                "Find in Files",
                 "Navigate",
                 handler=self._trigger_global_search_action,
                 shortcut="Ctrl+Shift+F",
@@ -1598,14 +1599,14 @@ class MainWindow(QMainWindow):
                 "edit.find",
                 "Find",
                 "Edit",
-                handler=self._open_global_search,
+                handler=lambda: self._focus_editor_find(),
                 shortcut="Ctrl+F",
             ),
             CommandActionDefinition(
                 "edit.replace",
                 "Replace",
                 "Edit",
-                handler=self._open_global_search,
+                handler=lambda: self._focus_editor_find(replace=True),
                 shortcut="Ctrl+H",
             ),
             CommandActionDefinition(
@@ -1912,6 +1913,18 @@ class MainWindow(QMainWindow):
         self._place_left_dock(dock)
         self._register_dock_action(dock)
         self.project_dock = dock
+
+    def _create_search_dock(self) -> None:
+        dock = SearchPanel(
+            lambda: str(self.workspace_manager.current_workspace) if self.workspace_manager.current_workspace else None,
+            lambda path, line: self.open_file_at(path, line),
+            self,
+        )
+        dock.setObjectName("searchDock")
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._place_left_dock(dock)
+        self._register_dock_action(dock)
+        self.search_dock = dock
 
     def _create_ai_dock(self) -> None:
         dock = QDockWidget("Ghostline AI", self)
@@ -2638,7 +2651,7 @@ class MainWindow(QMainWindow):
         registry.register_command(CommandDescriptor("ai.toggle_autoflow", "Toggle Autoflow", "AI", self._toggle_autoflow_mode))
         registry.register_command(CommandDescriptor("ai.settings", "AI Settings", "AI", self._open_ai_settings))
         registry.register_command(CommandDescriptor("ai.setup", "Re-run Setup Wizard", "AI", self.show_setup_wizard))
-        registry.register_command(CommandDescriptor("search.global", "Global Search", "Navigate", self._open_global_search))
+        registry.register_command(CommandDescriptor("search.global", "Find in Files", "Navigate", self._open_global_search))
         registry.register_command(CommandDescriptor("navigate.symbol", "Go to Symbol", "Navigate", self._open_symbol_picker))
         registry.register_command(CommandDescriptor("navigate.file", "Go to File", "Navigate", self._open_file_picker))
         registry.register_command(
@@ -2695,12 +2708,19 @@ class MainWindow(QMainWindow):
         )
         self.activity_bar.settingsRequested.connect(self._open_settings)
 
+    def _focus_editor_find(self, replace: bool = False) -> None:
+        editor = self.get_current_editor()
+        if editor:
+            editor.show_find_bar(replace=replace)
+            editor.setFocus()
+
     def _focus_global_search(self) -> None:
         query: str | None = None
-        if hasattr(self, "title_bar") and hasattr(self.title_bar, "command_input"):
-            query = self.title_bar.command_input.text()
-            self.title_bar.command_input.setFocus()
-            self.title_bar.command_input.selectAll()
+        editor = self.get_current_editor()
+        if editor:
+            cursor = editor.textCursor()
+            if cursor.hasSelection():
+                query = cursor.selectedText()
         self._open_global_search(query)
 
     def _trigger_global_search_action(self) -> None:
@@ -2874,20 +2894,12 @@ class MainWindow(QMainWindow):
         return result
 
     def _open_global_search(self, initial_query: str | None = None) -> None:
-        if not hasattr(self, "_global_search_dialog"):
-            self._global_search_dialog = GlobalSearchDialog(
-                lambda: str(self.workspace_manager.current_workspace) if self.workspace_manager.current_workspace else None,
-                lambda path, line: self.open_file_at(path, line),
-                self,
-            )
-
+        dock = getattr(self, "search_dock", None)
+        if not dock:
+            return
+        self._show_and_raise_dock(dock, "search")
         if initial_query:
-            if hasattr(self._global_search_dialog, "open_with_query"):
-                self._global_search_dialog.open_with_query(initial_query)
-            else:
-                self._global_search_dialog.input.setText(initial_query)
-        self._global_search_dialog.show()
-        self._global_search_dialog.raise_()
+            dock.open_with_query(initial_query)
 
     def _apply_theme_from_config(self) -> None:
         configured_theme = self._theme_id_from_value(self.config.get("theme"))
