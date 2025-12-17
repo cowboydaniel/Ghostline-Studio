@@ -49,6 +49,10 @@ class WindsurfTerminalWidget(QWidget):
         self.workspace_manager = workspace_manager
         self.sessions: list[TerminalSession] = []
         self.current_session_index = 0
+        self.split_session_index: int | None = None
+        self._current_splitter: QSplitter | None = None
+        self._floating_windows: list[WindsurfTerminalWidget] = []
+        self._floating_containers: list[QWidget] = []
         self._metrics = self._build_metrics()
         self._session_icon = QIcon.fromTheme("utilities-terminal")
         if self._session_icon.isNull():
@@ -181,9 +185,9 @@ class WindsurfTerminalWidget(QWidget):
         layout.addWidget(self.session_dropdown_btn)
 
         self.split_btn = self._build_icon_button(
-            "terminalSplitBtn", load_icon("terminal_bar/split.svg"), "Split Terminal (coming soon)"
+            "terminalSplitBtn", load_icon("terminal_bar/split.svg"), "Split Terminal"
         )
-        self.split_btn.setEnabled(False)
+        self.split_btn.clicked.connect(self._split_current_session)
         layout.addWidget(self.split_btn)
 
         self.kill_btn = self._build_icon_button(
@@ -199,6 +203,7 @@ class WindsurfTerminalWidget(QWidget):
         self.overflow_menu = QMenu(self.menu_btn)
         self.overflow_menu.addAction("Open External Terminal", self._open_external_terminal)
         self.overflow_menu.addSeparator()
+        self.overflow_menu.addAction("New Terminal Window", self._open_detached_terminal_window)
         self.overflow_menu.addAction("Terminal Settings (stub)")
         self.menu_btn.setMenu(self.overflow_menu)
         layout.addWidget(self.menu_btn)
@@ -246,7 +251,7 @@ class WindsurfTerminalWidget(QWidget):
         """Create the first terminal session."""
         self._create_new_session()
 
-    def _create_new_session(self) -> None:
+    def _create_new_session(self, switch_to_new: bool = True) -> int:
         """Create a new terminal session."""
         # Determine working directory
         working_dir = Path(self.workspace_manager.current_workspace or Path.cwd())
@@ -264,7 +269,6 @@ class WindsurfTerminalWidget(QWidget):
         self.sessions.append(session)
 
         # Add to UI
-        self.terminal_layout.addWidget(terminal)
         item = QListWidgetItem(self._session_icon, session_name)
         item.setSizeHint(QSize(item.sizeHint().width(), self._metrics["sidebar_row_height"]))
         self.session_list.addItem(item)
@@ -273,15 +277,15 @@ class WindsurfTerminalWidget(QWidget):
         self.session_dropdown_btn.setToolTip(session_name)
 
         # Switch to new session
-        self._switch_to_session(len(self.sessions) - 1)
+        if switch_to_new:
+            self._switch_to_session(len(self.sessions) - 1)
+        else:
+            self._render_terminal_view()
+        return len(self.sessions) - 1
 
     def _switch_to_session(self, index: int) -> None:
         """Switch to a specific terminal session."""
         if 0 <= index < len(self.sessions):
-            # Hide all terminals
-            for i, session in enumerate(self.sessions):
-                session.terminal.setVisible(i == index)
-
             # Update current session
             self.current_session_index = index
             self.session_list.setCurrentRow(index)
@@ -292,6 +296,7 @@ class WindsurfTerminalWidget(QWidget):
             current_session = self.sessions[index]
             current_dir = current_session.terminal.get_working_directory()
             self._update_status_label(current_dir)
+            self._render_terminal_view()
 
     def _on_session_changed(self, index: int) -> None:
         """Handle session list selection change."""
@@ -310,6 +315,17 @@ class WindsurfTerminalWidget(QWidget):
         session = self.sessions[self.current_session_index]
         session.terminal.send_interrupt()
         session.terminal.clear_output()
+
+    def _split_current_session(self) -> None:
+        """Split the terminal view showing the current and a new session side by side."""
+        if not self.sessions:
+            self._create_new_session()
+            return
+        if self.split_session_index is None:
+            self.split_session_index = self._create_new_session(switch_to_new=False)
+        else:
+            self.split_session_index = None
+        self._render_terminal_view()
 
     def _launch_external_terminal(self, cwd: Path) -> None:
         """Launch system terminal emulator."""
@@ -351,13 +367,85 @@ class WindsurfTerminalWidget(QWidget):
         if workspace:
             working_dir = Path(workspace)
             self._update_status_label(working_dir)
-            # Update current session's working directory
-            if self.sessions:
-                current_session = self.sessions[self.current_session_index]
-                current_session.terminal.write_input(f"cd {working_dir}\n")
+            # Update all terminal working directories
+            for session in self.sessions:
+                session.terminal.write_input(f"cd {working_dir}\n")
+            for floating in self._floating_windows:
+                floating.set_workspace(workspace)
 
     def _update_status_label(self, working_dir: Path) -> None:
         path = Path(working_dir)
         short_text = f"bash — {path}"
         self.cwd_label.setText(short_text)
         self.cwd_label.setToolTip(f"Working directory: {path}")
+
+    def new_terminal_tab(self) -> None:
+        self._create_new_session()
+
+    def split_terminal(self) -> None:
+        self._split_current_session()
+
+    def open_new_window(self) -> None:
+        self._open_detached_terminal_window()
+
+    def _render_terminal_view(self) -> None:
+        # Detach previous splitter children so we can reuse terminals
+        if self._current_splitter:
+            for i in range(self._current_splitter.count()):
+                widget = self._current_splitter.widget(i)
+                if widget:
+                    widget.setParent(self.terminal_stack)
+            self._current_splitter.deleteLater()
+            self._current_splitter = None
+
+        while self.terminal_layout.count():
+            item = self.terminal_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.setVisible(False)
+
+        if not self.sessions:
+            return
+
+        if self.split_session_index is not None and 0 <= self.split_session_index < len(self.sessions):
+            splitter = QSplitter(Qt.Horizontal, self.terminal_stack)
+            splitter.setChildrenCollapsible(False)
+            primary = self.sessions[self.current_session_index].terminal
+            secondary = self.sessions[self.split_session_index].terminal
+            splitter.addWidget(primary)
+            splitter.addWidget(secondary)
+            splitter.setStretchFactor(0, 1)
+            splitter.setStretchFactor(1, 1)
+            splitter.setHandleWidth(4)
+            primary.show()
+            secondary.show()
+            self.terminal_layout.addWidget(splitter)
+            self._current_splitter = splitter
+        else:
+            self.split_session_index = None
+            terminal = self.sessions[self.current_session_index].terminal
+            terminal.setParent(self.terminal_stack)
+            terminal.show()
+            self.terminal_layout.addWidget(terminal)
+
+    def _open_detached_terminal_window(self) -> None:
+        """Launch an additional terminal window with its own tabs."""
+        floating = WindsurfTerminalWidget(self.workspace_manager, None, use_external_toolbar=False)
+        floating.set_workspace(self.workspace_manager.current_workspace)
+        window = QWidget()
+        window.setWindowTitle("Terminal Window")
+        layout = QVBoxLayout(window)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(floating)
+        window.resize(900, 560)
+        window.show()
+        self._floating_windows.append(floating)
+        self._floating_containers.append(window)
+
+        def _cleanup() -> None:
+            if floating in self._floating_windows:
+                self._floating_windows.remove(floating)
+            if window in self._floating_containers:
+                self._floating_containers.remove(window)
+
+        window.destroyed.connect(_cleanup)
