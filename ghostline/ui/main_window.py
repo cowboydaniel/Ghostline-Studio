@@ -757,7 +757,7 @@ class MainWindow(QMainWindow):
         total_height = self.height() or 800
         self.center_vertical_splitter.setSizes([int(total_height * 0.75), int(total_height * 0.25)])
 
-        self.main_splitter = QSplitter(Qt.Horizontal, self)
+        self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
         self.main_splitter.addWidget(self.left_region_container)
         self.main_splitter.addWidget(self.center_vertical_splitter)
@@ -776,8 +776,6 @@ class MainWindow(QMainWindow):
         self.status = StudioStatusBar(self.git)
         self.setStatusBar(self.status)
         self.status.setContentsMargins(4, 0, 12, 0)
-        # Ensure the menu widget area is not covered by widgets created before the titlebar
-        self.main_splitter.hide()
         self.analysis_service.suggestions_changed.connect(lambda items: self.status.set_ai_suggestions_available(bool(items)))
 
         self.setStyleSheet(
@@ -823,8 +821,6 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_menus()
         self._install_title_bar()
-        # Now that the titlebar is installed, show the main content area
-        self.main_splitter.show()
         self.title_bar.back_button.clicked.connect(self._navigate_back)
         self.title_bar.forward_button.clicked.connect(self._navigate_forward)
         self.title_bar.back_button.setToolTip("Back")
