@@ -6,13 +6,14 @@ import json
 import logging
 import platform
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QByteArray, QUrl, QPoint, QEvent, QModelIndex, QSize
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QKeyEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QKeyEvent, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -40,11 +41,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QMenu,
     QStyle,
+    QPlainTextEdit,
 )
 
 from ghostline.core.config import CONFIG_DIR, USER_SETTINGS_PATH, ConfigManager
 from ghostline.core.events import CommandDescriptor, CommandRegistry
 from ghostline.core.logging import LOG_DIR, LOG_FILE
+from ghostline.ui.actions import ActionRegistry, create_all_actions
+from ghostline.ui.menu_builder import MenuBuilder
+from ghostline.ui.menu_actions import MenuActionsMixin
 from ghostline.core.resources import icon_path, load_icon
 from ghostline.core.theme import ThemeManager
 from ghostline.lang.diagnostics import DiagnosticsModel
@@ -495,7 +500,7 @@ class GhostlineTitleBar(QWidget):
         return isinstance(target, (QToolButton, QLineEdit, QMenuBar))
 
 
-class MainWindow(QMainWindow):
+class MainWindow(MenuActionsMixin, QMainWindow):
     """Hosts docks, tabs, and menus."""
 
     konami_sequence = [
@@ -1261,55 +1266,12 @@ class MainWindow(QMainWindow):
                 other.hide()
 
     def _create_actions(self) -> None:
-        self.action_open_file = QAction("Open File", self)
-        self.action_open_file.triggered.connect(self._prompt_open_file)
+        """Create all menu actions using the centralized ActionRegistry."""
+        self.action_registry = ActionRegistry(self)
+        create_all_actions(self, self.action_registry)
 
-        self.action_open_folder = QAction("Open Folder", self)
-        self.action_open_folder.triggered.connect(self._prompt_open_folder)
-
-        self.action_close_folder = QAction("Close Folder", self)
-        self.action_close_folder.triggered.connect(self._close_folder)
-
-        self.action_global_search = QAction("Global Search", self)
-        self.action_global_search.setShortcut("Ctrl+Shift+F")
-        self.action_global_search.triggered.connect(self._trigger_global_search_action)
-
-        self.action_goto_symbol = QAction("Go to Symbol", self)
-        self.action_goto_symbol.triggered.connect(self._open_symbol_picker)
-
-        self.action_goto_file = QAction("Go to File", self)
-        self.action_goto_file.triggered.connect(self._open_file_picker)
-
-        self.action_command_palette = QAction("Command Palette", self)
-        self.action_command_palette.setShortcut("Ctrl+P")
-        self.action_command_palette.triggered.connect(self.show_command_palette)
-
-        self.action_toggle_autoflow = QAction("Toggle Autoflow Mode", self)
-        self.action_toggle_autoflow.setCheckable(True)
-        self.action_toggle_autoflow.triggered.connect(self._toggle_autoflow_mode)
-
-        self.action_toggle_project = QAction("Explorer", self)
-        self.action_toggle_project.setCheckable(True)
-        self.action_toggle_project.setChecked(True)  # Explorer is visible by default
-        self.action_toggle_project.triggered.connect(self._toggle_project)
-
-        self.action_toggle_split_editor = QAction("Split Editor", self)
-        self.action_toggle_split_editor.setCheckable(True)
-        self.action_toggle_split_editor.triggered.connect(self._toggle_split_editor)
-
-        self.action_toggle_terminal = QAction("Terminal", self)
-        self.action_toggle_terminal.setCheckable(True)
-        self.action_toggle_terminal.triggered.connect(self._toggle_terminal)
-
-        self.action_toggle_architecture_map = QAction("3D Architecture Map", self)
-        self.action_toggle_architecture_map.setCheckable(True)
-        self.action_toggle_architecture_map.triggered.connect(self._toggle_architecture_map)
-
-        self.action_toggle_ai_dock = QAction("Ghostline AI", self)
-        self.action_toggle_ai_dock.setCheckable(True)
-        self.action_toggle_ai_dock.setChecked(True)  # AI dock is visible by default
-        self.action_toggle_ai_dock.triggered.connect(self._toggle_ai_dock)
-
+        # Create legacy action references for backward compatibility
+        # These are needed for title bar menus and other existing code
         self.action_editor_settings = QAction("Editor Settings", self)
         self.action_editor_settings.triggered.connect(self._open_settings)
 
@@ -1331,191 +1293,51 @@ class MainWindow(QMainWindow):
         self.action_tasks_view = QAction("Tasks", self)
         self.action_tasks_view.triggered.connect(self._open_tasks_panel)
 
-        self.action_ai_settings = QAction("AI Settings…", self)
-        self.action_ai_settings.triggered.connect(self._open_ai_settings)
+        self.action_toggle_project = QAction("Explorer", self)
+        self.action_toggle_project.setCheckable(True)
+        self.action_toggle_project.setChecked(True)
+        self.action_toggle_project.triggered.connect(self._toggle_project)
 
-        self.action_setup_wizard = QAction("Re-run Setup Wizard…", self)
-        self.action_setup_wizard.triggered.connect(self.show_setup_wizard)
+        self.action_toggle_split_editor = QAction("Split Editor", self)
+        self.action_toggle_split_editor.setCheckable(True)
+        self.action_toggle_split_editor.triggered.connect(self._toggle_split_editor)
 
-        self.action_ai_explain = QAction("Explain Selection", self)
-        self.action_ai_explain.triggered.connect(lambda: self._run_ai_command(explain_selection))
+        self.action_toggle_terminal = QAction("Terminal", self)
+        self.action_toggle_terminal.setCheckable(True)
+        self.action_toggle_terminal.triggered.connect(self._toggle_terminal)
 
-        self.action_ai_refactor = QAction("Refactor Selection", self)
-        self.action_ai_refactor.triggered.connect(lambda: self._run_ai_command(refactor_selection))
+        self.action_toggle_architecture_map = QAction("3D Architecture Map", self)
+        self.action_toggle_architecture_map.setCheckable(True)
+        self.action_toggle_architecture_map.triggered.connect(self._toggle_architecture_map)
 
-        self.action_ai_code_actions = QAction("AI Code Actions...", self)
-        self.action_ai_code_actions.triggered.connect(lambda: self._run_ai_command(ai_code_actions))
-
-        self.action_ask_ai = QAction("Toggle AI Panel", self)
-        self.action_ask_ai.triggered.connect(self.toggle_ai_dock)
-
-        self.action_open_plugins = QAction("Plugins", self)
-        self.action_open_plugins.triggered.connect(self._open_plugin_manager)
-
-        self.action_run_task = QAction("Run Task...", self)
-        self.action_run_task.setShortcut("Ctrl+Shift+R")
-        self.action_run_task.triggered.connect(self._run_task_command)
-
-        self.action_restart_language = QAction("Restart Language Server", self)
-        self.action_restart_language.triggered.connect(self._restart_language_server)
-
-        self.action_format_document = QAction("Format Document", self)
-        self.action_format_document.triggered.connect(self._format_current_document)
-
-        # Edit actions
-        self.action_undo = QAction("Undo", self)
-        self.action_undo.setShortcut("Ctrl+Z")
-        self.action_undo.triggered.connect(lambda: self._with_editor(lambda e: e.undo()))
-
-        self.action_redo = QAction("Redo", self)
-        self.action_redo.setShortcut("Ctrl+Shift+Z")
-        self.action_redo.triggered.connect(lambda: self._with_editor(lambda e: e.redo()))
-
-        self.action_cut = QAction("Cut", self)
-        self.action_cut.setShortcut("Ctrl+X")
-        self.action_cut.triggered.connect(lambda: self._with_editor(lambda e: e.cut()))
-
-        self.action_copy = QAction("Copy", self)
-        self.action_copy.setShortcut("Ctrl+C")
-        self.action_copy.triggered.connect(lambda: self._with_editor(lambda e: e.copy()))
-
-        self.action_paste = QAction("Paste", self)
-        self.action_paste.setShortcut("Ctrl+V")
-        self.action_paste.triggered.connect(lambda: self._with_editor(lambda e: e.paste()))
-
-        self.action_find = QAction("Find", self)
-        self.action_find.setShortcut("Ctrl+F")
-        self.action_find.triggered.connect(self._open_global_search)
-
-        self.action_replace = QAction("Replace", self)
-        self.action_replace.setShortcut("Ctrl+H")
-        self.action_replace.triggered.connect(self._open_global_search)
-
-        self.action_select_all = QAction("Select All", self)
-        self.action_select_all.setShortcut("Ctrl+A")
-        self.action_select_all.triggered.connect(lambda: self._with_editor(lambda e: e.selectAll()))
-
-        # Project/Run/Debug
-        self.action_project_settings = QAction("Project Settings", self)
-        self.action_project_settings.triggered.connect(lambda: self.status.show_message("Project settings coming soon"))
-
-        self.action_run = QAction("Run", self)
-        self.action_run.triggered.connect(lambda: self.status.show_message("Run current project"))
-
-        self.action_run_tests = QAction("Run Tests", self)
-        self.action_run_tests.triggered.connect(self._run_tests)
-
-        self.action_run_tasks = QAction("Run Tasks", self)
-        self.action_run_tasks.triggered.connect(self._run_task_command)
-
-        self.action_start_debugging = QAction("Start Debugging", self)
-        self.action_start_debugging.triggered.connect(lambda: self.status.show_message("Starting debugger"))
-
-        self.action_stop_debugging = QAction("Stop Debugging", self)
-        self.action_stop_debugging.triggered.connect(lambda: self.status.show_message("Debugger stopped"))
-
-        self.action_step_over = QAction("Step Over", self)
-        self.action_step_over.triggered.connect(lambda: self.status.show_message("Step over"))
-
-        self.action_step_into = QAction("Step Into", self)
-        self.action_step_into.triggered.connect(lambda: self.status.show_message("Step into"))
-
-        self.action_step_out = QAction("Step Out", self)
-        self.action_step_out.triggered.connect(lambda: self.status.show_message("Step out"))
-
-        # Help actions
-        self.action_docs = QAction("Documentation", self)
-        self.action_docs.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com")))
-
-        self.action_report_issue = QAction("Report Issue", self)
-        self.action_report_issue.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com")))
-
-        self.action_about = QAction("About Ghostline Studio", self)
-        self.action_about.triggered.connect(self._show_about)
+        self.action_toggle_ai_dock = QAction("Ghostline AI", self)
+        self.action_toggle_ai_dock.setCheckable(True)
+        self.action_toggle_ai_dock.setChecked(True)
+        self.action_toggle_ai_dock.triggered.connect(self._toggle_ai_dock)
 
         self.action_ghost_terminal = QAction("Ghost Terminal...", self)
         self.action_ghost_terminal.setVisible(False)
         self.action_ghost_terminal.triggered.connect(self._open_ghost_terminal)
 
-        self.addActions(
-            [
-                self.action_ghostline_settings,
-                self.action_extensions,
-                self.action_keyboard_shortcuts,
-            ]
-        )
+        self.addActions([
+            self.action_ghostline_settings,
+            self.action_extensions,
+            self.action_keyboard_shortcuts,
+        ])
 
     def _create_menus(self) -> None:
-        menubar = self.menuBar()
-        file_menu = menubar.addMenu("File")
-        file_menu.addAction(self.action_open_file)
-        file_menu.addAction(self.action_open_folder)
-        file_menu.addAction(self.action_close_folder)
-        file_menu.addAction(self.action_project_settings)
-        file_menu.addSeparator()
-        tools_menu = file_menu.addMenu("Tools")
-        tools_menu.addAction(self.action_open_plugins)
-        file_menu.addAction(self.action_ghostline_settings)
+        """Build all menus using the MenuBuilder."""
+        self.menu_builder = MenuBuilder(self, self.action_registry)
+        self.menu_builder.build_all_menus(self.menuBar())
 
-        edit_menu = menubar.addMenu("Edit")
-        edit_menu.addAction(self.action_undo)
-        edit_menu.addAction(self.action_redo)
-        edit_menu.addSeparator()
-        edit_menu.addAction(self.action_cut)
-        edit_menu.addAction(self.action_copy)
-        edit_menu.addAction(self.action_paste)
-        edit_menu.addSeparator()
-        edit_menu.addAction(self.action_format_document)
-        edit_menu.addSeparator()
-        edit_menu.addAction(self.action_find)
-        edit_menu.addAction(self.action_replace)
+        # Store reference to view_menu for dock registration
+        self.view_menu = self.menu_builder.get_menu("view")
 
-        selection_menu = menubar.addMenu("Selection")
-        selection_menu.addAction(self.action_select_all)
-        selection_menu.addSeparator()
-        selection_menu.addAction(self.action_ai_explain)
-        selection_menu.addAction(self.action_ai_refactor)
-
-        self.view_menu = menubar.addMenu("View")
-        self.view_menu.addAction(self.action_command_palette)
-        self.view_menu.addAction(self.action_toggle_project)
-        self.view_menu.addAction(self.action_toggle_split_editor)
-        self.view_menu.addAction(self.action_toggle_architecture_map)
-        self.view_menu.addAction(self.action_toggle_ai_dock)
-        ai_menu = self.view_menu.addMenu("AI")
-        ai_menu.addAction(self.action_ask_ai)
-        ai_menu.addAction(self.action_ai_code_actions)
-        ai_menu.addSeparator()
-        ai_menu.addAction(self.action_ai_settings)
-        ai_menu.addAction(self.action_setup_wizard)
-
-        go_menu = menubar.addMenu("Go")
-        go_menu.addAction(self.action_goto_file)
-        go_menu.addAction(self.action_goto_symbol)
-        go_menu.addAction(self.action_global_search)
-
-        run_menu = menubar.addMenu("Run")
-        run_menu.addAction(self.action_run)
-        run_menu.addAction(self.action_run_tests)
-        run_menu.addAction(self.action_run_task)
-        debug_menu = run_menu.addMenu("Debug")
-        debug_menu.addAction(self.action_start_debugging)
-        debug_menu.addAction(self.action_stop_debugging)
-        debug_menu.addAction(self.action_step_over)
-        debug_menu.addAction(self.action_step_into)
-        debug_menu.addAction(self.action_step_out)
-
-        terminal_menu = menubar.addMenu("Terminal")
-        terminal_menu.addAction(self.action_toggle_terminal)
-        terminal_menu.addAction(self.action_restart_language)
-
-        help_menu = menubar.addMenu("Help")
-        help_menu.addAction(self.action_docs)
-        help_menu.addAction(self.action_report_issue)
-        help_menu.addAction(self.action_about)
-        # Hidden easter egg: hold Shift while opening the Help menu to reveal Ghost Terminal.
-        help_menu.aboutToShow.connect(self._on_help_menu_about_to_show)
-        help_menu.addAction(self.action_ghost_terminal)
+        # Connect help menu easter egg
+        help_menu = self.menu_builder.get_menu("help")
+        if help_menu:
+            help_menu.aboutToShow.connect(self._on_help_menu_about_to_show)
+            help_menu.addAction(self.action_ghost_terminal)
 
     def _search_workspace_files(self, query: str):
         workspace = self.workspace_manager.current_workspace
