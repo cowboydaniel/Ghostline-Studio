@@ -1,199 +1,174 @@
-# Release Process
+# Automatic Release Process
 
-This project has automated release workflows that create GitHub releases automatically.
+This project uses **fully automatic releases** with `auto-release.yml`.
 
-## Two Release Workflows
+## How It Works
 
-### 1. **Tag-Based Release** (Recommended) - `release.yml`
+Every time you **push a commit to `main`**, the workflow automatically:
 
-Triggers when you push a **git tag** matching the pattern `v*` (e.g., `v0.1.0`).
+1. ✅ Calculates the next version (auto-increments patch version)
+2. ✅ Creates a git tag with the new version
+3. ✅ Creates a GitHub Release with commit details
+4. ✅ Uses your commit message as release notes
 
-**Usage:**
-```bash
-# Update the version in pyproject.toml
-vim pyproject.toml
-# Change: version = "0.1.0"
-
-# Commit the change
-git add pyproject.toml
-git commit -m "Bump version to 0.1.0"
-
-# Create and push a git tag
-git tag -a v0.1.0 -m "Release version 0.1.0"
-git push origin v0.1.0
-```
-
-The workflow will:
-- ✅ Read the version from the tag
-- ✅ Extract release notes from `CHANGELOG.md`
-- ✅ Create a GitHub Release with release notes
-- ✅ Fallback to commit message if CHANGELOG entry doesn't exist
-
-**Advantages:**
-- Clean separation between commits and releases
-- Explicit control over when releases happen
-- Multiple commits can be grouped into one release
-- Standard Git workflow
+**That's it!** No manual steps, no file updates, no tags to create.
 
 ---
 
-### 2. **Commit-Based Release** (Alternative) - `release-on-commit.yml`
+## Usage - Just Commit and Push!
 
-Triggers on **every commit** to `main`/`master` (if Python files or `pyproject.toml` changes).
-
-**Usage:**
 ```bash
-# Update version in pyproject.toml
-vim pyproject.toml
-# Change: version = "0.2.0"
+# Make your changes
+git add .
+git commit -m "Add new feature X"
 
-# Commit and push
-git add pyproject.toml
-git commit -m "Bump version to 0.2.0"
+# Push to main
 git push origin main
-```
 
-The workflow will:
-- ✅ Read version from `pyproject.toml`
-- ✅ Check if release already exists (avoid duplicates)
-- ✅ Create a git tag automatically
-- ✅ Create a GitHub Release
-- ✅ Use CHANGELOG.md for release notes (if available)
-
-**Advantages:**
-- Automatic release on every commit
-- No manual tag creation needed
-- Simpler workflow for frequent releases
-
----
-
-## CHANGELOG Format
-
-For both workflows to extract release notes automatically, maintain a `CHANGELOG.md` following this format:
-
-```markdown
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-## [0.1.0] - 2025-12-17
-
-### Added
-- Initial release of Ghostline Studio
-- Local account authentication system
-- Usage statistics tracking
-- Quick settings panel
-- Update checker with GitHub API integration
-- Documentation viewer
-- Community and Changelog dialogs
-- Diagnostics exporter with sensitive data redaction
-
-### Fixed
-- Network error handling for update checker
-
-### Changed
-- Improved error messages for offline scenarios
-
-## [0.0.1] - 2025-12-01
-
-### Added
-- Project initialization
+# 🚀 GitHub Actions automatically creates a release!
 ```
 
 ---
 
-## Which Workflow to Use?
+## Release Notes
 
-Choose based on your release strategy:
+Release notes come from your **commit message**:
 
-| Scenario | Workflow | Command |
-|----------|----------|---------|
-| Stable releases with controlled versioning | `release.yml` (tag-based) | `git tag -a v0.1.0` |
-| Continuous delivery / frequent releases | `release-on-commit.yml` | Update `pyproject.toml` |
-| Both scenarios | Keep both enabled | They don't conflict |
+```bash
+git commit -m "Add new feature X
 
-**Recommended:** Use **`release.yml`** (tag-based) for clear version control and explicit release management.
+This is a longer description that will appear in the release notes.
+- Feature added
+- Bug fixed
+- Improvement made"
+
+git push origin main
+# Release is created with your commit message as the release body!
+```
 
 ---
 
-## GitHub Token
+## Version Numbering
 
-Both workflows use `GITHUB_TOKEN` (provided by GitHub Actions automatically) to create releases. No additional configuration needed.
+The workflow automatically:
+- Fetches the latest release version (e.g., `v1.2.3`)
+- Increments the patch version → `v1.2.4`
+- Pushes the new tag and creates a release
 
-## Disabling Workflows
+**First release:** If there are no previous releases, it starts with `v0.0.1`.
 
-To disable automatic releases, either:
-1. Delete or rename the `.github/workflows/release*.yml` files, or
-2. Add `[skip ci]` to your commit message (note: GitHub Actions doesn't respect this by default)
+---
+
+## Release Details
+
+Each release includes:
+- ✅ Commit message as release notes
+- ✅ Commit SHA (short hash)
+- ✅ Author name
+- ✅ Download links
+- ✅ Comparison links (what changed since last release)
 
 ---
 
 ## Examples
 
-### Example 1: Using Tag-Based Release
+### Example 1: Simple commit
 
 ```bash
-# Work on features
-git add .
-git commit -m "Add new feature X"
-git push
-
-# When ready to release:
-# 1. Update version
-sed -i 's/version = "0.1.0"/version = "0.2.0"/' pyproject.toml
-
-# 2. Update CHANGELOG
-vim CHANGELOG.md
-# Add new [0.2.0] section
-
-# 3. Commit version bump
-git add pyproject.toml CHANGELOG.md
-git commit -m "Bump version to 0.2.0"
-git push
-
-# 4. Create release (triggers workflow)
-git tag -a v0.2.0 -m "Release v0.2.0"
-git push origin v0.2.0
-
-# GitHub Actions automatically creates the release!
-```
-
-### Example 2: Using Commit-Based Release
-
-```bash
-# Update version and commit
-sed -i 's/version = "0.1.0"/version = "0.2.0"/' pyproject.toml
-git add pyproject.toml
-git commit -m "Bump version to 0.2.0"
+git commit -m "Fix typo in menu"
 git push origin main
-
-# GitHub Actions automatically creates the release!
+# Creates release v0.0.1 with "Fix typo in menu" as release notes
 ```
+
+### Example 2: Multi-line commit
+
+```bash
+git commit -m "Implement quick settings panel
+
+- Add theme selector
+- Add font size control
+- Add autosave settings
+- Apply changes in real-time"
+
+git push origin main
+# Creates release with full description as release notes
+```
+
+### Example 3: Continuous commits
+
+```bash
+git commit -m "Add feature A"
+git push  # Release v0.0.1 created
+
+git commit -m "Fix bug in A"
+git push  # Release v0.0.2 created
+
+git commit -m "Add feature B"
+git push  # Release v0.0.3 created
+```
+
+---
+
+## No Manual Actions Required!
+
+| What NOT to do | Why |
+|---|---|
+| Don't create git tags manually | Workflow creates them automatically |
+| Don't update version files | Workflow manages versions |
+| Don't update CHANGELOG | Use commit messages instead |
+| Don't manage releases manually | Workflow does it all |
+
+---
+
+## Disabling Auto-Release
+
+To temporarily disable auto-releases:
+
+**Option 1:** Rename the workflow file
+```bash
+mv .github/workflows/auto-release.yml .github/workflows/auto-release.yml.disabled
+```
+
+**Option 2:** Delete the workflow
+```bash
+rm .github/workflows/auto-release.yml
+```
+
+**Option 3:** Disable in GitHub UI
+- Go to Settings → Actions → Disable for this repository
+
+---
+
+## Viewing Releases
+
+Releases appear automatically on:
+- **GitHub:** https://github.com/cowboydaniel/Ghostline-Studio/releases
+- **GitHub Actions:** Settings → Actions → Workflow runs
 
 ---
 
 ## Troubleshooting
 
-**Release wasn't created?**
-- Check `.github/workflows/` files exist
-- Verify tag/commit matches trigger pattern
-- Check GitHub Actions log: Settings → Actions → Workflow runs
-- Ensure `CHANGELOG.md` or commit message exists
+**No release created?**
+- Check that you pushed to `main` (not another branch)
+- Check GitHub Actions: Settings → Actions → Workflow runs
+- Verify the workflow file exists: `.github/workflows/auto-release.yml`
 
-**Multiple releases created?**
-- Both workflows might be enabled. Choose one or rename the other.
-- Or disable one workflow temporarily.
+**Release with wrong version?**
+- The workflow auto-increments from the latest GitHub release
+- Check https://github.com/cowboydaniel/Ghostline-Studio/releases for current version
 
-**Release notes are empty?**
-- Add release notes to `CHANGELOG.md` in the correct format
-- Or ensure commit message is descriptive
+**Want to skip a commit?**
+- Use `[skip ci]` in commit message (note: GitHub Actions doesn't respect this by default, but you can modify the workflow if needed)
 
 ---
 
-## Next Steps
+## That's All!
 
-1. **Choose your workflow** (recommend: tag-based)
-2. **Update version** in `pyproject.toml`
-3. **Update CHANGELOG.md** with release notes
-4. **Push tag** (tag-based) or **commit** (commit-based)
-5. **GitHub Actions creates release automatically** ✨
+Just commit and push to main. Releases happen automatically. 🚀
+
+---
+
+## GitHub Token
+
+The workflow uses `GITHUB_TOKEN` (provided by GitHub Actions automatically) to create releases. No additional configuration needed.
