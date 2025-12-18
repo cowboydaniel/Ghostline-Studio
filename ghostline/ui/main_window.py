@@ -2146,6 +2146,11 @@ class MainWindow(MenuActionsMixin, QMainWindow):
         if not dock:
             return
 
+        if checked and not self._ensure_ai_ready():
+            if hasattr(self, "action_toggle_ai_dock"):
+                self.action_toggle_ai_dock.setChecked(False)
+            return
+
         dock.setVisible(checked)
 
         # Make sure the right region is visible when turning the AI panel on
@@ -2199,6 +2204,8 @@ class MainWindow(MenuActionsMixin, QMainWindow):
         result = wizard.exec()
         if result == QDialog.Accepted:
             self.first_run = False
+            if self.ai_client:
+                self.ai_client.refresh_from_config()
             self.status.show_message("Setup complete")
         elif initial_run and not self.config.get("first_run_completed", False):
             self.status.show_message("Setup cancelled")
@@ -2471,6 +2478,21 @@ class MainWindow(MenuActionsMixin, QMainWindow):
         else:
             self.status.show_message("No tasks configured in .ghostline/tasks.yaml")
 
+    def _ensure_ai_ready(self) -> bool:
+        """Return True if AI features are configured; otherwise prompt the user."""
+
+        if self.ai_client and self.ai_client.has_credentials():
+            return True
+
+        message = (
+            "AI features require configured API credentials. "
+            "Open the setup wizard to add your OpenAI or Claude keys."
+        )
+        QMessageBox.information(self, "AI setup required", message)
+        self.show_setup_wizard()
+
+        return bool(self.ai_client and self.ai_client.has_credentials())
+
     def _restart_language_server(self) -> None:
         languages = sorted(set(self.lsp_manager._language_map.values()))
         if not languages:
@@ -2480,11 +2502,15 @@ class MainWindow(MenuActionsMixin, QMainWindow):
             self.lsp_manager.restart_language_server(lang)
 
     def _run_ai_command(self, func) -> None:
+        if not self._ensure_ai_ready():
+            return
         editor = self.get_current_editor()
         if editor:
             func(editor, self.ai_client)
 
     def toggle_ai_dock(self) -> None:
+        if not self._ensure_ai_ready():
+            return
         # Toggle the entire right region container visibility
         right_region = getattr(self, "right_region_container", None)
         if not right_region:
