@@ -3,6 +3,9 @@
 Ghostline Studio is a modular, extensible, AI-augmented development environment built with PySide6.
 It provides a full editor workspace, language tooling, an embedded terminal, a plugin system, and a multi-agent AI pipeline designed for deep code understanding and automated workflows.
 
+> **Windows support note**
+> PySide6 wheels are not yet available for Python 3.14 on Windows. Install Python 3.13 (or earlier) when running Ghostline Studio on Windows to avoid dependency resolution errors. Linux and macOS builds can use Python 3.14.
+
 Ghostline Studio is structured as a platform: nearly every subsystem is modular, replaceable, and designed for extension.
 
 ---
