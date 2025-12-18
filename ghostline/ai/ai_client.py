@@ -565,6 +565,15 @@ class AIClient:
         self._analysis_in_progress: set[Path] = set()  # Track files being analyzed
         self._analysis_lock = threading.Lock()  # Protect analysis deduplication
         self._ollama_process: subprocess.Popen | None = None
+        self._backends: dict[str, object] = {}
+        self._load_settings()
+        self._initialize_backends()
+
+        # Register cleanup handler for subprocess cleanup
+        import atexit
+        atexit.register(self._cleanup_processes)
+
+    def _load_settings(self) -> None:
         ai_settings = self.config.get("ai", {}) if self.config else {}
         providers = ai_settings.get("providers", {}) if ai_settings else {}
         self.settings = SimpleNamespace(allow_openai=bool(ai_settings.get("allow_openai", True)))
@@ -575,25 +584,28 @@ class AIClient:
         ).rstrip("/")
         self.settings.timeout_seconds = ai_settings.get("timeout_seconds", 30)
         self.backend_type = self.config.get("ai", {}).get("backend", "dummy")
-        self.disabled = self.backend_type in {"none", "disabled"}
-        self._backends: dict[str, object] = {}
-        self.backend = self._create_backend()
         self.secondary_backend_type = self.config.get("ai", {}).get("secondary_backend")
-        self.secondary_backend = self._create_backend(self.secondary_backend_type) if self.secondary_backend_type else None
+        self.disabled = self.backend_type in {"none", "disabled"}
         self.active_model: ModelDescriptor | None = None
         openai_models = ai_settings.get("providers", {}).get("openai", {}).get("enabled_models", []) or []
         claude_models = ai_settings.get("providers", {}).get("claude", {}).get("enabled_models", []) or []
+        self._openai_model_ids = [model.lower() for model in openai_models]
+        self._claude_model_ids = [model.lower() for model in claude_models]
+
+    def _initialize_backends(self) -> None:
+        # Reset backend cache when initializing
+        with self._backends_lock:
+            self._backends.clear()
+
+        self.backend = self._create_backend()
+        self.secondary_backend = self._create_backend(self.secondary_backend_type) if self.secondary_backend_type else None
         self.backends = {
             "ollama": self._create_backend("ollama"),
             "openai": self._create_backend("openai"),
             "claude": self._create_backend("claude"),
-            "openai_models": [model.lower() for model in openai_models],
-            "claude_models": [model.lower() for model in claude_models],
+            "openai_models": list(self._openai_model_ids),
+            "claude_models": list(self._claude_model_ids),
         }
-
-        # Register cleanup handler for subprocess cleanup
-        import atexit
-        atexit.register(self._cleanup_processes)
 
     def _cleanup_processes(self) -> None:
         """Cleanup all managed subprocesses to prevent resource leaks."""
@@ -624,9 +636,19 @@ class AIClient:
         if backend == "ollama":
             instance = OllamaBackend(self.config)
         elif backend == "openai":
-            instance = OpenAICompatibleBackend(self.config)
+            if not self._has_api_key("openai"):
+                self.logger.info("[AIClient] OpenAI backend requested without API key; using dummy backend")
+                instance = DummyBackend(self.config)
+                backend = "dummy"
+            else:
+                instance = OpenAICompatibleBackend(self.config)
         elif backend == "claude":
-            instance = ClaudeBackend(self.config)
+            if not self._has_api_key("claude"):
+                self.logger.info("[AIClient] Claude backend requested without API key; using dummy backend")
+                instance = DummyBackend(self.config)
+                backend = "dummy"
+            else:
+                instance = ClaudeBackend(self.config)
         else:
             instance = DummyBackend(self.config)
         setattr(instance, "name", backend)
@@ -640,6 +662,38 @@ class AIClient:
             self._backends[backend] = instance
 
         return instance
+
+    def _has_api_key(self, provider: str) -> bool:
+        ai_settings = self.config.get("ai", {}) if self.config else {}
+        providers = ai_settings.get("providers", {}) if ai_settings else {}
+        if provider == "openai":
+            return bool(providers.get("openai", {}).get("api_key") or ai_settings.get("api_key"))
+        if provider == "claude":
+            return bool(providers.get("claude", {}).get("api_key") or ai_settings.get("claude_api_key"))
+        return False
+
+    def refresh_from_config(self) -> None:
+        """Reload AI settings and rebuild backend instances after config changes."""
+
+        self._load_settings()
+        self._initialize_backends()
+
+    def has_credentials(self) -> bool:
+        """Return True if the active backend has required credentials configured."""
+
+        if self.disabled:
+            return False
+
+        if self.backend_type == "ollama":
+            return True
+
+        if self.backend_type == "openai":
+            return self._has_api_key("openai")
+
+        if self.backend_type == "claude":
+            return self._has_api_key("claude")
+
+        return False
 
     def _get_backend_for_model(self, model_name: str):
         """Return the correct backend and never fall back to OpenAI."""
