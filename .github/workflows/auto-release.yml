@@ -73,6 +73,32 @@ jobs:
           echo "sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
           echo "author=$COMMIT_AUTHOR" >> $GITHUB_OUTPUT
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Linux installer package
+        run: |
+          # Create installer package directory
+          mkdir -p ghostline-studio-installer
+
+          # Copy all necessary files
+          cp -r ghostline ghostline-studio-installer/
+          cp pyproject.toml ghostline-studio-installer/
+          cp README.md ghostline-studio-installer/
+          cp install.sh ghostline-studio-installer/
+          cp LICENSE ghostline-studio-installer/ 2>/dev/null || true
+
+          # Create tarball
+          tar -czf ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-installer.tar.gz ghostline-studio-installer/
+
+          # Create checksum
+          sha256sum ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-installer.tar.gz > ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-installer.tar.gz.sha256
+
+          echo "Installer package created successfully"
+          ls -lh ghostline-studio-*.tar.gz*
+
       - name: Create git tag
         run: |
           git config user.name "github-actions[bot]"
@@ -96,8 +122,31 @@ jobs:
 
             ---
 
-            [Download](https://github.com/${{ github.repository }}/archive/refs/tags/${{ steps.next_version.outputs.new_tag }}.zip) | [Compare](https://github.com/${{ github.repository }}/compare/${{ steps.latest_release.outputs.latest_tag }}...${{ steps.next_version.outputs.new_tag }})
+            ### 📥 Installation
+
+            #### Linux
+            Download the installer package and run:
+            ```bash
+            # Download and extract
+            tar -xzf ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-installer.tar.gz
+            cd ghostline-studio-installer
+
+            # Run installer
+            ./install.sh
+            ```
+
+            The installer will:
+            - Check for Python 3.11+
+            - Install Ghostline Studio and dependencies
+            - Create a launcher script
+            - Add a desktop entry
+
+            #### Other Platforms
+            [Download Source](https://github.com/${{ github.repository }}/archive/refs/tags/${{ steps.next_version.outputs.new_tag }}.zip) | [Compare Changes](https://github.com/${{ github.repository }}/compare/${{ steps.latest_release.outputs.latest_tag }}...${{ steps.next_version.outputs.new_tag }})
           draft: false
           prerelease: false
+          files: |
+            ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-installer.tar.gz
+            ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-installer.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
