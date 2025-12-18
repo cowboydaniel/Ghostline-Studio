@@ -1,4 +1,4 @@
-"""Windsurf-style terminal widget with sessions, controls, and proper layout."""
+"""Integrated terminal widget with sessions, controls, and proper layout."""
 from __future__ import annotations
 
 import os
@@ -44,9 +44,9 @@ class TerminalSession:
         self.session_id = id(self)
 
 
-class WindsurfTerminalWidget(QWidget):
+class IntegratedTerminalWidget(QWidget):
     """
-    Complete Windsurf-style terminal widget with compact toolbar and slim sidebar.
+    Complete integrated terminal widget with compact toolbar and slim sidebar.
     """
 
     def __init__(self, workspace_manager: WorkspaceManager, parent=None, use_external_toolbar: bool = True) -> None:
@@ -64,7 +64,7 @@ class WindsurfTerminalWidget(QWidget):
         self.active_profile = next(iter(self.profile_commands.keys()), "Python")
         self.cwd_label = QLabel(self)
 
-        self.setObjectName("windsurfTerminal")
+        self.setObjectName("integratedTerminal")
         self._setup_ui()
         self._create_initial_session()
 

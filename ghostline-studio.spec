@@ -85,7 +85,7 @@ a = Analysis(
         # Terminal modules (platform-specific)
         'ghostline.terminal.pty_terminal',
         'ghostline.terminal.windows_terminal',
-        'ghostline.terminal.windsurf_terminal',
+        'ghostline.terminal.integrated_terminal',
 
         # All ghostline submodules
         *ghostline_modules,
@@ -145,5 +145,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # TODO: Add application icon
+    icon='ghostline_logo.ico' if sys.platform == 'win32' else None,  # Ghostline logo
 )

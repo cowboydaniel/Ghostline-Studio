@@ -115,7 +115,7 @@ from ghostline.ui.docks.panel_widgets import (
 from ghostline.workspace.workspace_manager import WorkspaceManager
 from ghostline.workspace.project_model import ProjectModel
 from ghostline.workspace.project_view import ProjectView
-from ghostline.terminal.windsurf_terminal import WindsurfTerminalWidget
+from ghostline.terminal.integrated_terminal import IntegratedTerminalWidget
 from ghostline.vcs.git_integration import GitIntegration
 from ghostline.vcs.git_panel import GitPanel
 from ghostline.vcs.git_service import GitService
@@ -1365,7 +1365,7 @@ class MainWindow(MenuActionsMixin, QMainWindow):
         self.problems_panel = ProblemsPanel(self)
         self.output_panel = OutputPanel(self)
         self.debug_console_panel = DebugConsolePanel(self)
-        self.terminal_widget = WindsurfTerminalWidget(self.workspace_manager, self, use_external_toolbar=True)
+        self.terminal_widget = IntegratedTerminalWidget(self.workspace_manager, self, use_external_toolbar=True)
         self.ports_panel = PortsPanel(self)
 
         # Add panels to bottom panel in Windsurf order
