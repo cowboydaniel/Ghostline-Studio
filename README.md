@@ -321,6 +321,29 @@ Configure any compliant LSP server via settings.
 
 ---
 
+## Windows packaging and uninstall
+
+### Build the installer and uninstaller
+1. On Windows, install Python dependencies and ensure `pyinstaller` and Inno Setup (`ISCC.exe`) are on your `PATH`.
+2. Build the Windows executable with PyInstaller:
+   ```powershell
+   pyinstaller --clean --noconfirm ghostline-studio.spec
+   ```
+   This produces `dist/ghostline-studio.exe` referenced by the Inno Setup script.
+3. Generate the installer (which also embeds the uninstaller) with Inno Setup:
+   ```powershell
+   iscc installer-windows.iss
+   ```
+   The signed installer is written to `dist/ghostline-studio-setup-<version>-windows-x86_64.exe` and registers clear entries in Start Menu and "Apps & Features".
+
+### Trigger the uninstaller
+- Use the Start Menu shortcut **Ghostline Studio → Uninstall Ghostline Studio** created by the installer, or
+- Open **Settings → Apps → Installed apps** (or **Control Panel → Programs and Features**) and select **Ghostline Studio**.
+
+During uninstall, you will be prompted whether to delete user data (settings, caches, and logs) stored under `%APPDATA%\ghostline`. Choose **No** to keep your configuration or **Yes** for a full cleanup.
+
+---
+
 ## Status
 
 Ghostline Studio is under active development.
