@@ -10,9 +10,16 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Create Automatic Release
+  prepare:
+    name: Prepare Release Info
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next_version.outputs.new_version }}
+      tag: ${{ steps.next_version.outputs.new_tag }}
+      latest_tag: ${{ steps.latest_release.outputs.latest_tag }}
+      commit_msg: ${{ steps.commit.outputs.message }}
+      commit_sha: ${{ steps.commit.outputs.sha }}
+      commit_author: ${{ steps.commit.outputs.author }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,6 +79,14 @@ jobs:
           echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
           echo "sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
           echo "author=$COMMIT_AUTHOR" >> $GITHUB_OUTPUT
+
+  build-linux:
+    name: Build Linux Executable
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -187,47 +202,186 @@ jobs:
           EOF
 
           # Create tarball
-          tar -czf ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-x86_64.tar.gz ghostline-studio-linux/
+          tar -czf ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz ghostline-studio-linux/
 
           # Create checksum
-          sha256sum ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-x86_64.tar.gz > ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-x86_64.tar.gz.sha256
+          sha256sum ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz > ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz.sha256
 
           echo "Distribution package created"
           ls -lh ghostline-studio-*.tar.gz*
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-executable
+          path: |
+            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz
+            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz.sha256
+
+  build-windows:
+    name: Build Windows Executable
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build standalone executable with PyInstaller
+        run: |
+          pyinstaller ghostline-studio.spec
+
+          # Verify the executable was created
+          if (!(Test-Path "dist\ghostline-studio.exe")) {
+            Write-Error "Error: Executable not created"
+            exit 1
+          }
+
+          # Get file size
+          Get-ChildItem dist\ghostline-studio.exe
+
+          Write-Output "Standalone executable created successfully"
+        shell: pwsh
+
+      - name: Create distribution package
+        run: |
+          # Create distribution directory
+          New-Item -ItemType Directory -Force -Path ghostline-studio-windows
+
+          # Copy executable
+          Copy-Item dist\ghostline-studio.exe ghostline-studio-windows\
+
+          # Create README for the distribution
+          @"
+          Ghostline Studio - Standalone Windows Executable
+          ==================================================
+
+          This is a standalone executable for Windows systems.
+          No installation required - just run the executable!
+
+          Usage:
+          ------
+          1. Double-click ghostline-studio.exe to launch
+
+          2. Or run from command line:
+             ghostline-studio.exe
+
+          3. Optional - Open a specific file or directory:
+             ghostline-studio.exe C:\path\to\file
+             ghostline-studio.exe C:\path\to\directory
+
+          System Requirements:
+          --------------------
+          - Windows 10 or later (64-bit)
+          - No additional software required
+          - All dependencies are bundled
+
+          Configuration:
+          --------------
+          User settings are stored in: %APPDATA%\ghostline\
+
+          For more information, visit:
+          https://github.com/cowboydaniel/Ghostline-Studio
+          "@ | Out-File -FilePath ghostline-studio-windows\README.txt -Encoding UTF8
+
+          # Create ZIP archive
+          Compress-Archive -Path ghostline-studio-windows\* -DestinationPath ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip
+
+          # Create checksum
+          $hash = Get-FileHash ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip -Algorithm SHA256
+          "$($hash.Hash.ToLower())  ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip" | Out-File -FilePath ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip.sha256 -Encoding ASCII
+
+          Write-Output "Distribution package created"
+          Get-ChildItem ghostline-studio-*.zip*
+        shell: pwsh
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-executable
+          path: |
+            ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip
+            ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip.sha256
+
+  release:
+    name: Create GitHub Release
+    needs: [prepare, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-executable
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-executable
 
       - name: Create git tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a ${{ steps.next_version.outputs.new_tag }} -m "Release ${{ steps.next_version.outputs.new_tag }}"
-          git push origin ${{ steps.next_version.outputs.new_tag }}
+          git tag -a ${{ needs.prepare.outputs.tag }} -m "Release ${{ needs.prepare.outputs.tag }}"
+          git push origin ${{ needs.prepare.outputs.tag }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.next_version.outputs.new_tag }}
-          name: Release ${{ steps.next_version.outputs.new_version }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Release ${{ needs.prepare.outputs.version }}
           body: |
-            ## Ghostline Studio ${{ steps.next_version.outputs.new_version }}
+            ## Ghostline Studio ${{ needs.prepare.outputs.version }}
 
-            **Commit:** `${{ steps.commit.outputs.sha }}`
-            **Author:** ${{ steps.commit.outputs.author }}
+            **Commit:** `${{ needs.prepare.outputs.commit_sha }}`
+            **Author:** ${{ needs.prepare.outputs.commit_author }}
 
             ### Changes
-            ${{ steps.commit.outputs.message }}
+            ${{ needs.prepare.outputs.commit_msg }}
 
             ---
 
             ### 📥 Download & Run
 
-            #### Standalone Linux Executable (Recommended)
+            ## Windows
 
-            **One-click download and run - No installation required!**
+            **Download, extract, and double-click - No installation required!**
+
+            1. Download: [`ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip`](https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}/ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip)
+            2. Extract the ZIP file
+            3. Double-click `ghostline-studio.exe`
+
+            **What's included:**
+            - Complete standalone .exe (~200-300MB)
+            - All dependencies bundled
+            - No Python installation needed
+            - Works on Windows 10+ (64-bit)
+
+            ---
+
+            ## Linux
+
+            **Download, extract, and run - No installation required!**
 
             ```bash
             # Download and extract
-            wget https://github.com/${{ github.repository }}/releases/download/${{ steps.next_version.outputs.new_tag }}/ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-x86_64.tar.gz
-            tar -xzf ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-x86_64.tar.gz
+            wget https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}/ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz
+            tar -xzf ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz
             cd ghostline-studio-linux
 
             # Run (that's it!)
@@ -236,21 +390,14 @@ jobs:
 
             **What's included:**
             - Complete standalone executable (~200-300MB)
-            - All Python dependencies bundled
-            - All Qt libraries included
+            - All dependencies bundled
             - No Python installation needed
-            - No pip, no virtual environments, no setup
-
-            **System Requirements:**
-            - Linux x86_64 (Ubuntu 20.04+, Debian, Fedora, Arch, etc.)
-            - Basic system libraries (OpenGL, glibc 2.31+)
-            - X11 or Wayland display
+            - Works on Ubuntu 20.04+, Debian, Fedora, Arch, etc.
 
             ---
 
-            #### Other Options
+            ## From Source
 
-            **From Source:**
             ```bash
             git clone https://github.com/${{ github.repository }}.git
             cd Ghostline-Studio
@@ -258,12 +405,16 @@ jobs:
             python -m ghostline.main
             ```
 
+            ---
+
             **Links:**
-            [Download Source](https://github.com/${{ github.repository }}/archive/refs/tags/${{ steps.next_version.outputs.new_tag }}.zip) | [Compare Changes](https://github.com/${{ github.repository }}/compare/${{ steps.latest_release.outputs.latest_tag }}...${{ steps.next_version.outputs.new_tag }})
+            [Download Source](https://github.com/${{ github.repository }}/archive/refs/tags/${{ needs.prepare.outputs.tag }}.zip) | [Compare Changes](https://github.com/${{ github.repository }}/compare/${{ needs.prepare.outputs.latest_tag }}...${{ needs.prepare.outputs.tag }})
           draft: false
           prerelease: false
           files: |
-            ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-x86_64.tar.gz
-            ghostline-studio-${{ steps.next_version.outputs.new_version }}-linux-x86_64.tar.gz.sha256
+            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz
+            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz.sha256
+            ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip
+            ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
