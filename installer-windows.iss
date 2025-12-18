@@ -19,6 +19,7 @@ AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
+UninstallDisplayName={#MyAppName}
 AllowNoIcons=yes
 ; LicenseFile=LICENSE
 OutputDir=dist
@@ -60,4 +61,16 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 
 [UninstallDelete]
 ; Clean up user configuration on uninstall (optional)
-Type: filesandordirs; Name: "{userappdata}\ghostline"
+Type: filesandordirs; Name: "{userappdata}\ghostline"; Check: ShouldRemoveUserData
+
+[Code]
+function ShouldRemoveUserData: Boolean;
+var
+  Response: Integer;
+begin
+  Response := MsgBox(
+    'Do you want to remove your Ghostline Studio user data (settings, caches, and logs)?',
+    mbConfirmation,
+    MB_YESNO or MB_DEFBUTTON2);
+  Result := Response = IDYES;
+end;
