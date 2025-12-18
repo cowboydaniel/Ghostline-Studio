@@ -156,6 +156,18 @@ jobs:
           cp installer-linux.sh ghostline-studio-installer/install.sh
           chmod +x ghostline-studio-installer/install.sh
 
+          # Convert SVG logo to PNG for Linux desktop icon
+          # Install ImageMagick if not available
+          if ! command -v convert &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y imagemagick
+          fi
+
+          # Convert the logo to PNG format (256x256 for desktop icon)
+          convert ghostline/resources/icons/ghostline_logo.svg -resize 256x256 ghostline-studio-installer/ghostline-studio.png
+
+          echo "Logo converted and added to installer package"
+
           # Create README for the installer
           cat > ghostline-studio-installer/README.txt << 'EOF'
           Ghostline Studio - Linux Installer
@@ -269,10 +281,25 @@ jobs:
           Write-Output "Standalone executable created successfully"
         shell: pwsh
 
-      - name: Install Inno Setup
+      - name: Install Inno Setup and ImageMagick
         run: |
-          # Download and install Inno Setup
-          choco install innosetup -y
+          # Download and install Inno Setup and ImageMagick for icon conversion
+          choco install innosetup imagemagick -y
+        shell: pwsh
+
+      - name: Convert SVG logo to ICO
+        run: |
+          # Convert the SVG logo to ICO format for the installer
+          magick convert ghostline\resources\icons\ghostline_logo.svg -resize 256x256 -define icon:auto-resize=256,128,96,64,48,32,16 ghostline_logo.ico
+
+          # Verify the icon was created
+          if (!(Test-Path "ghostline_logo.ico")) {
+            Write-Error "Icon conversion failed"
+            exit 1
+          }
+
+          Write-Output "Icon converted successfully"
+          Get-ChildItem ghostline_logo.ico
         shell: pwsh
 
       - name: Create Windows installer with Inno Setup

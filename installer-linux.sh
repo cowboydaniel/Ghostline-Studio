@@ -80,9 +80,9 @@ EOF
 chmod +x "$DESKTOP_DIR/ghostline-studio.desktop"
 
 # Install icon if available
-if [ -f "$SCRIPT_DIR/app-icon.png" ]; then
+if [ -f "$SCRIPT_DIR/ghostline-studio.png" ]; then
     echo "Installing application icon..."
-    cp "$SCRIPT_DIR/app-icon.png" "$ICON_DIR/ghostline-studio.png"
+    cp "$SCRIPT_DIR/ghostline-studio.png" "$ICON_DIR/ghostline-studio.png"
 fi
 
 # Update desktop database

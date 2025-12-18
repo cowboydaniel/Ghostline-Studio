@@ -4,7 +4,7 @@
 
 #define MyAppName "Ghostline Studio"
 #define MyAppVersion "0.1.0"
-#define MyAppPublisher "Cowboy Daniel"
+#define MyAppPublisher "Ghostline Continuum"
 #define MyAppURL "https://github.com/cowboydaniel/Ghostline-Studio"
 #define MyAppExeName "ghostline-studio.exe"
 
@@ -23,7 +23,7 @@ AllowNoIcons=yes
 ; LicenseFile=LICENSE
 OutputDir=dist
 OutputBaseFilename=ghostline-studio-setup-{#MyAppVersion}-windows-x86_64
-; SetupIconFile=ghostline\resources\icons\app-icon.ico
+SetupIconFile=ghostline_logo.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
