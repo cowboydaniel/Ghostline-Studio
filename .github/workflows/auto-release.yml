@@ -143,42 +143,62 @@ jobs:
 
           echo "Standalone executable created successfully"
 
-      - name: Create distribution package
+      - name: Create Linux installer package
         run: |
           # Create distribution directory
-          mkdir -p ghostline-studio-linux
+          mkdir -p ghostline-studio-installer
 
           # Copy executable
-          cp dist/ghostline-studio ghostline-studio-linux/
+          cp dist/ghostline-studio ghostline-studio-installer/
+          chmod +x ghostline-studio-installer/ghostline-studio
 
-          # Create README for the distribution
-          cat > ghostline-studio-linux/README.txt << 'EOF'
-          Ghostline Studio - Standalone Linux Executable
-          ================================================
+          # Copy installer script
+          cp installer-linux.sh ghostline-studio-installer/install.sh
+          chmod +x ghostline-studio-installer/install.sh
 
-          This is a standalone executable for Linux systems.
-          No installation required - just run the executable!
+          # Create README for the installer
+          cat > ghostline-studio-installer/README.txt << 'EOF'
+          Ghostline Studio - Linux Installer
+          ===================================
 
-          Usage:
-          ------
-          1. Make the file executable (if not already):
-             chmod +x ghostline-studio
+          This package contains an installer that will install Ghostline Studio
+          to your system and create application menu entries.
 
-          2. Run Ghostline Studio:
-             ./ghostline-studio
+          Installation:
+          -------------
+          1. Extract this archive:
+             tar -xzf ghostline-studio-*-linux-x86_64.tar.gz
+             cd ghostline-studio-installer
 
-          3. Optional - Open a specific file or directory:
-             ./ghostline-studio /path/to/file
-             ./ghostline-studio /path/to/directory
+          2. Run the installer:
+             # For system-wide installation (recommended):
+             sudo ./install.sh
+
+             # For user-only installation:
+             ./install.sh
+
+          The installer will:
+          - Install the executable to /usr/local/bin (system) or ~/.local/bin (user)
+          - Create a desktop entry in your applications menu
+          - Set up an uninstaller
+
+          After Installation:
+          -------------------
+          - Launch from your application menu (search for "Ghostline Studio")
+          - Or run from terminal: ghostline-studio
+
+          Uninstallation:
+          ---------------
+          Run the uninstaller:
+            sudo ghostline-studio-uninstall    # if installed system-wide
+            ghostline-studio-uninstall         # if installed for user only
 
           System Requirements:
           --------------------
-          - Linux (tested on Ubuntu 20.04+, Debian, Fedora, Arch)
+          - Linux (Ubuntu 20.04+, Debian, Fedora, Arch, etc.)
           - X11 or Wayland display server
           - glibc 2.31 or higher
 
-          Troubleshooting:
-          ----------------
           If you encounter library errors, install these packages:
 
           Ubuntu/Debian (24.04+):
@@ -193,30 +213,26 @@ jobs:
           Arch:
             sudo pacman -S mesa glib2 dbus
 
-          Configuration:
-          --------------
-          User settings are stored in: ~/.config/ghostline/
-
           For more information, visit:
           https://github.com/cowboydaniel/Ghostline-Studio
           EOF
 
-          # Create tarball
-          tar -czf ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz ghostline-studio-linux/
+          # Create the installer tarball
+          tar -czf ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz ghostline-studio-installer/
 
           # Create checksum
-          sha256sum ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz > ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz.sha256
+          sha256sum ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz > ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz.sha256
 
-          echo "Distribution package created"
-          ls -lh ghostline-studio-*.tar.gz*
+          echo "Linux installer package created"
+          ls -lh ghostline-studio-*-installer.tar.gz*
 
-      - name: Upload Linux artifacts
+      - name: Upload Linux installer
         uses: actions/upload-artifact@v4
         with:
-          name: linux-executable
+          name: linux-installer
           path: |
-            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz
-            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz.sha256
+            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz
+            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz.sha256
 
   build-windows:
     name: Build Windows Executable
@@ -253,65 +269,61 @@ jobs:
           Write-Output "Standalone executable created successfully"
         shell: pwsh
 
-      - name: Create distribution package
+      - name: Install Inno Setup
         run: |
-          # Create distribution directory
-          New-Item -ItemType Directory -Force -Path ghostline-studio-windows
-
-          # Copy executable
-          Copy-Item dist\ghostline-studio.exe ghostline-studio-windows\
-
-          # Create README for the distribution
-          @"
-          Ghostline Studio - Standalone Windows Executable
-          ==================================================
-
-          This is a standalone executable for Windows systems.
-          No installation required - just run the executable!
-
-          Usage:
-          ------
-          1. Double-click ghostline-studio.exe to launch
-
-          2. Or run from command line:
-             ghostline-studio.exe
-
-          3. Optional - Open a specific file or directory:
-             ghostline-studio.exe C:\path\to\file
-             ghostline-studio.exe C:\path\to\directory
-
-          System Requirements:
-          --------------------
-          - Windows 10 or later (64-bit)
-          - No additional software required
-          - All dependencies are bundled
-
-          Configuration:
-          --------------
-          User settings are stored in: %APPDATA%\ghostline\
-
-          For more information, visit:
-          https://github.com/cowboydaniel/Ghostline-Studio
-          "@ | Out-File -FilePath ghostline-studio-windows\README.txt -Encoding UTF8
-
-          # Create ZIP archive
-          Compress-Archive -Path ghostline-studio-windows\* -DestinationPath ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip
-
-          # Create checksum
-          $hash = Get-FileHash ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip -Algorithm SHA256
-          "$($hash.Hash.ToLower())  ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip" | Out-File -FilePath ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip.sha256 -Encoding ASCII
-
-          Write-Output "Distribution package created"
-          Get-ChildItem ghostline-studio-*.zip*
+          # Download and install Inno Setup
+          choco install innosetup -y
         shell: pwsh
 
-      - name: Upload Windows artifacts
+      - name: Create Windows installer with Inno Setup
+        run: |
+          # Find Inno Setup compiler
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+
+          if (!(Test-Path $iscc)) {
+            Write-Error "Inno Setup compiler not found at $iscc"
+            exit 1
+          }
+
+          # Compile the installer
+          & $iscc installer-windows.iss
+
+          # Verify installer was created
+          $installerPattern = "dist\ghostline-studio-setup-*.exe"
+          $installer = Get-ChildItem $installerPattern | Select-Object -First 1
+
+          if ($null -eq $installer) {
+            Write-Error "Installer not created"
+            exit 1
+          }
+
+          Write-Output "Windows installer created: $($installer.Name)"
+          Get-ChildItem $installer
+
+          # Rename to include version
+          $newName = "ghostline-studio-setup-${{ needs.prepare.outputs.version }}-windows-x86_64.exe"
+          Move-Item $installer.FullName "dist\$newName" -Force
+
+          Write-Output "Renamed to: $newName"
+        shell: pwsh
+
+      - name: Create installer checksum
+        run: |
+          $installerName = "ghostline-studio-setup-${{ needs.prepare.outputs.version }}-windows-x86_64.exe"
+          $hash = Get-FileHash "dist\$installerName" -Algorithm SHA256
+          "$($hash.Hash.ToLower())  $installerName" | Out-File -FilePath "dist\$installerName.sha256" -Encoding ASCII
+
+          Write-Output "Checksum created"
+          Get-Content "dist\$installerName.sha256"
+        shell: pwsh
+
+      - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: windows-executable
+          name: windows-installer
           path: |
-            ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip
-            ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip.sha256
+            dist/ghostline-studio-setup-${{ needs.prepare.outputs.version }}-windows-x86_64.exe
+            dist/ghostline-studio-setup-${{ needs.prepare.outputs.version }}-windows-x86_64.exe.sha256
 
   release:
     name: Create GitHub Release
@@ -323,15 +335,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download Linux artifacts
+      - name: Download Linux installer
         uses: actions/download-artifact@v4
         with:
-          name: linux-executable
+          name: linux-installer
 
-      - name: Download Windows artifacts
+      - name: Download Windows installer
         uses: actions/download-artifact@v4
         with:
-          name: windows-executable
+          name: windows-installer
 
       - name: Create git tag
         run: |
@@ -356,43 +368,60 @@ jobs:
 
             ---
 
-            ### 📥 Download & Run
+            ### 📥 Download & Install
 
             ## Windows
 
-            **Download, extract, and double-click - No installation required!**
+            **One-click installer with Start Menu integration**
 
-            1. Download: [`ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip`](https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}/ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip)
-            2. Extract the ZIP file
-            3. Double-click `ghostline-studio.exe`
+            1. Download: [`ghostline-studio-setup-${{ needs.prepare.outputs.version }}-windows-x86_64.exe`](https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}/ghostline-studio-setup-${{ needs.prepare.outputs.version }}-windows-x86_64.exe)
+            2. Run the installer
+            3. Follow the installation wizard
+            4. Launch from Start Menu or Desktop
 
-            **What's included:**
-            - Complete standalone .exe (~200-300MB)
-            - All dependencies bundled
-            - No Python installation needed
-            - Works on Windows 10+ (64-bit)
+            **The installer will:**
+            - Install to Program Files
+            - Create Start Menu shortcuts
+            - Add Desktop icon (optional)
+            - Set up uninstaller in Windows Settings
+
+            **System Requirements:**
+            - Windows 10 or later (64-bit)
+            - ~300MB disk space
 
             ---
 
             ## Linux
 
-            **Download, extract, and run - No installation required!**
+            **Easy installer with application menu integration**
 
             ```bash
             # Download and extract
-            wget https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}/ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz
-            tar -xzf ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz
-            cd ghostline-studio-linux
+            wget https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}/ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz
+            tar -xzf ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz
+            cd ghostline-studio-installer
 
-            # Run (that's it!)
-            ./ghostline-studio
+            # Run installer (system-wide - recommended)
+            sudo ./install.sh
+
+            # Or install for current user only
+            ./install.sh
             ```
 
-            **What's included:**
-            - Complete standalone executable (~200-300MB)
-            - All dependencies bundled
-            - No Python installation needed
-            - Works on Ubuntu 20.04+, Debian, Fedora, Arch, etc.
+            **The installer will:**
+            - Install executable to /usr/local/bin or ~/.local/bin
+            - Create application menu entry
+            - Set up desktop integration
+            - Create uninstaller
+
+            **After installation:**
+            - Launch from application menu (search "Ghostline Studio")
+            - Or run from terminal: `ghostline-studio`
+
+            **System Requirements:**
+            - Linux (Ubuntu 20.04+, Debian, Fedora, Arch, etc.)
+            - X11 or Wayland
+            - ~300MB disk space
 
             ---
 
@@ -412,9 +441,9 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz
-            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64.tar.gz.sha256
-            ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip
-            ghostline-studio-${{ needs.prepare.outputs.version }}-windows-x86_64.zip.sha256
+            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz
+            ghostline-studio-${{ needs.prepare.outputs.version }}-linux-x86_64-installer.tar.gz.sha256
+            ghostline-studio-setup-${{ needs.prepare.outputs.version }}-windows-x86_64.exe
+            ghostline-studio-setup-${{ needs.prepare.outputs.version }}-windows-x86_64.exe.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
