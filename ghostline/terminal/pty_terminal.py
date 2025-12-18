@@ -3,14 +3,22 @@ from __future__ import annotations
 
 import os
 import sys
-import pty
-import select
-import signal
 import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Platform-specific imports
+if sys.platform != 'win32':
+    import pty
+    import select
+    import signal
+else:
+    # Windows doesn't have pty, we'll use a different approach
+    pty = None
+    select = None
+    signal = None
 
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import (
@@ -198,6 +206,12 @@ class PTYTerminal(QTextEdit):
 
     def start_shell(self, working_dir: Optional[Path] = None) -> None:
         """Start a shell in a PTY."""
+        if sys.platform == 'win32':
+            # Windows doesn't support PTY - show a message
+            self.append("Terminal is not supported on Windows in this build.\n")
+            self.append("Please use the system terminal or command prompt.\n")
+            return
+
         if self.master_fd is not None:
             return  # Already running
 
@@ -231,7 +245,7 @@ class PTYTerminal(QTextEdit):
 
     def _read_output(self) -> None:
         """Read output from PTY (called by timer)."""
-        if self.master_fd is None:
+        if sys.platform == 'win32' or self.master_fd is None:
             return
 
         try:
@@ -424,6 +438,9 @@ class PTYTerminal(QTextEdit):
 
     def send_interrupt(self) -> None:
         """Send a Ctrl+C interrupt to the running PTY process."""
+        if sys.platform == 'win32':
+            return
+
         self._suppress_interrupt_echo = True
         self.clear_output()
 
@@ -451,6 +468,9 @@ class PTYTerminal(QTextEdit):
 
     def _cleanup_pty(self) -> None:
         """Clean up PTY resources with proper error handling."""
+        if sys.platform == 'win32':
+            return
+
         if self.master_fd is not None:
             try:
                 os.close(self.master_fd)
