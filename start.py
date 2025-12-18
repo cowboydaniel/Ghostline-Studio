@@ -31,11 +31,26 @@ def is_stdlib_module(name: str) -> bool:
         return True
 
     stdlib_path = Path(sysconfig.get_paths()["stdlib"]).resolve()
+    platstdlib_path = Path(sysconfig.get_paths().get("platstdlib", stdlib_path)).resolve()
     try:
         origin = Path(spec.origin).resolve()
     except OSError:
         return True
-    return origin == stdlib_path or stdlib_path in origin.parents
+
+    stdlib_roots = [stdlib_path, platstdlib_path]
+
+    if sys.platform == "win32":
+        dlls_dir = stdlib_path.parent / "DLLs"
+        stdlib_roots.append(dlls_dir)
+
+    for root in stdlib_roots:
+        try:
+            origin.relative_to(root)
+            return True
+        except ValueError:
+            continue
+
+    return False
 
 
 def is_first_party_module(name: str, project_root: Path) -> bool:
@@ -68,7 +83,20 @@ NEVER_PIP_INSTALL = {
     "types",
     "tests",
     "test",
+    "select",
 }
+
+# Platform-specific modules that should never trigger pip installation.
+PLATFORM_NEVER_PIP_INSTALL = {
+    "win32": {"fcntl"},
+}
+
+# PySide6 currently publishes Windows wheels for Python versions earlier than
+# 3.14. Windows users frequently install the embeddable Python 3.14
+# distribution, which will fail to resolve a compatible PySide6 release. We
+# gate dependency installation so we can surface a clear message instead of a
+# confusing pip resolution error.
+PYSIDE6_WINDOWS_MAX_SUPPORTED = (3, 14)
 
 IMPORT_TO_PIP_PACKAGE = {
     "yaml": "PyYAML",
@@ -140,10 +168,13 @@ def filter_third_party_packages(names: set[str], project_root: Path) -> list[str
     """Filter import names down to likely third-party pip packages."""
 
     filtered: set[str] = set()
+    platform_blocklist = PLATFORM_NEVER_PIP_INSTALL.get(sys.platform, set())
     for name in names:
         if not name or name.startswith("_"):
             continue
         if name in NEVER_PIP_INSTALL:
+            continue
+        if name in platform_blocklist:
             continue
         if is_stdlib_module(name):
             continue
@@ -152,6 +183,15 @@ def filter_third_party_packages(names: set[str], project_root: Path) -> list[str
         pkg_name = IMPORT_TO_PIP_PACKAGE.get(name, name)
         filtered.add(pkg_name)
     return sorted(filtered)
+
+
+def _pyside_supported() -> bool:
+    """Return ``True`` if the current interpreter can install PySide6."""
+
+    if sys.platform != "win32":
+        return True
+
+    return sys.version_info < PYSIDE6_WINDOWS_MAX_SUPPORTED
 
 
 def pip_install_or_update(packages: Iterable[str]) -> bool:
@@ -222,6 +262,15 @@ def ensure_dependencies_installed() -> None:
         packages = filter_third_party_packages(names, root)
     except Exception as exc:
         print(f"[Ghostline] Failed to collect dependencies: {exc}", file=sys.stderr)
+        return
+
+    if "PySide6" in packages and not _pyside_supported():
+        print(
+            "[Ghostline] PySide6 wheels are not available for Python 3.14 yet. "
+            "Please install Python 3.13 or earlier on Windows to run Ghostline "
+            "Studio.",
+            file=sys.stderr,
+        )
         return
 
     if not packages:
