@@ -25,14 +25,19 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.core.resources import load_icon
-from ghostline.terminal.pty_terminal import PTYTerminal
 from ghostline.workspace.workspace_manager import WorkspaceManager
+
+# Import appropriate terminal based on platform
+if sys.platform == 'win32':
+    from ghostline.terminal.windows_terminal import WindowsTerminal as TerminalWidget
+else:
+    from ghostline.terminal.pty_terminal import PTYTerminal as TerminalWidget
 
 
 class TerminalSession:
     """Represents a single terminal session."""
 
-    def __init__(self, name: str, terminal: PTYTerminal, working_dir: Path) -> None:
+    def __init__(self, name: str, terminal: TerminalWidget, working_dir: Path) -> None:
         self.name = name
         self.terminal = terminal
         self.working_dir = working_dir
@@ -252,7 +257,7 @@ class WindsurfTerminalWidget(QWidget):
         working_dir = Path(self.workspace_manager.current_workspace or Path.cwd())
 
         # Create terminal
-        terminal = PTYTerminal(self)
+        terminal = TerminalWidget(self)
         shell_command = self.profile_commands.get(self.active_profile)
         if shell_command:
             terminal.shell = shell_command

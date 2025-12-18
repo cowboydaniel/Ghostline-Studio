@@ -82,6 +82,11 @@ a = Analysis(
         # Process utilities
         'psutil',
 
+        # Terminal modules (platform-specific)
+        'ghostline.terminal.pty_terminal',
+        'ghostline.terminal.windows_terminal',
+        'ghostline.terminal.windsurf_terminal',
+
         # All ghostline submodules
         *ghostline_modules,
     ],
