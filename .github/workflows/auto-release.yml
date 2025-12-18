@@ -82,7 +82,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgl1-mesa-glx \
+            libgl1 \
+            libegl1 \
             libglib2.0-0 \
             libdbus-1-3 \
             libxkbcommon-x11-0 \
@@ -94,10 +95,14 @@ jobs:
             libxcb-xinerama0 \
             libxcb-xfixes0 \
             libxcb-shape0 \
+            libxcb-cursor0 \
             libfontconfig1 \
             libfreetype6 \
             libx11-xcb1 \
-            upx
+            libxkbcommon0 \
+            libxcb-glx0 \
+            libxcb-shm0 \
+            upx-ucl
 
       - name: Install Python dependencies
         run: |
@@ -161,11 +166,14 @@ jobs:
           ----------------
           If you encounter library errors, install these packages:
 
-          Ubuntu/Debian:
+          Ubuntu/Debian (24.04+):
+            sudo apt-get install libgl1 libegl1 libglib2.0-0 libdbus-1-3 libxkbcommon-x11-0
+
+          Ubuntu/Debian (older):
             sudo apt-get install libgl1-mesa-glx libglib2.0-0 libdbus-1-3
 
           Fedora:
-            sudo dnf install mesa-libGL glib2 dbus-libs
+            sudo dnf install mesa-libGL mesa-libEGL glib2 dbus-libs
 
           Arch:
             sudo pacman -S mesa glib2 dbus
