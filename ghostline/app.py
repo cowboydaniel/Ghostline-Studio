@@ -18,6 +18,9 @@ def _ensure_qt_platform() -> None:
     detected and the variable is not already configured by the user.
     """
 
+    if os.name == "nt":
+        return
+
     if os.environ.get("QT_QPA_PLATFORM"):
         return
 
@@ -25,6 +28,9 @@ def _ensure_qt_platform() -> None:
         return
 
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    logging.getLogger(__name__).warning(
+        "QT_QPA_PLATFORM not set; forcing offscreen mode for headless environment"
+    )
 
 
 _ensure_qt_platform()
