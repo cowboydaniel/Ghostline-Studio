@@ -1,4 +1,4 @@
-"""Windsurf-style terminal widget with sessions, controls, and proper layout."""
+"""Integrated terminal widget with sessions, controls, and proper layout."""
 from __future__ import annotations
 
 import os
@@ -25,23 +25,28 @@ from PySide6.QtWidgets import (
 )
 
 from ghostline.core.resources import load_icon
-from ghostline.terminal.pty_terminal import PTYTerminal
 from ghostline.workspace.workspace_manager import WorkspaceManager
+
+# Import appropriate terminal based on platform
+if sys.platform == 'win32':
+    from ghostline.terminal.windows_terminal import WindowsTerminal as TerminalWidget
+else:
+    from ghostline.terminal.pty_terminal import PTYTerminal as TerminalWidget
 
 
 class TerminalSession:
     """Represents a single terminal session."""
 
-    def __init__(self, name: str, terminal: PTYTerminal, working_dir: Path) -> None:
+    def __init__(self, name: str, terminal: TerminalWidget, working_dir: Path) -> None:
         self.name = name
         self.terminal = terminal
         self.working_dir = working_dir
         self.session_id = id(self)
 
 
-class WindsurfTerminalWidget(QWidget):
+class IntegratedTerminalWidget(QWidget):
     """
-    Complete Windsurf-style terminal widget with compact toolbar and slim sidebar.
+    Complete integrated terminal widget with compact toolbar and slim sidebar.
     """
 
     def __init__(self, workspace_manager: WorkspaceManager, parent=None, use_external_toolbar: bool = True) -> None:
@@ -59,7 +64,7 @@ class WindsurfTerminalWidget(QWidget):
         self.active_profile = next(iter(self.profile_commands.keys()), "Python")
         self.cwd_label = QLabel(self)
 
-        self.setObjectName("windsurfTerminal")
+        self.setObjectName("integratedTerminal")
         self._setup_ui()
         self._create_initial_session()
 
@@ -252,7 +257,7 @@ class WindsurfTerminalWidget(QWidget):
         working_dir = Path(self.workspace_manager.current_workspace or Path.cwd())
 
         # Create terminal
-        terminal = PTYTerminal(self)
+        terminal = TerminalWidget(self)
         shell_command = self.profile_commands.get(self.active_profile)
         if shell_command:
             terminal.shell = shell_command
