@@ -31,11 +31,26 @@ def is_stdlib_module(name: str) -> bool:
         return True
 
     stdlib_path = Path(sysconfig.get_paths()["stdlib"]).resolve()
+    platstdlib_path = Path(sysconfig.get_paths().get("platstdlib", stdlib_path)).resolve()
     try:
         origin = Path(spec.origin).resolve()
     except OSError:
         return True
-    return origin == stdlib_path or stdlib_path in origin.parents
+
+    stdlib_roots = [stdlib_path, platstdlib_path]
+
+    if sys.platform == "win32":
+        dlls_dir = stdlib_path.parent / "DLLs"
+        stdlib_roots.append(dlls_dir)
+
+    for root in stdlib_roots:
+        try:
+            origin.relative_to(root)
+            return True
+        except ValueError:
+            continue
+
+    return False
 
 
 def is_first_party_module(name: str, project_root: Path) -> bool:
@@ -68,6 +83,7 @@ NEVER_PIP_INSTALL = {
     "types",
     "tests",
     "test",
+    "select",
 }
 
 # Platform-specific modules that should never trigger pip installation.
