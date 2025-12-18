@@ -173,13 +173,23 @@ jobs:
           Ghostline Studio - Linux Installer
           ===================================
 
-          This package contains an installer that will install Ghostline Studio
+          This package contains a graphical installer that will install Ghostline Studio
           to your system and create application menu entries.
 
-          Installation:
-          -------------
+          Installation (GUI - Double-Click):
+          ----------------------------------
           1. Extract this archive:
-             tar -xzf ghostline-studio-*-linux-x86_64.tar.gz
+             tar -xzf ghostline-studio-*-linux-x86_64-installer.tar.gz
+
+          2. Double-click install.sh in your file manager
+             - The installer will show graphical dialogs
+             - You'll be asked if you want system-wide or user-only installation
+             - A progress bar will show installation progress
+
+          Installation (Terminal):
+          ------------------------
+          1. Extract this archive:
+             tar -xzf ghostline-studio-*-linux-x86_64-installer.tar.gz
              cd ghostline-studio-installer
 
           2. Run the installer:
